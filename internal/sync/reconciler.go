@@ -8,6 +8,7 @@ import (
 
 	"github.com/sderosiaux/saas-watcher/config"
 	"github.com/sderosiaux/saas-watcher/internal/core"
+	"github.com/sderosiaux/saas-watcher/internal/notify"
 	"github.com/sderosiaux/saas-watcher/internal/provider"
 	"github.com/sderosiaux/saas-watcher/internal/store"
 )
@@ -20,11 +21,25 @@ type Reconciler struct {
 	config   *config.Config
 	registry *provider.Registry
 	identity provider.IdentityProvider
+	notifier *notify.Dispatcher
 }
 
 // NewReconciler wires all dependencies into a ready-to-run reconciler.
-func NewReconciler(s store.Store, cfg *config.Config, reg *provider.Registry, identity provider.IdentityProvider) *Reconciler {
-	return &Reconciler{store: s, config: cfg, registry: reg, identity: identity}
+// The notifier is optional — pass nil to disable notifications.
+func NewReconciler(s store.Store, cfg *config.Config, reg *provider.Registry, identity provider.IdentityProvider, opts ...ReconcilerOption) *Reconciler {
+	r := &Reconciler{store: s, config: cfg, registry: reg, identity: identity}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
+}
+
+// ReconcilerOption configures optional Reconciler dependencies.
+type ReconcilerOption func(*Reconciler)
+
+// WithNotifier attaches a notification dispatcher to the reconciler.
+func WithNotifier(d *notify.Dispatcher) ReconcilerOption {
+	return func(r *Reconciler) { r.notifier = d }
 }
 
 // Run executes a single reconciliation pass across all configured providers.
@@ -141,6 +156,7 @@ func (r *Reconciler) executeActions(ctx context.Context, name string, p provider
 	for _, ua := range plan.ToRemove {
 		if r.config.Policies.GracePeriod > 0 {
 			r.store.InsertPendingRemoval(ctx, name, ua.Email, time.Now().Add(r.config.Policies.GracePeriod))
+			r.sendNotification(ctx, name, ua.Email, "pending_removal")
 			continue
 		}
 		if !caps.CanRemove {
@@ -154,5 +170,23 @@ func (r *Reconciler) executeActions(ctx context.Context, name string, p provider
 			Type: core.EventUserRemoved, Provider: name, Email: ua.Email,
 			Trigger: "sync", OccurredAt: time.Now(),
 		})
+		r.sendNotification(ctx, name, ua.Email, "removed")
+	}
+}
+
+func (r *Reconciler) sendNotification(ctx context.Context, providerName, email, action string) {
+	if !r.config.Policies.NotifyOnRemove || r.notifier == nil {
+		return
+	}
+	title := fmt.Sprintf("User %s from %s", action, providerName)
+	body := fmt.Sprintf("%s was %s during reconciliation sync.", email, action)
+	if err := r.notifier.Notify(ctx, notify.Message{
+		Title:    title,
+		Body:     body,
+		Provider: providerName,
+		Email:    email,
+		Action:   action,
+	}); err != nil {
+		slog.Error("notification dispatch failed", "provider", providerName, "email", email, "error", err)
 	}
 }

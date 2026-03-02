@@ -39,10 +39,22 @@ type ProviderMapping struct {
 
 type Policies struct {
 	GracePeriod    time.Duration `yaml:"grace_period"`
+	SyncInterval   time.Duration `yaml:"sync_interval"`
 	DryRun         bool          `yaml:"dry_run"`
 	NotifyOnRemove bool          `yaml:"notify_on_remove"`
 	NotifyChannels []string      `yaml:"notify_channels"`
 	Exceptions     []Exception   `yaml:"exceptions"`
+	Notify         NotifyConfig  `yaml:"notify"`
+}
+
+// NotifyConfig holds credentials for notification backends.
+type NotifyConfig struct {
+	SlackWebhookURL string `yaml:"slack_webhook_url"`
+	SMTPHost        string `yaml:"smtp_host"`
+	SMTPPort        int    `yaml:"smtp_port"`
+	SMTPFrom        string `yaml:"smtp_from"`
+	SMTPUser        string `yaml:"smtp_user"`
+	SMTPPass        string `yaml:"smtp_pass"`
 }
 
 type Exception struct {

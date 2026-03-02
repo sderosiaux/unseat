@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/sderosiaux/saas-watcher/config"
 	"github.com/sderosiaux/saas-watcher/internal/provider"
@@ -30,11 +33,21 @@ var syncRunCmd = &cobra.Command{
 	RunE:  runSyncRun,
 }
 
-var autoConfirm bool
+var syncWatchCmd = &cobra.Command{
+	Use:   "watch",
+	Short: "Run continuous reconciliation (daemon mode)",
+	RunE:  runSyncWatch,
+}
+
+var (
+	autoConfirm   bool
+	watchInterval time.Duration
+)
 
 func init() {
 	syncRunCmd.Flags().BoolVar(&autoConfirm, "yes", false, "Skip confirmation prompt")
-	syncCmd.AddCommand(syncDryRunCmd, syncRunCmd)
+	syncWatchCmd.Flags().DurationVar(&watchInterval, "interval", 0, "Override sync interval (e.g. 5m, 1h)")
+	syncCmd.AddCommand(syncDryRunCmd, syncRunCmd, syncWatchCmd)
 	rootCmd.AddCommand(syncCmd)
 }
 
@@ -60,6 +73,42 @@ func runSyncRun(cmd *cobra.Command, _ []string) error {
 	}
 
 	return runSync(cmd.Context(), cfg)
+}
+
+func runSyncWatch(_ *cobra.Command, _ []string) error {
+	cfg, err := config.Load(configFile)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	// Resolve interval: flag > config > default 5m.
+	interval := 5 * time.Minute
+	if cfg.Policies.SyncInterval > 0 {
+		interval = cfg.Policies.SyncInterval
+	}
+	if watchInterval > 0 {
+		interval = watchInterval
+	}
+
+	db, err := store.NewSQLite("saas-watcher.db")
+	if err != nil {
+		return fmt.Errorf("open db: %w", err)
+	}
+	defer db.Close()
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	reg, identity, err := provider.BuildRegistry(ctx, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Provider initialization failed: %v\n", err)
+		return err
+	}
+
+	rec := syncer.NewReconciler(db, cfg, reg, identity)
+	scheduler := syncer.NewScheduler(rec, interval)
+
+	return scheduler.Start(ctx)
 }
 
 func runSync(ctx context.Context, cfg *config.Config) error {

@@ -19,6 +19,7 @@ type IdentitySource struct {
 	Provider        string `yaml:"provider"`
 	Domain          string `yaml:"domain"`
 	CredentialsFile string `yaml:"credentials_file"`
+	AdminEmail      string `yaml:"admin_email"`
 }
 
 type ProviderConfig struct {

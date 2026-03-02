@@ -9,7 +9,7 @@ import (
 	"github.com/sderosiaux/saas-watcher/internal/provider/claudecode"
 	"github.com/sderosiaux/saas-watcher/internal/provider/figma"
 	"github.com/sderosiaux/saas-watcher/internal/provider/framer"
-	"github.com/sderosiaux/saas-watcher/internal/provider/google"
+	googleprovider "github.com/sderosiaux/saas-watcher/internal/provider/google"
 	"github.com/sderosiaux/saas-watcher/internal/provider/hubspot"
 	"github.com/sderosiaux/saas-watcher/internal/provider/linear"
 	"github.com/sderosiaux/saas-watcher/internal/provider/miro"
@@ -22,7 +22,11 @@ func BuildRegistry(ctx context.Context, cfg *config.Config) (*Registry, Identity
 	var identity IdentityProvider
 	switch cfg.IdentitySource.Provider {
 	case "google-directory":
-		gp, err := google.New(ctx, cfg.IdentitySource.CredentialsFile, cfg.IdentitySource.Domain)
+		var gopts []googleprovider.Option
+		if cfg.IdentitySource.AdminEmail != "" {
+			gopts = append(gopts, googleprovider.WithAdminEmail(cfg.IdentitySource.AdminEmail))
+		}
+		gp, err := googleprovider.New(ctx, cfg.IdentitySource.CredentialsFile, cfg.IdentitySource.Domain, gopts...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("init google directory: %w", err)
 		}

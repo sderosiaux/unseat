@@ -3,10 +3,12 @@ package google
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/sderosiaux/saas-watcher/internal/core"
 	admin "google.golang.org/api/admin/directory/v1"
 	"google.golang.org/api/option"
+	"golang.org/x/oauth2/google"
 )
 
 type Provider struct {
@@ -14,12 +16,49 @@ type Provider struct {
 	domain  string
 }
 
-func New(ctx context.Context, credentialsFile, domain string) (*Provider, error) {
-	svc, err := admin.NewService(ctx, option.WithCredentialsFile(credentialsFile))
+func New(ctx context.Context, credentialsFile, domain string, opts ...Option) (*Provider, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	var svc *admin.Service
+	var err error
+
+	if o.adminEmail != "" {
+		// Domain-wide delegation: impersonate an admin user.
+		data, readErr := os.ReadFile(credentialsFile)
+		if readErr != nil {
+			return nil, fmt.Errorf("read credentials: %w", readErr)
+		}
+		conf, jwtErr := google.JWTConfigFromJSON(data,
+			admin.AdminDirectoryUserReadonlyScope,
+			admin.AdminDirectoryGroupReadonlyScope,
+		)
+		if jwtErr != nil {
+			return nil, fmt.Errorf("parse credentials: %w", jwtErr)
+		}
+		conf.Subject = o.adminEmail
+		client := conf.Client(ctx)
+		svc, err = admin.NewService(ctx, option.WithHTTPClient(client))
+	} else {
+		svc, err = admin.NewService(ctx, option.WithCredentialsFile(credentialsFile))
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("create admin service: %w", err)
 	}
 	return &Provider{service: svc, domain: domain}, nil
+}
+
+type options struct {
+	adminEmail string
+}
+
+type Option func(*options)
+
+func WithAdminEmail(email string) Option {
+	return func(o *options) { o.adminEmail = email }
 }
 
 func (p *Provider) Name() string { return "google-directory" }

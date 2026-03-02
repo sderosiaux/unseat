@@ -8,9 +8,16 @@ providers:
   linear:
     api_key: "${LINEAR_API_KEY}"
   figma:
-    api_key: "${FIGMA_API_KEY}"
+    api_key: "${FIGMA_SCIM_TOKEN}"
+    extra:
+      tenant_id: "${FIGMA_TENANT_ID}"
   hubspot:
-    api_key: "${HUBSPOT_API_KEY}"
+    api_key: "${HUBSPOT_ACCESS_TOKEN}"
+  miro:
+    api_key: "${MIRO_ACCESS_TOKEN}"
+    extra:
+      org_id: "${MIRO_ORG_ID}"
+  framer: {}
 
 mappings:
   - group: design-team@mycompany.com

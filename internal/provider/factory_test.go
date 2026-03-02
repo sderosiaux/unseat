@@ -101,3 +101,27 @@ func TestBuildRegistryWithIdentity_MultipleProviders(t *testing.T) {
 	assert.Contains(t, names, "google-directory")
 	assert.Contains(t, names, "linear")
 }
+
+func TestBuildRegistryWithIdentity_AllProviders(t *testing.T) {
+	cfg := &config.Config{
+		Providers: map[string]config.ProviderConfig{
+			"linear":  {APIKey: "lin_key"},
+			"figma":   {APIKey: "fig_token", ExtraArgs: map[string]string{"tenant_id": "t123"}},
+			"hubspot": {APIKey: "hub_token"},
+			"miro":    {APIKey: "miro_token", ExtraArgs: map[string]string{"org_id": "org456"}},
+			"framer":  {},
+		},
+	}
+
+	identity := &mockIdentity{mockProvider{name: "google-directory"}}
+	reg, _, err := BuildRegistryWithIdentity(cfg, identity)
+	require.NoError(t, err)
+
+	names := reg.List()
+	assert.Len(t, names, 6) // google-directory + 5 providers
+	for _, name := range []string{"google-directory", "linear", "figma", "hubspot", "miro", "framer"} {
+		p, err := reg.Get(name)
+		require.NoError(t, err, "provider %s should be registered", name)
+		assert.Equal(t, name, p.Name())
+	}
+}

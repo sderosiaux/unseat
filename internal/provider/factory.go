@@ -5,8 +5,12 @@ import (
 	"fmt"
 
 	"github.com/sderosiaux/saas-watcher/config"
+	"github.com/sderosiaux/saas-watcher/internal/provider/figma"
+	"github.com/sderosiaux/saas-watcher/internal/provider/framer"
 	"github.com/sderosiaux/saas-watcher/internal/provider/google"
+	"github.com/sderosiaux/saas-watcher/internal/provider/hubspot"
 	"github.com/sderosiaux/saas-watcher/internal/provider/linear"
+	"github.com/sderosiaux/saas-watcher/internal/provider/miro"
 )
 
 // BuildRegistry creates a Registry and IdentityProvider from config, initializing
@@ -40,6 +44,26 @@ func BuildRegistryWithIdentity(cfg *config.Config, identity IdentityProvider) (*
 				p = p.WithBaseURL(pcfg.BaseURL)
 			}
 			reg.Register(p)
+		case "figma":
+			p := figma.New(pcfg.APIKey, pcfg.ExtraArgs["tenant_id"])
+			if pcfg.BaseURL != "" {
+				p = p.WithBaseURL(pcfg.BaseURL)
+			}
+			reg.Register(p)
+		case "hubspot":
+			p := hubspot.New(pcfg.APIKey)
+			if pcfg.BaseURL != "" {
+				p = p.WithBaseURL(pcfg.BaseURL)
+			}
+			reg.Register(p)
+		case "miro":
+			p := miro.New(pcfg.APIKey, pcfg.ExtraArgs["org_id"])
+			if pcfg.BaseURL != "" {
+				p = p.WithBaseURL(pcfg.BaseURL)
+			}
+			reg.Register(p)
+		case "framer":
+			reg.Register(framer.New())
 		default:
 			return nil, nil, fmt.Errorf("unknown provider: %s", name)
 		}

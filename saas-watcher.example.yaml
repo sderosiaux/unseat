@@ -18,6 +18,12 @@ providers:
     extra:
       org_id: "${MIRO_ORG_ID}"
   framer: {}
+  slack:
+    api_key: "${SLACK_SCIM_TOKEN}"
+  anthropic:
+    api_key: "${ANTHROPIC_ADMIN_KEY}"
+  claude-code:
+    api_key: "${ANTHROPIC_ADMIN_KEY}"
 
 mappings:
   - group: design-team@mycompany.com
@@ -35,6 +41,17 @@ mappings:
         role: member
       - name: figma
         role: viewer
+      - name: claude-code
+        role: claude_code_user
+      - name: slack
+        role: member
+
+  - group: all-staff@mycompany.com
+    providers:
+      - name: anthropic
+        role: user
+      - name: slack
+        role: member
 
   - group: sales@mycompany.com
     providers:

@@ -57,6 +57,21 @@ var KnownProviders = map[string]ProviderAuth{
 		Scopes:       []string{"https://www.googleapis.com/auth/admin.directory.user.readonly", "https://www.googleapis.com/auth/admin.directory.group.readonly"},
 		Instructions: "Requires a Google Cloud service account with domain-wide delegation.",
 	},
+	"slack": {
+		Name:         "slack",
+		AuthMethod:   "api_key",
+		Instructions: "Create a SCIM token at https://my.slack.com/admin/settings#scim (requires Business+ or Enterprise Grid).",
+	},
+	"anthropic": {
+		Name:         "anthropic",
+		AuthMethod:   "api_key",
+		Instructions: "Create an Admin API key at https://console.anthropic.com/settings/admin-keys",
+	},
+	"claude-code": {
+		Name:         "claude-code",
+		AuthMethod:   "api_key",
+		Instructions: "Uses the same Anthropic Admin API key. Create at https://console.anthropic.com/settings/admin-keys",
+	},
 }
 
 // ListKnownProviders returns sorted provider names.

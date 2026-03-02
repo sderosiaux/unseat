@@ -5,12 +5,15 @@ import (
 	"fmt"
 
 	"github.com/sderosiaux/saas-watcher/config"
+	"github.com/sderosiaux/saas-watcher/internal/provider/anthropic"
+	"github.com/sderosiaux/saas-watcher/internal/provider/claudecode"
 	"github.com/sderosiaux/saas-watcher/internal/provider/figma"
 	"github.com/sderosiaux/saas-watcher/internal/provider/framer"
 	"github.com/sderosiaux/saas-watcher/internal/provider/google"
 	"github.com/sderosiaux/saas-watcher/internal/provider/hubspot"
 	"github.com/sderosiaux/saas-watcher/internal/provider/linear"
 	"github.com/sderosiaux/saas-watcher/internal/provider/miro"
+	slackprovider "github.com/sderosiaux/saas-watcher/internal/provider/slack"
 )
 
 // BuildRegistry creates a Registry and IdentityProvider from config, initializing
@@ -64,6 +67,24 @@ func BuildRegistryWithIdentity(cfg *config.Config, identity IdentityProvider) (*
 			reg.Register(p)
 		case "framer":
 			reg.Register(framer.New())
+		case "slack":
+			p := slackprovider.New(pcfg.APIKey)
+			if pcfg.BaseURL != "" {
+				p = p.WithBaseURL(pcfg.BaseURL)
+			}
+			reg.Register(p)
+		case "anthropic":
+			p := anthropic.New(pcfg.APIKey)
+			if pcfg.BaseURL != "" {
+				p = p.WithBaseURL(pcfg.BaseURL)
+			}
+			reg.Register(p)
+		case "claude-code":
+			p := claudecode.New(pcfg.APIKey)
+			if pcfg.BaseURL != "" {
+				p = p.WithBaseURL(pcfg.BaseURL)
+			}
+			reg.Register(p)
 		default:
 			return nil, nil, fmt.Errorf("unknown provider: %s", name)
 		}

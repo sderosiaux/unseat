@@ -37,7 +37,9 @@ func BuildRegistry(ctx context.Context, cfg *config.Config) (*Registry, Identity
 // Useful for testing or when the identity source is constructed externally.
 func BuildRegistryWithIdentity(cfg *config.Config, identity IdentityProvider) (*Registry, IdentityProvider, error) {
 	reg := NewRegistry()
-	reg.Register(identity)
+	if identity != nil {
+		reg.Register(identity)
+	}
 
 	for name, pcfg := range cfg.Providers {
 		switch name {

@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	mcpserver "github.com/sderosiaux/saas-watcher/api/mcp"
-	"github.com/sderosiaux/saas-watcher/config"
-	"github.com/sderosiaux/saas-watcher/internal/store"
+	mcpserver "github.com/sderosiaux/unseat/api/mcp"
+	"github.com/sderosiaux/unseat/config"
+	"github.com/sderosiaux/unseat/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +26,7 @@ func runMCP(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	db, err := store.NewSQLite("saas-watcher.db")
+	db, err := store.NewSQLite("unseat.db")
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}

@@ -1,8 +1,8 @@
 bin/
-/saas-watcher
+/unseat
 *.db
 *.sqlite
-saas-watcher.yaml
+unseat.yaml
 .env
 gcp-credentials.json
 *-credentials.json

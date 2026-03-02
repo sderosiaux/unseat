@@ -9,7 +9,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/pressly/goose/v3"
-	"github.com/sderosiaux/saas-watcher/internal/core"
+	"github.com/sderosiaux/unseat/internal/core"
 )
 
 //go:embed migrations/*.sql

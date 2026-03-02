@@ -4,16 +4,16 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sderosiaux/saas-watcher/config"
-	"github.com/sderosiaux/saas-watcher/internal/provider/anthropic"
-	"github.com/sderosiaux/saas-watcher/internal/provider/claudecode"
-	"github.com/sderosiaux/saas-watcher/internal/provider/figma"
-	"github.com/sderosiaux/saas-watcher/internal/provider/framer"
-	googleprovider "github.com/sderosiaux/saas-watcher/internal/provider/google"
-	"github.com/sderosiaux/saas-watcher/internal/provider/hubspot"
-	"github.com/sderosiaux/saas-watcher/internal/provider/linear"
-	"github.com/sderosiaux/saas-watcher/internal/provider/miro"
-	slackprovider "github.com/sderosiaux/saas-watcher/internal/provider/slack"
+	"github.com/sderosiaux/unseat/config"
+	"github.com/sderosiaux/unseat/internal/provider/anthropic"
+	"github.com/sderosiaux/unseat/internal/provider/claudecode"
+	"github.com/sderosiaux/unseat/internal/provider/figma"
+	"github.com/sderosiaux/unseat/internal/provider/framer"
+	googleprovider "github.com/sderosiaux/unseat/internal/provider/google"
+	"github.com/sderosiaux/unseat/internal/provider/hubspot"
+	"github.com/sderosiaux/unseat/internal/provider/linear"
+	"github.com/sderosiaux/unseat/internal/provider/miro"
+	slackprovider "github.com/sderosiaux/unseat/internal/provider/slack"
 )
 
 // BuildRegistry creates a Registry and IdentityProvider from config, initializing

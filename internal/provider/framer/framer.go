@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sderosiaux/saas-watcher/internal/core"
+	"github.com/sderosiaux/unseat/internal/core"
 )
 
 var errNoAPI = fmt.Errorf("framer: no public API for user management")

@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/sderosiaux/saas-watcher/internal/core"
+	"github.com/sderosiaux/unseat/internal/core"
 )
 
 const defaultBaseURL = "https://api.linear.app/graphql"

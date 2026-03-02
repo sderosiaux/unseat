@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sderosiaux/saas-watcher/config"
+	"github.com/sderosiaux/unseat/config"
 )
 
 var ErrNotFound = errors.New("credential not found")
@@ -50,7 +50,7 @@ func NewFileStore(path string) *FileStore {
 
 func DefaultPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "saas-watcher", "credentials.json")
+	return filepath.Join(home, ".config", "unseat", "credentials.json")
 }
 
 func (s *FileStore) load() (map[string]Credential, error) {

@@ -1,4 +1,4 @@
-# saas-watcher
+# unseat
 
 Identity Lifecycle Management tool. Cross-references Google Workspace (source of truth) with SaaS providers to automate user provisioning, deprovisioning, and seat optimization.
 
@@ -23,7 +23,7 @@ Google Workspace (groups)          SaaS Providers
 desired (groups) vs actual (SaaS) = actions
 ```
 
-Kubernetes-style reconciliation: define which Google Groups map to which SaaS providers, and saas-watcher keeps them in sync. Add someone to a group, they get provisioned. Remove them from Google Workspace, their SaaS seats get cleaned up (with configurable grace period and notifications).
+Kubernetes-style reconciliation: define which Google Groups map to which SaaS providers, and unseat keeps them in sync. Add someone to a group, they get provisioned. Remove them from Google Workspace, their SaaS seats get cleaned up (with configurable grace period and notifications).
 
 ## Supported Providers
 
@@ -48,24 +48,24 @@ Adding a provider = implement the `Provider` interface + register in factory.
 make build
 
 # Configure (copy and edit)
-cp saas-watcher.example.yaml saas-watcher.yaml
+cp unseat.example.yaml unseat.yaml
 
 # Connect providers (opens browser for OAuth2, prompts for API keys)
-saas-watcher providers add linear slack anthropic
-saas-watcher providers add figma --client-id $FIGMA_CLIENT_ID --client-secret $FIGMA_CLIENT_SECRET
+unseat providers add linear slack anthropic
+unseat providers add figma --client-id $FIGMA_CLIENT_ID --client-secret $FIGMA_CLIENT_SECRET
 
 # See what you have
-saas-watcher providers list
-saas-watcher providers users linear
+unseat providers list
+unseat providers users linear
 
 # Preview what would happen
-saas-watcher sync dry-run
+unseat sync dry-run
 
 # Run reconciliation
-saas-watcher sync run --yes
+unseat sync run --yes
 
 # Or run as daemon
-saas-watcher sync watch --interval 5m
+unseat sync watch --interval 5m
 ```
 
 ## Configuration
@@ -122,7 +122,7 @@ policies:
 ## CLI
 
 ```
-saas-watcher
+unseat
 ├── audit
 │   ├── orphans              List seats with no matching GWS user
 │   └── drift                Diff desired vs actual
@@ -154,7 +154,7 @@ GET /api/v1/mappings               Group-to-provider mappings
 ```
 
 ```bash
-saas-watcher serve --port 8080
+unseat serve --port 8080
 ```
 
 ## MCP Server
@@ -162,7 +162,7 @@ saas-watcher serve --port 8080
 For LLM agent integration (Claude, etc.) via [Model Context Protocol](https://modelcontextprotocol.io):
 
 ```bash
-saas-watcher mcp
+unseat mcp
 ```
 
 Tools: `list_providers`, `provider_users`, `list_orphans`, `list_events`, `get_mappings`
@@ -173,7 +173,7 @@ Guardrails: dry_run by default for destructive actions, audit trail for agent vs
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   saas-watcher                       │
+│                   unseat                       │
 │                                                      │
 │  ┌───────────┐  ┌───────────┐  ┌──────────────────┐ │
 │  │  CLI      │  │  Web API  │  │  Sync Engine     │ │
@@ -211,8 +211,8 @@ Guardrails: dry_run by default for destructive actions, audit trail for agent vs
 ## Project Structure
 
 ```
-saas-watcher/
-├── cmd/saas-watcher/main.go          Entry point
+unseat/
+├── cmd/unseat/main.go          Entry point
 ├── cli/                               Cobra commands
 │   ├── root.go                        Root + global flags
 │   ├── audit.go                       audit orphans/drift
@@ -261,7 +261,7 @@ saas-watcher/
 │   ├── server.go                      Chi HTTP server
 │   ├── handlers.go                    REST handlers
 │   └── mcp/server.go                  MCP server (stdio)
-├── saas-watcher.example.yaml
+├── unseat.example.yaml
 ├── Makefile
 └── go.mod
 ```

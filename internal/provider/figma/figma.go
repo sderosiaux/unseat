@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/sderosiaux/saas-watcher/internal/core"
+	"github.com/sderosiaux/unseat/internal/core"
 )
 
 const defaultBaseURL = "https://www.figma.com/scim/v2"

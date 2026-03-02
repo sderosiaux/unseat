@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/sderosiaux/saas-watcher/internal/core"
+	"github.com/sderosiaux/unseat/internal/core"
 	admin "google.golang.org/api/admin/directory/v1"
 	"google.golang.org/api/option"
 	"golang.org/x/oauth2/google"

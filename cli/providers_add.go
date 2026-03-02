@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sderosiaux/saas-watcher/internal/auth"
-	"github.com/sderosiaux/saas-watcher/internal/credentials"
+	"github.com/sderosiaux/unseat/internal/auth"
+	"github.com/sderosiaux/unseat/internal/credentials"
 	"github.com/spf13/cobra"
 )
 
@@ -45,7 +45,7 @@ func runProvidersAdd(cmd *cobra.Command, args []string) error {
 	for _, name := range args {
 		providerAuth, known := auth.KnownProviders[name]
 		if !known {
-			fmt.Fprintf(os.Stderr, "Unknown provider %q. Run `saas-watcher providers supported` to see available providers.\n", name)
+			fmt.Fprintf(os.Stderr, "Unknown provider %q. Run `unseat providers supported` to see available providers.\n", name)
 			continue
 		}
 

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/sderosiaux/saas-watcher/config"
-	"github.com/sderosiaux/saas-watcher/internal/provider"
-	"github.com/sderosiaux/saas-watcher/internal/store"
+	"github.com/sderosiaux/unseat/config"
+	"github.com/sderosiaux/unseat/internal/provider"
+	"github.com/sderosiaux/unseat/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -42,7 +42,7 @@ func init() {
 }
 
 func runProvidersList(cmd *cobra.Command, args []string) error {
-	db, err := store.NewSQLite("saas-watcher.db")
+	db, err := store.NewSQLite("unseat.db")
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -58,7 +58,7 @@ func runProvidersList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(states) == 0 {
-		fmt.Println("No providers synced yet. Run `saas-watcher sync run` first.")
+		fmt.Println("No providers synced yet. Run `unseat sync run` first.")
 		return nil
 	}
 
@@ -73,7 +73,7 @@ func runProvidersList(cmd *cobra.Command, args []string) error {
 func runProvidersUsers(cmd *cobra.Command, args []string) error {
 	provider := args[0]
 
-	db, err := store.NewSQLite("saas-watcher.db")
+	db, err := store.NewSQLite("unseat.db")
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -89,7 +89,7 @@ func runProvidersUsers(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(users) == 0 {
-		fmt.Printf("No users cached for %s. Run `saas-watcher sync run` first.\n", provider)
+		fmt.Printf("No users cached for %s. Run `unseat sync run` first.\n", provider)
 		return nil
 	}
 

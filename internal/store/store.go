@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/sderosiaux/saas-watcher/internal/core"
+	"github.com/sderosiaux/unseat/internal/core"
 )
 
-// Store defines the persistence contract for saas-watcher.
+// Store defines the persistence contract for unseat.
 type Store interface {
 	UpsertProviderUsers(ctx context.Context, provider string, users []core.User) error
 	GetProviderUsers(ctx context.Context, provider string) ([]core.User, error)

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/sderosiaux/saas-watcher/internal/core"
+	"github.com/sderosiaux/unseat/internal/core"
 )
 
 func TestName(t *testing.T) {

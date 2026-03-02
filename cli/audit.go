@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sderosiaux/saas-watcher/config"
-	"github.com/sderosiaux/saas-watcher/internal/store"
+	"github.com/sderosiaux/unseat/config"
+	"github.com/sderosiaux/unseat/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -37,7 +37,7 @@ func runAuditOrphans(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	db, err := store.NewSQLite("saas-watcher.db")
+	db, err := store.NewSQLite("unseat.db")
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -75,7 +75,7 @@ func runAuditOrphans(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(orphans) == 0 {
-		fmt.Println("No orphans detected. Run `saas-watcher sync run` first to populate cache.")
+		fmt.Println("No orphans detected. Run `unseat sync run` first to populate cache.")
 		return nil
 	}
 
@@ -88,6 +88,6 @@ func runAuditOrphans(cmd *cobra.Command, args []string) error {
 }
 
 func runAuditDrift(cmd *cobra.Command, args []string) error {
-	fmt.Println("Drift detection requires a sync. Use `saas-watcher sync dry-run` to preview actions.")
+	fmt.Println("Drift detection requires a sync. Use `unseat sync dry-run` to preview actions.")
 	return nil
 }

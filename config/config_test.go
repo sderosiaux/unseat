@@ -45,7 +45,7 @@ policies:
     - email: cto@mycompany.com
       providers: ["*"]
 `
-	tmpFile, err := os.CreateTemp("", "saas-watcher-*.yaml")
+	tmpFile, err := os.CreateTemp("", "unseat-*.yaml")
 	require.NoError(t, err)
 	defer os.Remove(tmpFile.Name())
 	_, err = tmpFile.WriteString(yaml)

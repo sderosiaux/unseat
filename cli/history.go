@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/sderosiaux/saas-watcher/internal/store"
+	"github.com/sderosiaux/unseat/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +28,7 @@ func init() {
 }
 
 func runHistoryEvents(cmd *cobra.Command, args []string) error {
-	db, err := store.NewSQLite("saas-watcher.db")
+	db, err := store.NewSQLite("unseat.db")
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}

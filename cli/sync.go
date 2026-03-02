@@ -9,10 +9,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sderosiaux/saas-watcher/config"
-	"github.com/sderosiaux/saas-watcher/internal/provider"
-	"github.com/sderosiaux/saas-watcher/internal/store"
-	syncer "github.com/sderosiaux/saas-watcher/internal/sync"
+	"github.com/sderosiaux/unseat/config"
+	"github.com/sderosiaux/unseat/internal/provider"
+	"github.com/sderosiaux/unseat/internal/store"
+	syncer "github.com/sderosiaux/unseat/internal/sync"
 	"github.com/spf13/cobra"
 )
 
@@ -90,7 +90,7 @@ func runSyncWatch(_ *cobra.Command, _ []string) error {
 		interval = watchInterval
 	}
 
-	db, err := store.NewSQLite("saas-watcher.db")
+	db, err := store.NewSQLite("unseat.db")
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -112,7 +112,7 @@ func runSyncWatch(_ *cobra.Command, _ []string) error {
 }
 
 func runSync(ctx context.Context, cfg *config.Config) error {
-	db, err := store.NewSQLite("saas-watcher.db")
+	db, err := store.NewSQLite("unseat.db")
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -163,7 +163,7 @@ func runSync(ctx context.Context, cfg *config.Config) error {
 	}
 
 	if len(plans) == 0 {
-		fmt.Println("No providers found in mappings. Check your saas-watcher.yaml configuration.")
+		fmt.Println("No providers found in mappings. Check your unseat.yaml configuration.")
 	}
 
 	return nil

@@ -2,7 +2,7 @@
 
 ## What This Is
 
-saas-watcher — Identity Lifecycle Management tool. Go binary that cross-references Google Workspace with SaaS providers (Linear, Figma, Slack, Anthropic, HubSpot, Miro, etc.) to automate provisioning/deprovisioning and seat optimization.
+unseat — Identity Lifecycle Management tool. Go binary that cross-references Google Workspace with SaaS providers (Linear, Figma, Slack, Anthropic, HubSpot, Miro, etc.) to automate provisioning/deprovisioning and seat optimization.
 
 ## Architecture
 
@@ -38,7 +38,7 @@ type Provider interface {
 - All providers use `New(token, ...) *Provider` constructor + `WithBaseURL(url) *Provider` for testing
 - `internal/provider/factory.go` → `BuildRegistryWithIdentity(cfg, identity)` instantiates from config
 - Provider config lives in YAML `providers:` map, auth in `internal/auth/providers.go`
-- Credentials stored at `~/.config/saas-watcher/credentials.json`
+- Credentials stored at `~/.config/unseat/credentials.json`
 
 ### Testing Pattern
 
@@ -73,7 +73,7 @@ Uses functional options: `NewReconciler(store, cfg, reg, identity, WithNotifier(
 
 ### Config
 
-YAML at `saas-watcher.yaml`. Key sections:
+YAML at `unseat.yaml`. Key sections:
 - `identity_source` — Google Directory connection
 - `providers` — map of provider name → `{api_key, base_url, extra}`
 - `mappings` — Google Group → provider+role assignments
@@ -84,7 +84,7 @@ YAML at `saas-watcher.yaml`. Key sections:
 ## File Layout
 
 ```
-cmd/saas-watcher/main.go     → cli.Execute()
+cmd/unseat/main.go     → cli.Execute()
 cli/                          Cobra commands (root, audit, sync, providers, history, serve, mcp)
 config/                       YAML parsing
 internal/core/                Types + reconciliation engine
@@ -114,7 +114,7 @@ api/                          Chi REST server + MCP server
 ## Commands
 
 ```
-make build          Build to bin/saas-watcher
+make build          Build to bin/unseat
 make test           Run all tests (-v -race)
 make lint           golangci-lint
 go test ./...       Quick test run
@@ -127,7 +127,7 @@ go test ./...       Quick test run
 3. Add case in `internal/provider/factory.go` `BuildRegistryWithIdentity()`
 4. Add entry in `internal/auth/providers.go` `KnownProviders` map
 5. Add to factory test `TestBuildRegistryWithIdentity_AllProviders`
-6. Update `saas-watcher.example.yaml`
+6. Update `unseat.example.yaml`
 
 ## Conventions
 

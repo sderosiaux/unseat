@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/sderosiaux/saas-watcher/internal/store"
+	"github.com/sderosiaux/unseat/internal/store"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

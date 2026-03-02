@@ -7,9 +7,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/sderosiaux/saas-watcher/config"
-	"github.com/sderosiaux/saas-watcher/internal/core"
-	"github.com/sderosiaux/saas-watcher/internal/store"
+	"github.com/sderosiaux/unseat/config"
+	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

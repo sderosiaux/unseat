@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/sderosiaux/saas-watcher/api"
-	"github.com/sderosiaux/saas-watcher/config"
-	"github.com/sderosiaux/saas-watcher/internal/store"
+	"github.com/sderosiaux/unseat/api"
+	"github.com/sderosiaux/unseat/config"
+	"github.com/sderosiaux/unseat/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +29,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	db, err := store.NewSQLite("saas-watcher.db")
+	db, err := store.NewSQLite("unseat.db")
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -38,6 +38,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	srv := api.NewServer(db, cfg)
 
 	addr := fmt.Sprintf(":%d", servePort)
-	fmt.Printf("Starting saas-watcher API on %s\n", addr)
+	fmt.Printf("Starting unseat API on %s\n", addr)
 	return http.ListenAndServe(addr, srv.Handler())
 }

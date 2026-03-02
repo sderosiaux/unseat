@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 
-	"github.com/sderosiaux/saas-watcher/internal/core"
+	"github.com/sderosiaux/unseat/internal/core"
 )
 
 // Provider is the interface every SaaS connector must implement.

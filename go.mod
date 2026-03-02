@@ -1,4 +1,4 @@
-module github.com/sderosiaux/saas-watcher
+module github.com/sderosiaux/unseat
 
 go 1.25.3
 

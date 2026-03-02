@@ -4,12 +4,12 @@ import (
 	"context"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/sderosiaux/saas-watcher/config"
-	"github.com/sderosiaux/saas-watcher/internal/core"
-	"github.com/sderosiaux/saas-watcher/internal/store"
+	"github.com/sderosiaux/unseat/config"
+	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/store"
 )
 
-// MCPServer exposes saas-watcher capabilities over the MCP protocol.
+// MCPServer exposes unseat capabilities over the MCP protocol.
 type MCPServer struct {
 	server *mcp.Server
 	store  store.Store
@@ -22,7 +22,7 @@ func New(s store.Store, cfg *config.Config) *MCPServer {
 		store:  s,
 		config: cfg,
 		server: mcp.NewServer(&mcp.Implementation{
-			Name:    "saas-watcher",
+			Name:    "unseat",
 			Version: "0.1.0",
 		}, nil),
 	}

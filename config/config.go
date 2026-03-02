@@ -28,13 +28,13 @@ type ProviderConfig struct {
 }
 
 type Mapping struct {
-	Group     string            `yaml:"group"`
-	Providers []ProviderMapping `yaml:"providers"`
+	Group     string            `yaml:"group" json:"group"`
+	Providers []ProviderMapping `yaml:"providers" json:"providers"`
 }
 
 type ProviderMapping struct {
-	Name string `yaml:"name"`
-	Role string `yaml:"role"`
+	Name string `yaml:"name" json:"name"`
+	Role string `yaml:"role" json:"role"`
 }
 
 type Policies struct {

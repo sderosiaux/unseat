@@ -34,76 +34,64 @@ flowchart LR
 
 Kubernetes-style reconciliation: define which Google Groups map to which SaaS providers, and unseat keeps them in sync. Add someone to a group, they get provisioned. Remove them from Google Workspace, their SaaS seats get cleaned up (with configurable grace period and notifications).
 
-## Providers
+## Providers (56)
 
-### Implemented
-
-| Provider | API | Status |
-|----------|-----|--------|
-| Google Directory | Admin SDK | done |
-| Linear | GraphQL | done |
-| Figma | SCIM v2 | done |
-| Slack | SCIM v2 | done |
-| Anthropic (Claude) | Admin API | done |
-| Claude Code | Admin API | done |
-| HubSpot | Settings v3 | done |
-| Miro | REST v2 | done |
-| Framer | — | stub (no API) |
-
-### Roadmap
-
-| # | Provider | Category | API |
-|---|----------|----------|-----|
-| 1 | GitHub | Engineering | SCIM / REST |
-| 2 | GitLab | Engineering | REST |
-| 3 | Jira / Atlassian | Engineering | SCIM / REST |
-| 4 | Confluence | Engineering | (via Atlassian) |
-| 5 | Bitbucket | Engineering | (via Atlassian) |
-| 6 | Notion | Productivity | SCIM / REST |
-| 7 | Asana | Project Management | REST |
-| 8 | Monday.com | Project Management | REST |
-| 9 | ClickUp | Project Management | REST |
-| 10 | Trello | Project Management | REST |
-| 11 | Shortcut | Project Management | REST |
-| 12 | Vercel | Infrastructure | REST |
-| 13 | Netlify | Infrastructure | REST |
-| 14 | AWS IAM | Infrastructure | SDK |
-| 15 | GCP IAM | Infrastructure | SDK |
-| 16 | Azure AD | Infrastructure | Graph API |
-| 17 | Datadog | Observability | REST |
-| 18 | PagerDuty | Observability | REST |
-| 19 | Grafana Cloud | Observability | REST |
-| 20 | New Relic | Observability | REST |
-| 21 | Sentry | Observability | REST |
-| 22 | Salesforce | CRM | SCIM / REST |
-| 23 | Intercom | Support | REST |
-| 24 | Zendesk | Support | REST |
-| 25 | Freshdesk | Support | REST |
-| 26 | Zoom | Communication | SCIM / REST |
-| 27 | Microsoft Teams | Communication | Graph API |
-| 28 | Google Meet | Communication | (via Workspace) |
-| 29 | Discord | Communication | REST |
-| 30 | Loom | Communication | REST |
-| 31 | Dropbox | Storage | SCIM / REST |
-| 32 | Box | Storage | REST |
-| 33 | Google Drive | Storage | (via Workspace) |
-| 34 | OneDrive | Storage | Graph API |
-| 35 | 1Password | Security | REST |
-| 36 | LastPass | Security | REST |
-| 37 | Okta | Identity | SCIM / REST |
-| 38 | Auth0 | Identity | REST |
-| 39 | Snyk | Security | REST |
-| 40 | DocuSign | Legal | REST |
-| 41 | Canva | Design | REST |
-| 42 | Adobe Creative Cloud | Design | SCIM / REST |
-| 43 | Stripe | Finance | REST |
-| 44 | Brex | Finance | REST |
-| 45 | Rippling | HR | REST |
-| 46 | BambooHR | HR | REST |
-| 47 | Deel | HR | REST |
-| 48 | Airtable | Data | REST |
-| 49 | Snowflake | Data | REST |
-| 50 | Databricks | Data | SCIM / REST |
+| Category | Provider | API | Remove |
+|----------|----------|-----|:------:|
+| **Identity** | Google Directory | Admin SDK | yes |
+| | Okta | REST v1 | yes (deactivate) |
+| | Auth0 | Management API v2 | yes |
+| | Azure AD / Entra ID | Microsoft Graph | yes |
+| | AWS IAM Identity Center | SCIM v2 | yes |
+| | GCP IAM | Cloud Identity | yes |
+| **Engineering** | GitHub | REST v3 | yes |
+| | GitLab | REST v4 | yes (block) |
+| | Atlassian (Jira/Confluence) | SCIM v2 | yes |
+| | Linear | GraphQL | yes (suspend) |
+| | Notion | SCIM v2 | yes |
+| | Shortcut | REST v3 | yes |
+| **Project Management** | Asana | REST | yes |
+| | Monday.com | GraphQL | yes (deactivate) |
+| | ClickUp | REST v2 | yes |
+| | Trello | REST | yes |
+| **Infrastructure** | Vercel | REST v3 | yes |
+| | Netlify | REST | yes |
+| **Observability** | Datadog | REST v2 | yes |
+| | PagerDuty | REST v2 | yes |
+| | Grafana | REST | yes |
+| | New Relic | REST v2 | yes |
+| | Sentry | REST | yes |
+| **CRM / Support** | Salesforce | REST / SOQL | yes (deactivate) |
+| | HubSpot | Settings v3 | yes |
+| | Intercom | REST v2 | yes (set away) |
+| | Zendesk | REST v2 | yes |
+| | Freshdesk | REST v2 | yes |
+| **Communication** | Slack | SCIM v2 | yes (deactivate) |
+| | Microsoft Teams | Graph API | yes |
+| | Zoom | REST v2 | yes |
+| | Discord | REST v10 | yes (kick) |
+| | Loom | REST | yes |
+| **Storage** | Dropbox | Business API | yes |
+| | Box | REST v2 | yes |
+| **Security** | 1Password | SCIM v2 | yes (deactivate) |
+| | LastPass | Enterprise API | yes |
+| | Snyk | REST v1 | yes |
+| **Design** | Figma | SCIM v2 | yes (deactivate) |
+| | Canva | SCIM v2 | yes |
+| | Adobe Creative Cloud | UMAPI | yes |
+| **Legal** | DocuSign | Admin API | yes |
+| **AI** | Anthropic (Claude) | Admin API | yes |
+| | Claude Code | Admin API | yes (filtered) |
+| **Finance** | Brex | REST v2 | yes (disable) |
+| | Stripe | — | stub (no API) |
+| **HR** | Rippling | SCIM v2 | yes (deactivate) |
+| | BambooHR | REST | yes (terminate) |
+| | Deel | REST v2 | yes (terminate) |
+| **Data** | Airtable | Enterprise API | yes |
+| | Snowflake | SCIM v2 | yes (deactivate) |
+| | Databricks | SCIM v2 | yes (deactivate) |
+| **Other** | Miro | REST v2 | yes |
+| | Framer | — | stub (no API) |
 
 Adding a provider = implement the `Provider` interface + register in factory.
 

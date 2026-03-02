@@ -2,11 +2,15 @@ package sync
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/sderosiaux/saas-watcher/config"
 	"github.com/sderosiaux/saas-watcher/internal/core"
+	"github.com/sderosiaux/saas-watcher/internal/notify"
 	"github.com/sderosiaux/saas-watcher/internal/provider"
 	"github.com/sderosiaux/saas-watcher/internal/store"
 	"github.com/stretchr/testify/assert"
@@ -322,4 +326,181 @@ func TestReconcilerSyncStateUpdated(t *testing.T) {
 	require.NotNil(t, state)
 	assert.Equal(t, 2, state.UserCount)
 	assert.Equal(t, "ok", state.Status)
+}
+
+// --- Notification integration tests ---
+
+func newSlackMock(t *testing.T, counter *atomic.Int32) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		counter.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+}
+
+func TestReconcilerNotifiesOnRemoval(t *testing.T) {
+	identity := &fakeIdentity{
+		groups: map[string][]core.User{
+			"eng@co.com": {{Email: "alice@co.com"}},
+		},
+	}
+
+	target := &fakeTarget{
+		name:  "linear",
+		users: []core.User{{Email: "alice@co.com"}, {Email: "old@co.com"}},
+		caps:  core.Capabilities{CanAdd: true, CanRemove: true},
+	}
+
+	reg := provider.NewRegistry()
+	reg.Register(target)
+
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	var notifyCount atomic.Int32
+	srv := newSlackMock(t, &notifyCount)
+	defer srv.Close()
+
+	d := notify.NewDispatcher([]string{"slack:#ops"}, notify.NotifyConfig{
+		SlackWebhookURL: srv.URL,
+	})
+
+	cfg := &config.Config{
+		Mappings: []config.Mapping{
+			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
+		},
+		Policies: config.Policies{NotifyOnRemove: true},
+	}
+
+	r := NewReconciler(db, cfg, reg, identity, WithNotifier(d))
+	_, err = r.Run(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, target.removed, "old@co.com")
+	assert.Equal(t, int32(1), notifyCount.Load(), "expected exactly 1 notification for removal")
+}
+
+func TestReconcilerNotifiesOnPendingRemoval(t *testing.T) {
+	identity := &fakeIdentity{
+		groups: map[string][]core.User{
+			"eng@co.com": {{Email: "alice@co.com"}},
+		},
+	}
+
+	target := &fakeTarget{
+		name:  "linear",
+		users: []core.User{{Email: "alice@co.com"}, {Email: "old@co.com"}},
+		caps:  core.Capabilities{CanAdd: true, CanRemove: true},
+	}
+
+	reg := provider.NewRegistry()
+	reg.Register(target)
+
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	var notifyCount atomic.Int32
+	srv := newSlackMock(t, &notifyCount)
+	defer srv.Close()
+
+	d := notify.NewDispatcher([]string{"slack:#ops"}, notify.NotifyConfig{
+		SlackWebhookURL: srv.URL,
+	})
+
+	cfg := &config.Config{
+		Mappings: []config.Mapping{
+			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
+		},
+		Policies: config.Policies{
+			NotifyOnRemove: true,
+			GracePeriod:    72 * time.Hour,
+		},
+	}
+
+	r := NewReconciler(db, cfg, reg, identity, WithNotifier(d))
+	_, err = r.Run(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, target.removed)
+	assert.Equal(t, int32(1), notifyCount.Load(), "expected 1 notification for pending_removal")
+}
+
+func TestReconcilerNoNotificationWhenDisabled(t *testing.T) {
+	identity := &fakeIdentity{
+		groups: map[string][]core.User{
+			"eng@co.com": {{Email: "alice@co.com"}},
+		},
+	}
+
+	target := &fakeTarget{
+		name:  "linear",
+		users: []core.User{{Email: "alice@co.com"}, {Email: "old@co.com"}},
+		caps:  core.Capabilities{CanAdd: true, CanRemove: true},
+	}
+
+	reg := provider.NewRegistry()
+	reg.Register(target)
+
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	var notifyCount atomic.Int32
+	srv := newSlackMock(t, &notifyCount)
+	defer srv.Close()
+
+	d := notify.NewDispatcher([]string{"slack:#ops"}, notify.NotifyConfig{
+		SlackWebhookURL: srv.URL,
+	})
+
+	cfg := &config.Config{
+		Mappings: []config.Mapping{
+			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
+		},
+		Policies: config.Policies{NotifyOnRemove: false},
+	}
+
+	r := NewReconciler(db, cfg, reg, identity, WithNotifier(d))
+	_, err = r.Run(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, target.removed, "old@co.com")
+	assert.Equal(t, int32(0), notifyCount.Load(), "no notifications when notify_on_remove is false")
+}
+
+func TestReconcilerNilNotifierSafe(t *testing.T) {
+	identity := &fakeIdentity{
+		groups: map[string][]core.User{
+			"eng@co.com": {{Email: "alice@co.com"}},
+		},
+	}
+
+	target := &fakeTarget{
+		name:  "linear",
+		users: []core.User{{Email: "alice@co.com"}, {Email: "old@co.com"}},
+		caps:  core.Capabilities{CanAdd: true, CanRemove: true},
+	}
+
+	reg := provider.NewRegistry()
+	reg.Register(target)
+
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	cfg := &config.Config{
+		Mappings: []config.Mapping{
+			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
+		},
+		Policies: config.Policies{NotifyOnRemove: true},
+	}
+
+	// No WithNotifier — notifier is nil
+	r := NewReconciler(db, cfg, reg, identity)
+	_, err = r.Run(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, target.removed, "old@co.com")
 }

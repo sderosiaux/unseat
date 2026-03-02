@@ -11,16 +11,25 @@ Identity Lifecycle Management tool. Cross-references Google Workspace (source of
 
 ## How It Works
 
-```
-Google Workspace (groups)          SaaS Providers
-┌──────────────────────┐           ┌─────────────────┐
-│ design@co.com        │           │ Figma            │
-│ engineering@co.com   │──reconcile──▶ Linear          │
-│ sales@co.com         │           │ Slack            │
-│ all-staff@co.com     │           │ HubSpot, Miro...│
-└──────────────────────┘           └─────────────────┘
+```mermaid
+flowchart LR
+    subgraph GWS["Google Workspace"]
+        G1["design@co.com"]
+        G2["engineering@co.com"]
+        G3["sales@co.com"]
+    end
 
-desired (groups) vs actual (SaaS) = actions
+    R{{"unseat reconcile"}}
+
+    subgraph SaaS["SaaS Providers"]
+        S1["Figma"]
+        S2["Linear"]
+        S3["Slack"]
+        S4["HubSpot, Miro..."]
+    end
+
+    GWS -- desired state --> R
+    R -- add / remove --> SaaS
 ```
 
 Kubernetes-style reconciliation: define which Google Groups map to which SaaS providers, and unseat keeps them in sync. Add someone to a group, they get provisioned. Remove them from Google Workspace, their SaaS seats get cleaned up (with configurable grace period and notifications).
@@ -119,6 +128,20 @@ policies:
       providers: ["*"]        # Never remove
 ```
 
+## Reconciliation Flow
+
+```mermaid
+flowchart TD
+    A["Fetch Google Groups members<br/><small>desired state</small>"] --> B["Fetch SaaS provider users<br/><small>actual state</small>"]
+    B --> C{"Diff"}
+    C -- "in Google, not in SaaS" --> D["Add user"]
+    C -- "in SaaS, not in Google" --> E{"Grace period<br/>expired?"}
+    C -- "role mismatch" --> F["Update role"]
+    E -- no --> G["Mark pending removal"]
+    E -- yes --> H["Remove / suspend user"]
+    D & F & H --> I["Store event + notify"]
+```
+
 ## CLI
 
 ```
@@ -171,41 +194,41 @@ Guardrails: dry_run by default for destructive actions, audit trail for agent vs
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   unseat                       │
-│                                                      │
-│  ┌───────────┐  ┌───────────┐  ┌──────────────────┐ │
-│  │  CLI      │  │  Web API  │  │  Sync Engine     │ │
-│  │  (cobra)  │  │  (chi)    │  │  (cron+webhook)  │ │
-│  └─────┬─────┘  └─────┬─────┘  └────────┬─────────┘ │
-│        │              │                  │           │
-│        │     ┌────────┴──────┐           │           │
-│        │     │  MCP Server   │           │           │
-│        │     └────────┬──────┘           │           │
-│        ▼              ▼                  ▼           │
-│  ┌──────────────────────────────────────────────┐   │
-│  │              Core Engine                      │   │
-│  │  ┌─────────────┐  ┌────────────────────────┐ │   │
-│  │  │ Policy      │  │ Reconciliation Loop    │ │   │
-│  │  │ Engine      │  │ desired(GWS) vs actual │ │   │
-│  │  └─────────────┘  └────────────────────────┘ │   │
-│  └──────────────────────┬───────────────────────┘   │
-│  ┌──────────────────────▼───────────────────────┐   │
-│  │           Provider Registry (9 providers)     │   │
-│  │  ┌────────┐ ┌───────┐ ┌──────┐ ┌──────────┐ │   │
-│  │  │ Google │ │Linear │ │Figma │ │ Slack    │ │   │
-│  │  │  Dir   │ │       │ │      │ │          │ │   │
-│  │  ├────────┤ ├───────┤ ├──────┤ ├──────────┤ │   │
-│  │  │HubSpot │ │ Miro  │ │Anthr.│ │ClaudeCode│ │   │
-│  │  └────────┘ └───────┘ └──────┘ └──────────┘ │   │
-│  └──────────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────────┐   │
-│  │  Storage (SQLite)                             │   │
-│  │  - live state cache  - history (append-only)  │   │
-│  │  - pending removals  - sync state             │   │
-│  └──────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph Interfaces
+        CLI["CLI<br/><small>Cobra</small>"]
+        API["Web API<br/><small>Chi</small>"]
+        MCP["MCP Server<br/><small>stdio</small>"]
+        SYNC["Sync Engine<br/><small>cron + webhook</small>"]
+    end
+
+    subgraph Core["Core Engine"]
+        POLICY["Policy Engine"]
+        RECON["Reconciliation Loop<br/><small>desired vs actual</small>"]
+    end
+
+    subgraph Providers["Provider Registry"]
+        GOOGLE["Google Dir"]
+        LINEAR["Linear"]
+        FIGMA["Figma"]
+        SLACK["Slack"]
+        HUBSPOT["HubSpot"]
+        MIRO["Miro"]
+        ANTHROPIC["Anthropic"]
+        CLAUDE["Claude Code"]
+        FRAMER["Framer"]
+    end
+
+    subgraph Storage["SQLite"]
+        CACHE["live state cache"]
+        HISTORY["history<br/><small>append-only</small>"]
+        PENDING["pending removals"]
+    end
+
+    CLI & API & MCP & SYNC --> Core
+    Core --> Providers
+    Core --> Storage
 ```
 
 ## Project Structure

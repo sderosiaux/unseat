@@ -1,0 +1,6 @@
+bin/
+/saas-watcher
+*.db
+*.sqlite
+saas-watcher.yaml
+.env

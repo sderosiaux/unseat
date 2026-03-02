@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,22 +11,27 @@ import (
 	"github.com/sderosiaux/unseat/internal/core"
 )
 
-const defaultBaseURL = "https://api.github.com"
+const (
+	defaultBaseURL    = "https://api.github.com"
+	defaultGraphQLURL = "https://api.github.com/graphql"
+)
 
 type Provider struct {
-	token   string
-	org     string
-	baseURL string
-	client  *http.Client
+	token      string
+	org        string
+	baseURL    string
+	graphqlURL string
+	client     *http.Client
 }
 
 func New(token, org string) *Provider {
-	return &Provider{token: token, org: org, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, org: org, baseURL: defaultBaseURL, graphqlURL: defaultGraphQLURL, client: &http.Client{}}
 }
 
 // WithBaseURL overrides the API base URL (useful for testing).
 func (p *Provider) WithBaseURL(url string) *Provider {
 	p.baseURL = url
+	p.graphqlURL = url + "/graphql"
 	return p
 }
 
@@ -51,7 +57,7 @@ type orgMember struct {
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	var all []core.User
+	var members []orgMember
 	page := 1
 
 	for {
@@ -78,26 +84,16 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			return nil, fmt.Errorf("github: API error (status %d): %s", resp.StatusCode, body)
 		}
 
-		var members []orgMember
-		if err := json.Unmarshal(body, &members); err != nil {
+		var page_members []orgMember
+		if err := json.Unmarshal(body, &page_members); err != nil {
 			return nil, fmt.Errorf("github: decode response: %w", err)
 		}
 
-		if len(members) == 0 {
+		if len(page_members) == 0 {
 			break
 		}
+		members = append(members, page_members...)
 
-		for _, m := range members {
-			all = append(all, core.User{
-				Email:       m.Login,
-				DisplayName: m.Login,
-				Role:        "member",
-				Status:      "active",
-				ProviderID:  fmt.Sprintf("%d", m.ID),
-			})
-		}
-
-		// Check Link header for next page
 		linkHeader := resp.Header.Get("Link")
 		if !hasNextPage(linkHeader) {
 			break
@@ -105,7 +101,173 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		page++
 	}
 
+	// Try SAML identity mapping first (orgs with SSO).
+	// Maps login -> corporate email (nameId).
+	samlMap := p.fetchSAMLIdentities(ctx)
+
+	// Fetch email for each member: SAML first, then /users/{login} fallback.
+	all := make([]core.User, 0, len(members))
+	for _, m := range members {
+		var email, displayName string
+		if samlEmail, ok := samlMap[m.Login]; ok {
+			email = samlEmail
+			displayName = m.Login
+		} else {
+			email, displayName = p.fetchUserEmail(ctx, m.Login)
+			if displayName == "" {
+				displayName = m.Login
+			}
+		}
+		all = append(all, core.User{
+			Email:       email,
+			DisplayName: displayName,
+			Role:        "member",
+			Status:      "active",
+			ProviderID:  fmt.Sprintf("%d", m.ID),
+			Metadata:    map[string]string{"login": m.Login},
+		})
+	}
+
 	return all, nil
+}
+
+// fetchUserEmail calls /users/{login} to get the user's public email and name.
+// Falls back to {login}@users.noreply.github.com if no public email.
+func (p *Provider) fetchUserEmail(ctx context.Context, login string) (email, name string) {
+	url := fmt.Sprintf("%s/users/%s", p.baseURL, login)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return login, ""
+	}
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return login, ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return login, ""
+	}
+
+	var user struct {
+		Email string `json:"email"`
+		Name  string `json:"name"`
+		Login string `json:"login"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if json.Unmarshal(body, &user) != nil {
+		return login, ""
+	}
+	if user.Email == "" {
+		return user.Login, user.Name
+	}
+	return user.Email, user.Name
+}
+
+// fetchSAMLIdentities queries GitHub's GraphQL API for SAML SSO identity mappings.
+// Returns a map of GitHub login -> SAML nameId (typically the corporate email).
+// Returns an empty map if the org doesn't have SSO or the query fails.
+func (p *Provider) fetchSAMLIdentities(ctx context.Context) map[string]string {
+	result := make(map[string]string)
+	cursor := ""
+
+	for {
+		afterClause := ""
+		if cursor != "" {
+			afterClause = fmt.Sprintf(`, after: "%s"`, cursor)
+		}
+		query := fmt.Sprintf(`{
+			organization(login: "%s") {
+				samlIdentityProvider {
+					externalIdentities(first: 100%s) {
+						pageInfo { hasNextPage endCursor }
+						edges {
+							node {
+								samlIdentity { nameId }
+								user { login }
+							}
+						}
+					}
+				}
+			}
+		}`, p.org, afterClause)
+
+		body, err := json.Marshal(map[string]string{"query": query})
+		if err != nil {
+			return result
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.graphqlURL, bytes.NewReader(body))
+		if err != nil {
+			return result
+		}
+		req.Header.Set("Authorization", "Bearer "+p.token)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := p.client.Do(req)
+		if err != nil {
+			return result
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return result
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return result
+		}
+
+		var gqlResp struct {
+			Data struct {
+				Organization struct {
+					SAMLIdentityProvider *struct {
+						ExternalIdentities struct {
+							PageInfo struct {
+								HasNextPage bool   `json:"hasNextPage"`
+								EndCursor   string `json:"endCursor"`
+							} `json:"pageInfo"`
+							Edges []struct {
+								Node struct {
+									SAMLIdentity struct {
+										NameID string `json:"nameId"`
+									} `json:"samlIdentity"`
+									User *struct {
+										Login string `json:"login"`
+									} `json:"user"`
+								} `json:"node"`
+							} `json:"edges"`
+						} `json:"externalIdentities"`
+					} `json:"samlIdentityProvider"`
+				} `json:"organization"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(respBody, &gqlResp) != nil {
+			return result
+		}
+
+		provider := gqlResp.Data.Organization.SAMLIdentityProvider
+		if provider == nil {
+			return result // org doesn't have SSO
+		}
+
+		for _, edge := range provider.ExternalIdentities.Edges {
+			if edge.Node.User != nil && edge.Node.SAMLIdentity.NameID != "" {
+				result[edge.Node.User.Login] = edge.Node.SAMLIdentity.NameID
+			}
+		}
+
+		if !provider.ExternalIdentities.PageInfo.HasNextPage {
+			break
+		}
+		cursor = provider.ExternalIdentities.PageInfo.EndCursor
+	}
+
+	return result
 }
 
 // hasNextPage checks if the Link header contains a rel="next" link.
@@ -191,18 +353,18 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 		return err
 	}
 
-	var username string
+	var login string
 	for _, u := range users {
 		if u.Email == email {
-			username = u.DisplayName
+			login = u.Metadata["login"]
 			break
 		}
 	}
-	if username == "" {
+	if login == "" {
 		return fmt.Errorf("github: user %s not found", email)
 	}
 
-	url := fmt.Sprintf("%s/orgs/%s/members/%s", p.baseURL, p.org, username)
+	url := fmt.Sprintf("%s/orgs/%s/members/%s", p.baseURL, p.org, login)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
 		return err

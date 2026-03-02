@@ -103,12 +103,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		if displayName == "" {
 			displayName = m.User.Username
 		}
+		// Discord guild members API does not return email.
+		// Fall back to username as identifier; store it in metadata for clarity.
+		email := m.User.Email
+		if email == "" {
+			email = m.User.Username
+		}
 		users = append(users, core.User{
-			Email:       m.User.Email,
+			Email:       email,
 			DisplayName: displayName,
 			Role:        "member",
 			Status:      "active",
 			ProviderID:  m.User.ID,
+			Metadata:    map[string]string{"username": m.User.Username},
 		})
 	}
 	return users, nil

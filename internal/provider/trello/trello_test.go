@@ -56,6 +56,22 @@ func TestListUsers(t *testing.T) {
 	assert.Equal(t, "m2", users[1].ProviderID)
 }
 
+func TestListUsersNoEmail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]trelloMember{
+			{ID: "m1", FullName: "Private User", Username: "privateuser", Email: ""},
+		})
+	}))
+	defer server.Close()
+
+	p := New("api-key", "api-token", "my-org").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	assert.Equal(t, "privateuser", users[0].Email) // falls back to username
+	assert.Equal(t, "privateuser", users[0].Metadata["username"])
+}
+
 func TestRemoveUser(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

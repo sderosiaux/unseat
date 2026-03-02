@@ -92,6 +92,22 @@ func TestListUsersPagination(t *testing.T) {
 	assert.Equal(t, 2, callCount)
 }
 
+func TestListUsersNoEmail(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]discordMember{
+			{User: discordUser{ID: "111", Username: "alice", GlobalName: "Alice Smith"}},
+		})
+	}))
+	defer server.Close()
+
+	p := New("test-token", "guild-123").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	assert.Equal(t, "alice", users[0].Email) // falls back to username
+	assert.Equal(t, "alice", users[0].Metadata["username"])
+}
+
 func TestRemoveUser(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

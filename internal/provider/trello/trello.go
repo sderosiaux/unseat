@@ -86,12 +86,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 
 	users := make([]core.User, 0, len(members))
 	for _, m := range members {
+		// Trello only returns email if member has it set as visible.
+		// Fall back to username as identifier.
+		email := m.Email
+		if email == "" {
+			email = m.Username
+		}
 		users = append(users, core.User{
-			Email:       m.Email,
+			Email:       email,
 			DisplayName: m.FullName,
 			Role:        "member",
 			Status:      "active",
 			ProviderID:  m.ID,
+			Metadata:    map[string]string{"username": m.Username},
 		})
 	}
 	return users, nil

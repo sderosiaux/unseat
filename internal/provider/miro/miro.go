@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -37,11 +38,12 @@ func (p *Provider) Capabilities() core.Capabilities {
 }
 
 type member struct {
-	ID      string `json:"id"`
-	Email   string `json:"email"`
-	Role    string `json:"role"`
-	Active  bool   `json:"active"`
-	License string `json:"license"`
+	ID             string `json:"id"`
+	Email          string `json:"email"`
+	Role           string `json:"role"`
+	Active         bool   `json:"active"`
+	License        string `json:"license"`
+	LastActivityAt string `json:"lastActivityAt,omitempty"`
 }
 
 type membersResponse struct {
@@ -93,13 +95,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			if !m.Active {
 				status = "suspended"
 			}
-			all = append(all, core.User{
+			user := core.User{
 				Email:       m.Email,
 				DisplayName: m.Email,
 				Role:        m.Role,
 				Status:      status,
 				ProviderID:  m.ID,
-			})
+			}
+			if m.LastActivityAt != "" {
+				if t, err := time.Parse(time.RFC3339, m.LastActivityAt); err == nil {
+					user.LastActivityAt = &t
+				}
+			}
+			all = append(all, user)
 		}
 
 		if result.Cursor == "" {

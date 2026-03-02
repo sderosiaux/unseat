@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -52,9 +53,10 @@ type oktaUserProfile struct {
 }
 
 type oktaUser struct {
-	ID      string          `json:"id"`
-	Status  string          `json:"status"`
-	Profile oktaUserProfile `json:"profile"`
+	ID        string          `json:"id"`
+	Status    string          `json:"status"`
+	LastLogin string          `json:"lastLogin,omitempty"`
+	Profile   oktaUserProfile `json:"profile"`
 }
 
 // linkRegexp parses RFC 5988 Link headers: <url>; rel="next"
@@ -114,13 +116,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		if email == "" {
 			email = u.Profile.Login
 		}
-		users = append(users, core.User{
+		user := core.User{
 			Email:       email,
 			DisplayName: displayName,
 			Role:        "member",
 			Status:      normalizeOktaStatus(u.Status),
 			ProviderID:  u.ID,
-		})
+		}
+		if u.LastLogin != "" {
+			if t, err := time.Parse(time.RFC3339, u.LastLogin); err == nil {
+				user.LastActivityAt = &t
+			}
+		}
+		users = append(users, user)
 	}
 	return users, nil
 }

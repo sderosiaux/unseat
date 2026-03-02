@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -39,11 +40,12 @@ func (p *Provider) Capabilities() core.Capabilities {
 }
 
 type zendeskUser struct {
-	ID     int64  `json:"id"`
-	Name   string `json:"name"`
-	Email  string `json:"email"`
-	Role   string `json:"role"`
-	Active bool   `json:"active"`
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Email       string `json:"email"`
+	Role        string `json:"role"`
+	Active      bool   `json:"active"`
+	LastLoginAt string `json:"last_login_at,omitempty"`
 }
 
 type usersResponse struct {
@@ -101,13 +103,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			if !u.Active {
 				status = "suspended"
 			}
-			all = append(all, core.User{
+			user := core.User{
 				Email:       u.Email,
 				DisplayName: u.Name,
 				Role:        u.Role,
 				Status:      status,
 				ProviderID:  strconv.FormatInt(u.ID, 10),
-			})
+			}
+			if u.LastLoginAt != "" {
+				if t, err := time.Parse(time.RFC3339, u.LastLoginAt); err == nil {
+					user.LastActivityAt = &t
+				}
+			}
+			all = append(all, user)
 		}
 
 		if !resp.Meta.HasMore || resp.Links.Next == "" {

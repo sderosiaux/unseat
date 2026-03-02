@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -36,11 +37,12 @@ func (p *Provider) Capabilities() core.Capabilities {
 }
 
 type intercomAdmin struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	Role  string `json:"role"`
-	Away  bool   `json:"away_mode_enabled"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Email         string `json:"email"`
+	Role          string `json:"role"`
+	Away          bool   `json:"away_mode_enabled"`
+	LastRequestAt int64  `json:"last_request_at,omitempty"`
 }
 
 type adminsResponse struct {
@@ -85,13 +87,18 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		if a.Away {
 			status = "away"
 		}
-		users = append(users, core.User{
+		user := core.User{
 			Email:       a.Email,
 			DisplayName: displayName,
 			Role:        a.Role,
 			Status:      status,
 			ProviderID:  a.ID,
-		})
+		}
+		if a.LastRequestAt != 0 {
+			t := time.Unix(a.LastRequestAt, 0).UTC()
+			user.LastActivityAt = &t
+		}
+		users = append(users, user)
 	}
 
 	return users, nil

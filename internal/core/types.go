@@ -6,12 +6,13 @@ import (
 )
 
 type User struct {
-	Email       string            `json:"email"`
-	DisplayName string            `json:"display_name"`
-	Role        string            `json:"role"`
-	Status      string            `json:"status"` // active, suspended, invited
-	ProviderID  string            `json:"provider_id"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	Email          string            `json:"email"`
+	DisplayName    string            `json:"display_name"`
+	Role           string            `json:"role"`
+	Status         string            `json:"status"` // active, suspended, invited
+	ProviderID     string            `json:"provider_id"`
+	LastActivityAt *time.Time        `json:"last_activity_at,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
 }
 
 // Key returns a normalized identifier for deduplication and comparison.

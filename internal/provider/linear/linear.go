@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -83,7 +84,7 @@ func (p *Provider) graphql(ctx context.Context, query string, variables map[stri
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	query := `query { users { nodes { id name email active admin guest } } }`
+	query := `query { users { nodes { id name email active admin guest lastSeen } } }`
 	data, err := p.graphql(ctx, query, nil)
 	if err != nil {
 		return nil, err
@@ -92,12 +93,13 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	var result struct {
 		Users struct {
 			Nodes []struct {
-				ID     string `json:"id"`
-				Name   string `json:"name"`
-				Email  string `json:"email"`
-				Active bool   `json:"active"`
-				Admin  bool   `json:"admin"`
-				Guest  bool   `json:"guest"`
+				ID       string `json:"id"`
+				Name     string `json:"name"`
+				Email    string `json:"email"`
+				Active   bool   `json:"active"`
+				Admin    bool   `json:"admin"`
+				Guest    bool   `json:"guest"`
+				LastSeen string `json:"lastSeen"`
 			} `json:"nodes"`
 		} `json:"users"`
 	}
@@ -117,13 +119,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		} else if u.Guest {
 			role = "guest"
 		}
-		users = append(users, core.User{
+		user := core.User{
 			Email:       u.Email,
 			DisplayName: u.Name,
 			Role:        role,
 			Status:      status,
 			ProviderID:  u.ID,
-		})
+		}
+		if u.LastSeen != "" {
+			if t, err := time.Parse(time.RFC3339, u.LastSeen); err == nil {
+				user.LastActivityAt = &t
+			}
+		}
+		users = append(users, user)
 	}
 	return users, nil
 }

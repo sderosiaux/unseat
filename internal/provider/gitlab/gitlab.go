@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -39,13 +40,14 @@ func (p *Provider) Capabilities() core.Capabilities {
 }
 
 type apiUser struct {
-	ID        int    `json:"id"`
-	Username  string `json:"username"`
-	Name      string `json:"name"`
-	Email     string `json:"email"`
-	State     string `json:"state"`
-	IsAdmin   bool   `json:"is_admin"`
-	AvatarURL string `json:"avatar_url"`
+	ID               int    `json:"id"`
+	Username         string `json:"username"`
+	Name             string `json:"name"`
+	Email            string `json:"email"`
+	State            string `json:"state"`
+	IsAdmin          bool   `json:"is_admin"`
+	AvatarURL        string `json:"avatar_url"`
+	CurrentSignInAt  string `json:"current_sign_in_at,omitempty"`
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
@@ -93,13 +95,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			if u.State == "blocked" {
 				status = "suspended"
 			}
-			all = append(all, core.User{
+			user := core.User{
 				Email:       u.Email,
 				DisplayName: u.Name,
 				Role:        role,
 				Status:      status,
 				ProviderID:  strconv.Itoa(u.ID),
-			})
+			}
+			if u.CurrentSignInAt != "" {
+				if t, err := time.Parse(time.RFC3339, u.CurrentSignInAt); err == nil {
+					user.LastActivityAt = &t
+				}
+			}
+			all = append(all, user)
 		}
 
 		// Check X-Total-Pages for pagination

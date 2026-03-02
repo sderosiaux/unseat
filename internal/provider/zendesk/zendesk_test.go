@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,7 +35,7 @@ func TestListUsers(t *testing.T) {
 
 		json.NewEncoder(w).Encode(usersResponse{
 			Users: []zendeskUser{
-				{ID: 100, Name: "Alice Smith", Email: "alice@co.com", Role: "admin", Active: true},
+				{ID: 100, Name: "Alice Smith", Email: "alice@co.com", Role: "admin", Active: true, LastLoginAt: "2025-01-25T18:00:00Z"},
 				{ID: 200, Name: "Bob Jones", Email: "bob@co.com", Role: "agent", Active: false},
 			},
 			Meta: struct {
@@ -55,10 +56,13 @@ func TestListUsers(t *testing.T) {
 	assert.Equal(t, "admin", users[0].Role)
 	assert.Equal(t, "active", users[0].Status)
 	assert.Equal(t, "100", users[0].ProviderID)
+	require.NotNil(t, users[0].LastActivityAt)
+	assert.Equal(t, time.Date(2025, 1, 25, 18, 0, 0, 0, time.UTC), *users[0].LastActivityAt)
 
 	assert.Equal(t, "bob@co.com", users[1].Email)
 	assert.Equal(t, "agent", users[1].Role)
 	assert.Equal(t, "suspended", users[1].Status)
+	assert.Nil(t, users[1].LastActivityAt)
 }
 
 func TestListUsersPagination(t *testing.T) {

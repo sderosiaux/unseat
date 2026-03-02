@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -38,11 +39,12 @@ func (p *Provider) Capabilities() core.Capabilities {
 }
 
 type sfUser struct {
-	ID       string `json:"Id"`
-	Name     string `json:"Name"`
-	Email    string `json:"Email"`
-	IsActive bool   `json:"IsActive"`
-	Profile  *struct {
+	ID            string `json:"Id"`
+	Name          string `json:"Name"`
+	Email         string `json:"Email"`
+	IsActive      bool   `json:"IsActive"`
+	LastLoginDate string `json:"LastLoginDate,omitempty"`
+	Profile       *struct {
 		Name string `json:"Name"`
 	} `json:"Profile"`
 }
@@ -80,7 +82,7 @@ func (p *Provider) doGet(ctx context.Context, url string) ([]byte, error) {
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	var all []core.User
-	url := fmt.Sprintf("%s/services/data/%s/query?q=SELECT+Id,Name,Email,IsActive,Profile.Name+FROM+User", p.baseURL, apiVersion)
+	url := fmt.Sprintf("%s/services/data/%s/query?q=SELECT+Id,Name,Email,IsActive,LastLoginDate,Profile.Name+FROM+User", p.baseURL, apiVersion)
 
 	for {
 		body, err := p.doGet(ctx, url)
@@ -102,13 +104,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			if !u.IsActive {
 				status = "suspended"
 			}
-			all = append(all, core.User{
+			user := core.User{
 				Email:       u.Email,
 				DisplayName: u.Name,
 				Role:        role,
 				Status:      status,
 				ProviderID:  u.ID,
-			})
+			}
+			if u.LastLoginDate != "" {
+				if t, err := time.Parse(time.RFC3339, u.LastLoginDate); err == nil {
+					user.LastActivityAt = &t
+				}
+			}
+			all = append(all, user)
 		}
 
 		if resp.Done || resp.NextRecordsURL == "" {

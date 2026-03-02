@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +34,7 @@ func TestListUsers(t *testing.T) {
 
 		json.NewEncoder(w).Encode(usersResponse{
 			Results: []hubspotUser{
-				{ID: "1", Email: "alice@co.com", RoleID: "admin-role", SuperAdmin: true, PrimaryTeamID: "team1"},
+				{ID: "1", Email: "alice@co.com", RoleID: "admin-role", SuperAdmin: true, PrimaryTeamID: "team1", LastActiveTime: "2025-03-01T11:00:00Z"},
 				{ID: "2", Email: "bob@co.com", RoleID: "member-role", SuperAdmin: false, PrimaryTeamID: "team2"},
 			},
 		})
@@ -50,10 +51,13 @@ func TestListUsers(t *testing.T) {
 	assert.Equal(t, "super_admin", users[0].Role)
 	assert.Equal(t, "active", users[0].Status)
 	assert.Equal(t, "1", users[0].ProviderID)
+	require.NotNil(t, users[0].LastActivityAt)
+	assert.Equal(t, time.Date(2025, 3, 1, 11, 0, 0, 0, time.UTC), *users[0].LastActivityAt)
 
 	assert.Equal(t, "bob@co.com", users[1].Email)
 	assert.Equal(t, "member", users[1].Role)
 	assert.Equal(t, "2", users[1].ProviderID)
+	assert.Nil(t, users[1].LastActivityAt)
 }
 
 func TestListUsersPagination(t *testing.T) {

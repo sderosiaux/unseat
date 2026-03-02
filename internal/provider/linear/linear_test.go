@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,8 +36,8 @@ func TestListUsers(t *testing.T) {
 			"data": map[string]any{
 				"users": map[string]any{
 					"nodes": []map[string]any{
-						{"id": "u1", "name": "Alice", "email": "alice@co.com", "active": true, "admin": false, "guest": false},
-						{"id": "u2", "name": "Bob", "email": "bob@co.com", "active": true, "admin": true, "guest": false},
+						{"id": "u1", "name": "Alice", "email": "alice@co.com", "active": true, "admin": false, "guest": false, "lastSeen": "2025-01-15T10:30:00Z"},
+						{"id": "u2", "name": "Bob", "email": "bob@co.com", "active": true, "admin": true, "guest": false, "lastSeen": "2025-02-20T14:00:00Z"},
 						{"id": "u3", "name": "Guest User", "email": "guest@co.com", "active": false, "admin": false, "guest": true},
 					},
 				},
@@ -55,12 +56,17 @@ func TestListUsers(t *testing.T) {
 	assert.Equal(t, "member", users[0].Role)
 	assert.Equal(t, "active", users[0].Status)
 	assert.Equal(t, "u1", users[0].ProviderID)
+	require.NotNil(t, users[0].LastActivityAt)
+	assert.Equal(t, time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC), *users[0].LastActivityAt)
 
 	assert.Equal(t, "admin", users[1].Role)
 	assert.Equal(t, "active", users[1].Status)
+	require.NotNil(t, users[1].LastActivityAt)
+	assert.Equal(t, time.Date(2025, 2, 20, 14, 0, 0, 0, time.UTC), *users[1].LastActivityAt)
 
 	assert.Equal(t, "guest", users[2].Role)
 	assert.Equal(t, "suspended", users[2].Status)
+	assert.Nil(t, users[2].LastActivityAt)
 }
 
 func TestRemoveUser(t *testing.T) {

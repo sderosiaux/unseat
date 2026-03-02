@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -44,12 +45,13 @@ type freshdeskContact struct {
 }
 
 type freshdeskAgent struct {
-	ID        int64            `json:"id"`
-	Occasional bool           `json:"occasional"`
-	RoleIDs   []int64          `json:"role_ids"`
-	Available bool             `json:"available"`
-	Contact   freshdeskContact `json:"contact"`
-	Active    bool             `json:"active"`
+	ID         int64            `json:"id"`
+	Occasional bool             `json:"occasional"`
+	RoleIDs    []int64          `json:"role_ids"`
+	Available  bool             `json:"available"`
+	Contact    freshdeskContact `json:"contact"`
+	Active     bool             `json:"active"`
+	LastLoginAt string          `json:"last_login_at,omitempty"`
 }
 
 func (p *Provider) doGet(ctx context.Context, url string) (*http.Response, error) {
@@ -105,13 +107,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			if !a.Available {
 				status = "unavailable"
 			}
-			all = append(all, core.User{
+			user := core.User{
 				Email:       a.Contact.Email,
 				DisplayName: displayName,
 				Role:        role,
 				Status:      status,
 				ProviderID:  strconv.FormatInt(a.ID, 10),
-			})
+			}
+			if a.LastLoginAt != "" {
+				if t, err := time.Parse(time.RFC3339, a.LastLoginAt); err == nil {
+					user.LastActivityAt = &t
+				}
+			}
+			all = append(all, user)
 		}
 
 		if len(agents) < 100 {

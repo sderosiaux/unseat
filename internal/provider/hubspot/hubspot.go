@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -39,11 +40,12 @@ func (p *Provider) Capabilities() core.Capabilities {
 }
 
 type hubspotUser struct {
-	ID            string `json:"id"`
-	Email         string `json:"email"`
-	RoleID        string `json:"roleId"`
-	SuperAdmin    bool   `json:"superAdmin"`
-	PrimaryTeamID string `json:"primaryTeamId"`
+	ID             string `json:"id"`
+	Email          string `json:"email"`
+	RoleID         string `json:"roleId"`
+	SuperAdmin     bool   `json:"superAdmin"`
+	PrimaryTeamID  string `json:"primaryTeamId"`
+	LastActiveTime string `json:"lastActiveTime,omitempty"`
 }
 
 type pagingNext struct {
@@ -108,13 +110,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			if u.SuperAdmin {
 				role = "super_admin"
 			}
-			all = append(all, core.User{
+			user := core.User{
 				Email:       u.Email,
 				DisplayName: u.Email,
 				Role:        role,
 				Status:      "active",
 				ProviderID:  u.ID,
-			})
+			}
+			if u.LastActiveTime != "" {
+				if t, err := time.Parse(time.RFC3339, u.LastActiveTime); err == nil {
+					user.LastActivityAt = &t
+				}
+			}
+			all = append(all, user)
 		}
 
 		if resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == "" {

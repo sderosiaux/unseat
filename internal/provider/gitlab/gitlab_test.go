@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,8 +36,8 @@ func TestListUsers(t *testing.T) {
 
 		w.Header().Set("X-Total-Pages", "1")
 		json.NewEncoder(w).Encode([]apiUser{
-			{ID: 1, Username: "alice", Name: "Alice Smith", Email: "alice@co.com", State: "active", IsAdmin: false},
-			{ID: 2, Username: "bob", Name: "Bob Jones", Email: "bob@co.com", State: "active", IsAdmin: true},
+			{ID: 1, Username: "alice", Name: "Alice Smith", Email: "alice@co.com", State: "active", IsAdmin: false, CurrentSignInAt: "2025-01-10T08:00:00Z"},
+			{ID: 2, Username: "bob", Name: "Bob Jones", Email: "bob@co.com", State: "active", IsAdmin: true, CurrentSignInAt: "2025-03-01T12:30:00Z"},
 		})
 	}))
 	defer server.Close()
@@ -51,9 +52,13 @@ func TestListUsers(t *testing.T) {
 	assert.Equal(t, "member", users[0].Role)
 	assert.Equal(t, "active", users[0].Status)
 	assert.Equal(t, "1", users[0].ProviderID)
+	require.NotNil(t, users[0].LastActivityAt)
+	assert.Equal(t, time.Date(2025, 1, 10, 8, 0, 0, 0, time.UTC), *users[0].LastActivityAt)
 
 	assert.Equal(t, "bob@co.com", users[1].Email)
 	assert.Equal(t, "admin", users[1].Role)
+	require.NotNil(t, users[1].LastActivityAt)
+	assert.Equal(t, time.Date(2025, 3, 1, 12, 30, 0, 0, time.UTC), *users[1].LastActivityAt)
 }
 
 func TestListUsersPagination(t *testing.T) {

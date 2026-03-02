@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -39,14 +40,15 @@ func (p *Provider) Capabilities() core.Capabilities {
 }
 
 type zoomUser struct {
-	ID          string `json:"id"`
-	Email       string `json:"email"`
-	FirstName   string `json:"first_name"`
-	LastName    string `json:"last_name"`
-	DisplayName string `json:"display_name"`
-	Type        int    `json:"type"`
-	Status      string `json:"status"`
-	RoleName    string `json:"role_name"`
+	ID            string `json:"id"`
+	Email         string `json:"email"`
+	FirstName     string `json:"first_name"`
+	LastName      string `json:"last_name"`
+	DisplayName   string `json:"display_name"`
+	Type          int    `json:"type"`
+	Status        string `json:"status"`
+	RoleName      string `json:"role_name"`
+	LastLoginTime string `json:"last_login_time,omitempty"`
 }
 
 type zoomListResponse struct {
@@ -109,13 +111,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		if u.RoleName != "" {
 			role = u.RoleName
 		}
-		users = append(users, core.User{
+		user := core.User{
 			Email:       u.Email,
 			DisplayName: displayName,
 			Role:        role,
 			Status:      "active",
 			ProviderID:  u.ID,
-		})
+		}
+		if u.LastLoginTime != "" {
+			if t, err := time.Parse(time.RFC3339, u.LastLoginTime); err == nil {
+				user.LastActivityAt = &t
+			}
+		}
+		users = append(users, user)
 	}
 	return users, nil
 }

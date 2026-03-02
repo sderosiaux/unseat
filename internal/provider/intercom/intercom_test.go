@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,7 +36,7 @@ func TestListUsers(t *testing.T) {
 		json.NewEncoder(w).Encode(adminsResponse{
 			Type: "admin.list",
 			Admins: []intercomAdmin{
-				{ID: "1", Name: "Alice", Email: "alice@co.com", Role: "admin", Away: false},
+				{ID: "1", Name: "Alice", Email: "alice@co.com", Role: "admin", Away: false, LastRequestAt: 1706745600},
 				{ID: "2", Name: "Bob", Email: "bob@co.com", Role: "admin", Away: true},
 			},
 		})
@@ -52,9 +53,12 @@ func TestListUsers(t *testing.T) {
 	assert.Equal(t, "admin", users[0].Role)
 	assert.Equal(t, "active", users[0].Status)
 	assert.Equal(t, "1", users[0].ProviderID)
+	require.NotNil(t, users[0].LastActivityAt)
+	assert.Equal(t, time.Unix(1706745600, 0).UTC(), *users[0].LastActivityAt)
 
 	assert.Equal(t, "bob@co.com", users[1].Email)
 	assert.Equal(t, "away", users[1].Status)
+	assert.Nil(t, users[1].LastActivityAt)
 }
 
 func TestRemoveUser(t *testing.T) {

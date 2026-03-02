@@ -5,7 +5,7 @@ import "sort"
 // ProviderAuth defines the authentication configuration for a SaaS provider.
 type ProviderAuth struct {
 	Name         string   // Provider identifier
-	AuthMethod   string   // "oauth2", "api_key", "basic", "stub"
+	AuthMethod   string   // "oauth2" or "api_key"
 	AuthURL      string   // OAuth2 authorization endpoint
 	TokenURL     string   // OAuth2 token endpoint
 	Scopes       []string // OAuth2 scopes
@@ -51,8 +51,8 @@ var KnownProviders = map[string]ProviderAuth{
 	},
 	"framer": {
 		Name:         "framer",
-		AuthMethod:   "stub",
-		Instructions: "Framer has no public user management API.",
+		AuthMethod:   "api_key",
+		Instructions: "Framer has no public user management API. Stub provider.",
 	},
 	"slack": {
 		Name:         "slack",
@@ -199,8 +199,8 @@ var KnownProviders = map[string]ProviderAuth{
 	},
 	"freshdesk": {
 		Name:         "freshdesk",
-		AuthMethod:   "basic",
-		Instructions: "Find API key in Freshdesk > Profile settings. Uses Basic auth. Requires extra.subdomain.",
+		AuthMethod:   "api_key",
+		Instructions: "Find API key in Freshdesk > Profile settings. Uses Basic auth (key as username). Requires extra.subdomain.",
 	},
 
 	// --- Communication ---
@@ -282,8 +282,8 @@ var KnownProviders = map[string]ProviderAuth{
 	// --- Finance ---
 	"stripe": {
 		Name:         "stripe",
-		AuthMethod:   "stub",
-		Instructions: "Stripe has no public API for dashboard user management.",
+		AuthMethod:   "api_key",
+		Instructions: "Stripe has no public API for dashboard user management. Stub provider.",
 	},
 	"brex": {
 		Name:         "brex",
@@ -299,8 +299,8 @@ var KnownProviders = map[string]ProviderAuth{
 	},
 	"bamboohr": {
 		Name:         "bamboohr",
-		AuthMethod:   "basic",
-		Instructions: "Create an API key in BambooHR > Account > API Keys. Uses Basic auth. Requires extra.subdomain.",
+		AuthMethod:   "api_key",
+		Instructions: "Create an API key in BambooHR > Account > API Keys. Uses Basic auth (key as username). Requires extra.subdomain.",
 	},
 	"deel": {
 		Name:         "deel",

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -112,13 +113,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		if u.Blocked {
 			status = "suspended"
 		}
-		users = append(users, core.User{
+		user := core.User{
 			Email:       u.Email,
 			DisplayName: u.Name,
 			Role:        "member",
 			Status:      status,
 			ProviderID:  u.UserID,
-		})
+		}
+		if u.LastLogin != "" {
+			if t, err := time.Parse(time.RFC3339, u.LastLogin); err == nil {
+				user.LastActivityAt = &t
+			}
+		}
+		users = append(users, user)
 	}
 	return users, nil
 }

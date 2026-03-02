@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -39,12 +40,13 @@ func (p *Provider) Capabilities() core.Capabilities {
 }
 
 type boxUser struct {
-	ID     string `json:"id"`
-	Type   string `json:"type"`
-	Name   string `json:"name"`
-	Login  string `json:"login"`
-	Role   string `json:"role"`
-	Status string `json:"status"`
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	Name       string `json:"name"`
+	Login      string `json:"login"`
+	Role       string `json:"role"`
+	Status     string `json:"status"`
+	ModifiedAt string `json:"modified_at,omitempty"`
 }
 
 type boxListResponse struct {
@@ -105,13 +107,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		if role == "" {
 			role = "user"
 		}
-		users = append(users, core.User{
+		user := core.User{
 			Email:       u.Login,
 			DisplayName: u.Name,
 			Role:        role,
 			Status:      status,
 			ProviderID:  u.ID,
-		})
+		}
+		if u.ModifiedAt != "" {
+			if t, err := time.Parse(time.RFC3339, u.ModifiedAt); err == nil {
+				user.LastActivityAt = &t
+			}
+		}
+		users = append(users, user)
 	}
 	return users, nil
 }

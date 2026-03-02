@@ -1,0 +1,49 @@
+package provider
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/sderosiaux/saas-watcher/config"
+	"github.com/sderosiaux/saas-watcher/internal/provider/google"
+	"github.com/sderosiaux/saas-watcher/internal/provider/linear"
+)
+
+// BuildRegistry creates a Registry and IdentityProvider from config, initializing
+// real provider clients (Google Directory, Linear, etc.).
+func BuildRegistry(ctx context.Context, cfg *config.Config) (*Registry, IdentityProvider, error) {
+	var identity IdentityProvider
+	switch cfg.IdentitySource.Provider {
+	case "google-directory":
+		gp, err := google.New(ctx, cfg.IdentitySource.CredentialsFile, cfg.IdentitySource.Domain)
+		if err != nil {
+			return nil, nil, fmt.Errorf("init google directory: %w", err)
+		}
+		identity = gp
+	default:
+		return nil, nil, fmt.Errorf("unknown identity provider: %s", cfg.IdentitySource.Provider)
+	}
+	return BuildRegistryWithIdentity(cfg, identity)
+}
+
+// BuildRegistryWithIdentity creates a Registry using a pre-built IdentityProvider.
+// Useful for testing or when the identity source is constructed externally.
+func BuildRegistryWithIdentity(cfg *config.Config, identity IdentityProvider) (*Registry, IdentityProvider, error) {
+	reg := NewRegistry()
+	reg.Register(identity)
+
+	for name, pcfg := range cfg.Providers {
+		switch name {
+		case "linear":
+			p := linear.New(pcfg.APIKey)
+			if pcfg.BaseURL != "" {
+				p = p.WithBaseURL(pcfg.BaseURL)
+			}
+			reg.Register(p)
+		default:
+			return nil, nil, fmt.Errorf("unknown provider: %s", name)
+		}
+	}
+
+	return reg, identity, nil
+}

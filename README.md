@@ -34,19 +34,76 @@ flowchart LR
 
 Kubernetes-style reconciliation: define which Google Groups map to which SaaS providers, and unseat keeps them in sync. Add someone to a group, they get provisioned. Remove them from Google Workspace, their SaaS seats get cleaned up (with configurable grace period and notifications).
 
-## Supported Providers
+## Providers
 
-| Provider | API | Auth | List Users | Remove User |
-|----------|-----|------|:----------:|:-----------:|
-| Google Directory | Admin SDK | OAuth2 / Service Account | yes | yes |
-| Linear | GraphQL | API key | yes | yes (suspend) |
-| Figma | SCIM v2 | Bearer token | yes | yes (deactivate) |
-| Slack | SCIM v2 | SCIM token | yes | yes (deactivate) |
-| Anthropic (Claude) | Admin API | Admin API key | yes | yes |
-| Claude Code | Admin API | Admin API key | yes (filtered by role) | yes |
-| HubSpot | Settings v3 | Bearer token | yes | yes (delete) |
-| Miro | REST v2 | Bearer token | yes | yes |
-| Framer | — | — | no | no |
+### Implemented
+
+| Provider | API | Status |
+|----------|-----|--------|
+| Google Directory | Admin SDK | done |
+| Linear | GraphQL | done |
+| Figma | SCIM v2 | done |
+| Slack | SCIM v2 | done |
+| Anthropic (Claude) | Admin API | done |
+| Claude Code | Admin API | done |
+| HubSpot | Settings v3 | done |
+| Miro | REST v2 | done |
+| Framer | — | stub (no API) |
+
+### Roadmap
+
+| # | Provider | Category | API |
+|---|----------|----------|-----|
+| 1 | GitHub | Engineering | SCIM / REST |
+| 2 | GitLab | Engineering | REST |
+| 3 | Jira / Atlassian | Engineering | SCIM / REST |
+| 4 | Confluence | Engineering | (via Atlassian) |
+| 5 | Bitbucket | Engineering | (via Atlassian) |
+| 6 | Notion | Productivity | SCIM / REST |
+| 7 | Asana | Project Management | REST |
+| 8 | Monday.com | Project Management | REST |
+| 9 | ClickUp | Project Management | REST |
+| 10 | Trello | Project Management | REST |
+| 11 | Shortcut | Project Management | REST |
+| 12 | Vercel | Infrastructure | REST |
+| 13 | Netlify | Infrastructure | REST |
+| 14 | AWS IAM | Infrastructure | SDK |
+| 15 | GCP IAM | Infrastructure | SDK |
+| 16 | Azure AD | Infrastructure | Graph API |
+| 17 | Datadog | Observability | REST |
+| 18 | PagerDuty | Observability | REST |
+| 19 | Grafana Cloud | Observability | REST |
+| 20 | New Relic | Observability | REST |
+| 21 | Sentry | Observability | REST |
+| 22 | Salesforce | CRM | SCIM / REST |
+| 23 | Intercom | Support | REST |
+| 24 | Zendesk | Support | REST |
+| 25 | Freshdesk | Support | REST |
+| 26 | Zoom | Communication | SCIM / REST |
+| 27 | Microsoft Teams | Communication | Graph API |
+| 28 | Google Meet | Communication | (via Workspace) |
+| 29 | Discord | Communication | REST |
+| 30 | Loom | Communication | REST |
+| 31 | Dropbox | Storage | SCIM / REST |
+| 32 | Box | Storage | REST |
+| 33 | Google Drive | Storage | (via Workspace) |
+| 34 | OneDrive | Storage | Graph API |
+| 35 | 1Password | Security | REST |
+| 36 | LastPass | Security | REST |
+| 37 | Okta | Identity | SCIM / REST |
+| 38 | Auth0 | Identity | REST |
+| 39 | Snyk | Security | REST |
+| 40 | DocuSign | Legal | REST |
+| 41 | Canva | Design | REST |
+| 42 | Adobe Creative Cloud | Design | SCIM / REST |
+| 43 | Stripe | Finance | REST |
+| 44 | Brex | Finance | REST |
+| 45 | Rippling | HR | REST |
+| 46 | BambooHR | HR | REST |
+| 47 | Deel | HR | REST |
+| 48 | Airtable | Data | REST |
+| 49 | Snowflake | Data | REST |
+| 50 | Databricks | Data | SCIM / REST |
 
 Adding a provider = implement the `Provider` interface + register in factory.
 
@@ -231,64 +288,6 @@ graph TB
     Core --> Storage
 ```
 
-## Project Structure
-
-```
-unseat/
-├── cmd/unseat/main.go          Entry point
-├── cli/                               Cobra commands
-│   ├── root.go                        Root + global flags
-│   ├── audit.go                       audit orphans/drift
-│   ├── sync.go                        sync run/dry-run/watch
-│   ├── providers.go                   providers list/users
-│   ├── providers_add.go               providers add/supported (OAuth2 flow)
-│   ├── history.go                     history events
-│   ├── serve.go                       REST API server
-│   ├── mcp.go                         MCP server
-│   └── output.go                      JSON/table output helpers
-├── config/config.go                   YAML config parsing
-├── internal/
-│   ├── core/
-│   │   ├── types.go                   User, Group, Event, Capabilities
-│   │   └── engine.go                  Reconciliation logic
-│   ├── provider/
-│   │   ├── provider.go                Provider + IdentityProvider interfaces
-│   │   ├── registry.go                Thread-safe provider registry
-│   │   ├── factory.go                 Build providers from config
-│   │   ├── google/                    Google Directory (identity source)
-│   │   ├── linear/                    Linear (GraphQL)
-│   │   ├── figma/                     Figma (SCIM v2)
-│   │   ├── slack/                     Slack (SCIM v2)
-│   │   ├── anthropic/                 Anthropic (Admin API)
-│   │   ├── claudecode/                Claude Code (Admin API, role-filtered)
-│   │   ├── hubspot/                   HubSpot (Settings v3)
-│   │   ├── miro/                      Miro (REST v2)
-│   │   └── framer/                    Framer (stub)
-│   ├── store/
-│   │   ├── store.go                   Store interface
-│   │   ├── sqlite.go                  SQLite implementation
-│   │   └── migrations/001_init.sql    Schema
-│   ├── sync/
-│   │   ├── reconciler.go              Full sync orchestration
-│   │   └── scheduler.go               Daemon mode (interval-based)
-│   ├── notify/
-│   │   ├── notify.go                  Notifier interface + dispatcher
-│   │   ├── slack.go                   Slack webhook
-│   │   └── email.go                   SMTP email
-│   ├── auth/
-│   │   ├── oauth.go                   OAuth2 browser flow
-│   │   └── providers.go               Known provider auth configs
-│   └── credentials/
-│       └── store.go                   File-based credential persistence
-├── api/
-│   ├── server.go                      Chi HTTP server
-│   ├── handlers.go                    REST handlers
-│   └── mcp/server.go                  MCP server (stdio)
-├── unseat.example.yaml
-├── Makefile
-└── go.mod
-```
-
 ## Adding a Provider
 
 1. Create `internal/provider/<name>/<name>.go`
@@ -318,16 +317,6 @@ make lint           # golangci-lint
 ```
 
 162 tests across 19 packages.
-
-## Tech Stack
-
-- **Go 1.25** — single binary, no external runtime deps
-- **Cobra** — CLI framework
-- **Chi v5** — HTTP router
-- **SQLite** (go-sqlite3) — storage with WAL mode
-- **Goose v3** — migrations
-- **MCP Go SDK** — LLM agent integration
-- **Google Admin SDK** — Google Workspace identity source
 
 ## License
 

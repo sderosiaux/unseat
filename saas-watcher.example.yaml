@@ -1,0 +1,46 @@
+# saas-watcher.example.yaml
+identity_source:
+  provider: google-directory
+  domain: mycompany.com
+  credentials_file: ./credentials.json
+
+providers:
+  linear:
+    api_key: "${LINEAR_API_KEY}"
+  figma:
+    api_key: "${FIGMA_API_KEY}"
+  hubspot:
+    api_key: "${HUBSPOT_API_KEY}"
+
+mappings:
+  - group: design-team@mycompany.com
+    providers:
+      - name: figma
+        role: editor
+      - name: miro
+        role: member
+      - name: framer
+        role: editor
+
+  - group: engineering@mycompany.com
+    providers:
+      - name: linear
+        role: member
+      - name: figma
+        role: viewer
+
+  - group: sales@mycompany.com
+    providers:
+      - name: hubspot
+        role: sales-rep
+
+policies:
+  grace_period: 72h
+  dry_run: true
+  notify_on_remove: true
+  notify_channels:
+    - slack:#it-ops
+    - email:admin@mycompany.com
+  exceptions:
+    - email: cto@mycompany.com
+      providers: ["*"]

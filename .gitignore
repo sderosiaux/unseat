@@ -4,3 +4,5 @@ bin/
 *.sqlite
 saas-watcher.yaml
 .env
+gcp-credentials.json
+*-credentials.json

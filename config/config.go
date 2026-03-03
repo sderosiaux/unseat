@@ -13,6 +13,7 @@ type Config struct {
 	Providers      map[string]ProviderConfig `yaml:"providers"`
 	Mappings       []Mapping                 `yaml:"mappings"`
 	Policies       Policies                  `yaml:"policies"`
+	Aliases        map[string][]string       `yaml:"aliases,omitempty"`
 }
 
 type IdentitySource struct {

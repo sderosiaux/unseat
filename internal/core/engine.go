@@ -21,7 +21,8 @@ type ReconcileInput struct {
 	GroupMappings   []GroupMappingInput
 	DesiredResolver DesiredResolver
 	ActualUsers     []User
-	Exceptions      map[string]bool // lowercased emails to never remove
+	Exceptions      map[string]bool   // lowercased emails to never remove
+	AliasIndex      map[string]string // lowercased alias -> canonical email
 	DryRun          bool
 	GracePeriod     time.Duration
 }
@@ -41,6 +42,43 @@ type UserAction struct {
 	Role  string `json:"role,omitempty"`
 }
 
+// BuildAliasIndex creates a lookup table mapping aliases to canonical emails.
+// It generates implicit aliases from the local part of each desired email,
+// then adds explicit aliases from the config.
+func BuildAliasIndex(explicitAliases map[string][]string, desiredEmails []string) map[string]string {
+	index := make(map[string]string)
+
+	// Implicit: local part of each desired email -> full email.
+	for _, email := range desiredEmails {
+		lower := strings.ToLower(email)
+		if at := strings.IndexByte(lower, '@'); at > 0 {
+			localPart := lower[:at]
+			index[localPart] = lower
+		}
+	}
+
+	// Explicit: config-declared aliases override implicit ones.
+	for canonical, aliases := range explicitAliases {
+		canonicalLower := strings.ToLower(canonical)
+		for _, alias := range aliases {
+			index[strings.ToLower(alias)] = canonicalLower
+		}
+	}
+
+	return index
+}
+
+// resolveEmail maps an email or username to its canonical form via the alias index.
+func (input ReconcileInput) resolveEmail(email string) string {
+	key := strings.ToLower(email)
+	if input.AliasIndex != nil {
+		if canonical, ok := input.AliasIndex[key]; ok {
+			return canonical
+		}
+	}
+	return key
+}
+
 // Reconcile computes the diff between desired (from group resolver) and actual (from SaaS provider).
 // It returns a plan of add/remove actions, respecting exceptions and dry-run mode.
 func Reconcile(ctx context.Context, input ReconcileInput) (*ReconcilePlan, error) {
@@ -57,10 +95,10 @@ func Reconcile(ctx context.Context, input ReconcileInput) (*ReconcilePlan, error
 		}
 	}
 
-	// Build actual set.
+	// Build actual set, resolving aliases to canonical emails.
 	actualSet := make(map[string]bool, len(input.ActualUsers))
 	for _, u := range input.ActualUsers {
-		actualSet[strings.ToLower(u.Email)] = true
+		actualSet[input.resolveEmail(u.Email)] = true
 	}
 
 	exceptions := input.Exceptions
@@ -82,9 +120,9 @@ func Reconcile(ctx context.Context, input ReconcileInput) (*ReconcilePlan, error
 
 	// To remove: in actual but not in desired, minus exceptions.
 	for _, u := range input.ActualUsers {
-		key := strings.ToLower(u.Email)
-		if _, desired := desiredMap[key]; !desired && !exceptions[key] {
-			plan.ToRemove = append(plan.ToRemove, UserAction{Email: key})
+		resolved := input.resolveEmail(u.Email)
+		if _, desired := desiredMap[resolved]; !desired && !exceptions[resolved] {
+			plan.ToRemove = append(plan.ToRemove, UserAction{Email: resolved})
 		}
 	}
 

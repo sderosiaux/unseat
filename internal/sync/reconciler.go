@@ -45,18 +45,39 @@ func WithNotifier(d *notify.Dispatcher) ReconcilerOption {
 // Run executes a single reconciliation pass across all configured providers.
 // Returns one ReconcilePlan per provider processed.
 func (r *Reconciler) Run(ctx context.Context) ([]*core.ReconcilePlan, error) {
-	// Collect unique provider names from mappings.
+	// Collect unique provider names and group emails from mappings.
 	providerNames := make(map[string]bool)
+	groupEmails := make(map[string]bool)
 	for _, m := range r.config.Mappings {
+		groupEmails[m.Group] = true
 		for _, p := range m.Providers {
 			providerNames[p.Name] = true
 		}
 	}
 
+	// Collect all desired emails from identity groups to build alias index.
+	var allDesiredEmails []string
+	seen := make(map[string]bool)
+	for group := range groupEmails {
+		members, err := r.identity.ListGroupMembers(ctx, group)
+		if err != nil {
+			slog.Error("list group members for alias index failed", "group", group, "error", err)
+			continue
+		}
+		for _, m := range members {
+			if !seen[m.Email] {
+				seen[m.Email] = true
+				allDesiredEmails = append(allDesiredEmails, m.Email)
+			}
+		}
+	}
+
+	aliasIndex := core.BuildAliasIndex(r.config.Aliases, allDesiredEmails)
+
 	var plans []*core.ReconcilePlan
 
 	for name := range providerNames {
-		plan, err := r.reconcileProvider(ctx, name)
+		plan, err := r.reconcileProvider(ctx, name, aliasIndex)
 		if err != nil {
 			slog.Error("reconcile failed", "provider", name, "error", err)
 			continue
@@ -67,7 +88,7 @@ func (r *Reconciler) Run(ctx context.Context) ([]*core.ReconcilePlan, error) {
 	return plans, nil
 }
 
-func (r *Reconciler) reconcileProvider(ctx context.Context, name string) (*core.ReconcilePlan, error) {
+func (r *Reconciler) reconcileProvider(ctx context.Context, name string, aliasIndex map[string]string) (*core.ReconcilePlan, error) {
 	p, err := r.registry.Get(name)
 	if err != nil {
 		slog.Warn("provider not registered, skipping", "provider", name, "error", err)
@@ -112,6 +133,7 @@ func (r *Reconciler) reconcileProvider(ctx context.Context, name string) (*core.
 		},
 		ActualUsers: actualUsers,
 		Exceptions:  exceptions,
+		AliasIndex:  aliasIndex,
 		DryRun:      r.config.Policies.DryRun,
 		GracePeriod: r.config.Policies.GracePeriod,
 	})

@@ -126,3 +126,41 @@ func TestIsException(t *testing.T) {
 	assert.False(t, cfg.IsException("contractor@co.com", "figma"))
 	assert.False(t, cfg.IsException("nobody@co.com", "figma"))
 }
+
+func TestLoadAliases(t *testing.T) {
+	yaml := `
+identity_source:
+  provider: google-directory
+  domain: mycompany.com
+
+providers:
+  linear:
+    api_key: test
+
+mappings:
+  - group: eng@mycompany.com
+    providers:
+      - name: linear
+        role: member
+
+aliases:
+  dana@mycompany.com:
+    - dana99
+  river@mycompany.com:
+    - river@personal.net
+    - river-gh
+`
+	tmpFile, err := os.CreateTemp("", "unseat-alias-*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	_, err = tmpFile.WriteString(yaml)
+	require.NoError(t, err)
+	tmpFile.Close()
+
+	cfg, err := Load(tmpFile.Name())
+	require.NoError(t, err)
+
+	assert.Len(t, cfg.Aliases, 2)
+	assert.Equal(t, []string{"dana99"}, cfg.Aliases["dana@mycompany.com"])
+	assert.Equal(t, []string{"river@personal.net", "river-gh"}, cfg.Aliases["river@mycompany.com"])
+}

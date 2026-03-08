@@ -55,14 +55,14 @@ func TestListUsers(t *testing.T) {
 				{Login: "alice", ID: 101},
 				{Login: "bob", ID: 102},
 			})
+		case r.URL.Path == "/orgs/my-org/events":
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"actor": map[string]any{"login": "alice"}, "created_at": activityTime.Format(time.RFC3339)},
+			})
 		case r.URL.Path == "/users/alice":
 			json.NewEncoder(w).Encode(map[string]any{"email": "alice@co.com", "name": "Alice Smith", "login": "alice"})
 		case r.URL.Path == "/users/bob":
 			json.NewEncoder(w).Encode(map[string]any{"email": "bob@co.com", "name": "Bob Jones", "login": "bob"})
-		case r.URL.Path == "/users/alice/events":
-			json.NewEncoder(w).Encode([]map[string]any{{"created_at": activityTime.Format(time.RFC3339)}})
-		case r.URL.Path == "/users/bob/events":
-			json.NewEncoder(w).Encode([]map[string]any{}) // no activity
 		}
 	}))
 	defer server.Close()
@@ -82,7 +82,7 @@ func TestListUsers(t *testing.T) {
 
 	assert.Equal(t, "bob@co.com", users[1].Email)
 	assert.Equal(t, "Bob Jones", users[1].DisplayName)
-	assert.Nil(t, users[1].LastActivityAt)
+	assert.Nil(t, users[1].LastActivityAt) // not in org events
 }
 
 func TestListUsersNoPublicEmail(t *testing.T) {
@@ -92,12 +92,12 @@ func TestListUsersNoPublicEmail(t *testing.T) {
 			return
 		}
 		switch {
+		case r.URL.Path == "/orgs/my-org/events":
+			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.URL.Path == "/orgs/my-org/members":
 			json.NewEncoder(w).Encode([]orgMember{{Login: "private-user", ID: 200}})
 		case r.URL.Path == "/users/private-user":
 			json.NewEncoder(w).Encode(map[string]any{"email": nil, "name": "Private User", "login": "private-user"})
-		case strings.HasSuffix(r.URL.Path, "/events"):
-			json.NewEncoder(w).Encode([]map[string]any{})
 		}
 	}))
 	defer server.Close()
@@ -117,7 +117,7 @@ func TestListUsersPagination(t *testing.T) {
 			noSAMLHandler(w, r)
 			return
 		}
-		if strings.HasSuffix(r.URL.Path, "/events") {
+		if r.URL.Path == "/orgs/my-org/events" {
 			json.NewEncoder(w).Encode([]map[string]any{})
 			return
 		}
@@ -153,7 +153,7 @@ func TestListUsersPagination(t *testing.T) {
 
 func TestListUsersWithSAML(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/events") {
+		if r.URL.Path == "/orgs/my-org/events" {
 			json.NewEncoder(w).Encode([]map[string]any{})
 			return
 		}
@@ -209,7 +209,7 @@ func TestRemoveUser(t *testing.T) {
 			noSAMLHandler(w, r)
 			return
 		}
-		if strings.HasSuffix(r.URL.Path, "/events") {
+		if r.URL.Path == "/orgs/my-org/events" {
 			json.NewEncoder(w).Encode([]map[string]any{})
 			return
 		}

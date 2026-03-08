@@ -106,7 +106,10 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	// Maps login -> corporate email (nameId).
 	samlMap := p.fetchSAMLIdentities(ctx)
 
-	// Fetch email and activity for each member: SAML first, then /users/{login} fallback.
+	// Fetch org-wide activity in one batch (up to 1000 recent events).
+	activityMap := p.fetchOrgActivity(ctx)
+
+	// Fetch email for each member: SAML first, then /users/{login} fallback.
 	all := make([]core.User, 0, len(members))
 	for _, m := range members {
 		var email, displayName string
@@ -127,8 +130,8 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			ProviderID:  fmt.Sprintf("%d", m.ID),
 			Metadata:    map[string]string{"login": m.Login},
 		}
-		if t := p.fetchUserActivity(ctx, m.Login); t != nil {
-			u.LastActivityAt = t
+		if t, ok := activityMap[m.Login]; ok {
+			u.LastActivityAt = &t
 		}
 		all = append(all, u)
 	}
@@ -172,35 +175,53 @@ func (p *Provider) fetchUserEmail(ctx context.Context, login string) (email, nam
 	return user.Email, user.Name
 }
 
-// fetchUserActivity calls /users/{login}/events to get the most recent event timestamp.
-func (p *Provider) fetchUserActivity(ctx context.Context, login string) *time.Time {
-	url := fmt.Sprintf("%s/users/%s/events?per_page=1", p.baseURL, login)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil
-	}
-	req.Header.Set("Authorization", "Bearer "+p.token)
-	req.Header.Set("Accept", "application/vnd.github+json")
+// fetchOrgActivity calls /orgs/{org}/events to build a map of login -> most recent activity.
+// Paginates up to 10 pages (1000 events) to get a reasonable activity window.
+func (p *Provider) fetchOrgActivity(ctx context.Context) map[string]time.Time {
+	activity := make(map[string]time.Time)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
+	for page := 1; page <= 10; page++ {
+		url := fmt.Sprintf("%s/orgs/%s/events?per_page=100&page=%d", p.baseURL, p.org, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return activity
+		}
+		req.Header.Set("Authorization", "Bearer "+p.token)
+		req.Header.Set("Accept", "application/vnd.github+json")
 
-	if resp.StatusCode != http.StatusOK {
-		return nil
+		resp, err := p.client.Do(req)
+		if err != nil {
+			return activity
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return activity
+		}
+
+		var events []struct {
+			Actor struct {
+				Login string `json:"login"`
+			} `json:"actor"`
+			CreatedAt time.Time `json:"created_at"`
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if json.Unmarshal(body, &events) != nil || len(events) == 0 {
+			break
+		}
+
+		for _, e := range events {
+			if _, exists := activity[e.Actor.Login]; !exists {
+				activity[e.Actor.Login] = e.CreatedAt.UTC()
+			}
+		}
+
+		if !hasNextPage(resp.Header.Get("Link")) {
+			break
+		}
 	}
 
-	var events []struct {
-		CreatedAt time.Time `json:"created_at"`
-	}
-	body, _ := io.ReadAll(resp.Body)
-	if json.Unmarshal(body, &events) != nil || len(events) == 0 {
-		return nil
-	}
-	t := events[0].CreatedAt.UTC()
-	return &t
+	return activity
 }
 
 // fetchSAMLIdentities queries GitHub's GraphQL API for SAML SSO identity mappings.

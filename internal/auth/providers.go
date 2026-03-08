@@ -283,7 +283,7 @@ var KnownProviders = map[string]ProviderAuth{
 	"stripe": {
 		Name:         "stripe",
 		AuthMethod:   "api_key",
-		Instructions: "Stripe has no public API for dashboard user management. Stub provider.",
+		Instructions: "Enable SSO+SCIM in Stripe Dashboard (Team and Security > SCIM provisioning). Use the generated SCIM API key.",
 	},
 	"brex": {
 		Name:         "brex",

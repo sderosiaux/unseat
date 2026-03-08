@@ -219,7 +219,7 @@ func buildProvider(name string, pcfg config.ProviderConfig) (Provider, error) {
 
 	// --- Finance ---
 	case "stripe":
-		return stripe.New(), nil
+		return optBase(stripe.New(pcfg.APIKey), pcfg.BaseURL), nil
 	case "brex":
 		return optBase(brex.New(pcfg.APIKey), pcfg.BaseURL), nil
 

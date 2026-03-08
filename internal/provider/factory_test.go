@@ -168,7 +168,7 @@ func TestBuildRegistryWithIdentity_AllProviders(t *testing.T) {
 			"adobe":    {APIKey: "k", ExtraArgs: extra("org_id", "o")},
 			"docusign": {APIKey: "k", ExtraArgs: extra("org_id", "o")},
 			// Finance
-			"stripe": {},
+			"stripe": {APIKey: "k"},
 			"brex":   {APIKey: "k"},
 			// HR
 			"rippling": {APIKey: "k"},

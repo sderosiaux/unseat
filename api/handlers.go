@@ -77,6 +77,22 @@ func (s *Server) handleGetMappings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.config.Mappings)
 }
 
+func (s *Server) handleAllInactiveUsers(w http.ResponseWriter, r *http.Request) {
+	days := 30
+	if d := r.URL.Query().Get("days"); d != "" {
+		if n, err := strconv.Atoi(d); err == nil {
+			days = n
+		}
+	}
+	since := time.Now().AddDate(0, 0, -days)
+	users, err := s.store.GetInactiveUsers(r.Context(), since)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, users)
+}
+
 func (s *Server) handleInactiveUsers(w http.ResponseWriter, r *http.Request) {
 	days := 30
 	if d := r.URL.Query().Get("days"); d != "" {

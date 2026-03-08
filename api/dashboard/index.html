@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>unseat</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>unseat</h1>
+      <span class="subtitle">Identity Lifecycle Management</span>
+    </div>
+    <nav>
+      <button class="nav-btn active" data-view="overview">Overview</button>
+      <button class="nav-btn" data-view="users">Users</button>
+      <button class="nav-btn" data-view="inactive">Inactive</button>
+      <button class="nav-btn" data-view="events">Events</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="view-overview" class="view active">
+      <div class="section-header">
+        <h2>Providers</h2>
+      </div>
+      <div id="provider-cards" class="cards"></div>
+      <div class="section-header" style="margin-top: 2rem">
+        <h2>Mappings</h2>
+      </div>
+      <div id="mappings-list"></div>
+    </section>
+
+    <section id="view-users" class="view">
+      <div class="section-header">
+        <h2>Users</h2>
+        <div class="controls">
+          <select id="users-provider-filter">
+            <option value="">All providers</option>
+          </select>
+          <input type="search" id="users-search" placeholder="Filter by email or name...">
+        </div>
+      </div>
+      <div id="users-table-wrap"></div>
+    </section>
+
+    <section id="view-inactive" class="view">
+      <div class="section-header">
+        <h2>Inactive Users</h2>
+        <div class="controls">
+          <label>
+            Inactive for
+            <input type="number" id="inactive-days" value="30" min="1" max="365" style="width:4rem">
+            days
+          </label>
+          <button class="btn-sm" id="inactive-refresh">Refresh</button>
+        </div>
+      </div>
+      <div id="inactive-table-wrap"></div>
+    </section>
+
+    <section id="view-events" class="view">
+      <div class="section-header">
+        <h2>Events</h2>
+        <div class="controls">
+          <label>
+            Show last
+            <input type="number" id="events-limit" value="50" min="1" max="500" style="width:4rem">
+          </label>
+          <button class="btn-sm" id="events-refresh">Refresh</button>
+        </div>
+      </div>
+      <div id="events-table-wrap"></div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

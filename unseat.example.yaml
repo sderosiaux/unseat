@@ -58,6 +58,17 @@ mappings:
       - name: hubspot
         role: sales-rep
 
+# Aliases map provider usernames/personal emails to corporate emails.
+# Implicit aliases are automatic: the local part of each identity email
+# (e.g. "jsmith" from "jsmith@mycompany.com") is matched automatically.
+# Only declare explicit aliases for non-obvious mappings.
+aliases:
+  jsmith@mycompany.com:
+    - jsmith-personal@gmail.com
+    - smithy42
+  maria.garcia@mycompany.com:
+    - mariadev
+
 policies:
   grace_period: 72h
   dry_run: true

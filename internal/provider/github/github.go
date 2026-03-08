@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
@@ -130,7 +131,7 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			ProviderID:  fmt.Sprintf("%d", m.ID),
 			Metadata:    map[string]string{"login": m.Login},
 		}
-		if t, ok := activityMap[m.Login]; ok {
+		if t, ok := activityMap[strings.ToLower(m.Login)]; ok {
 			u.LastActivityAt = &t
 		}
 		all = append(all, u)
@@ -211,8 +212,9 @@ func (p *Provider) fetchOrgActivity(ctx context.Context) map[string]time.Time {
 		}
 
 		for _, e := range events {
-			if _, exists := activity[e.Actor.Login]; !exists {
-				activity[e.Actor.Login] = e.CreatedAt.UTC()
+			key := strings.ToLower(e.Actor.Login)
+			if _, exists := activity[key]; !exists {
+				activity[key] = e.CreatedAt.UTC()
 			}
 		}
 

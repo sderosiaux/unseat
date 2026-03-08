@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,7 @@ func noSAMLHandler(w http.ResponseWriter, _ *http.Request) {
 }
 
 func TestListUsers(t *testing.T) {
+	activityTime := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/graphql" {
 			noSAMLHandler(w, r)
@@ -57,6 +59,10 @@ func TestListUsers(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{"email": "alice@co.com", "name": "Alice Smith", "login": "alice"})
 		case r.URL.Path == "/users/bob":
 			json.NewEncoder(w).Encode(map[string]any{"email": "bob@co.com", "name": "Bob Jones", "login": "bob"})
+		case r.URL.Path == "/users/alice/events":
+			json.NewEncoder(w).Encode([]map[string]any{{"created_at": activityTime.Format(time.RFC3339)}})
+		case r.URL.Path == "/users/bob/events":
+			json.NewEncoder(w).Encode([]map[string]any{}) // no activity
 		}
 	}))
 	defer server.Close()
@@ -71,9 +77,12 @@ func TestListUsers(t *testing.T) {
 	assert.Equal(t, "member", users[0].Role)
 	assert.Equal(t, "active", users[0].Status)
 	assert.Equal(t, "101", users[0].ProviderID)
+	require.NotNil(t, users[0].LastActivityAt)
+	assert.Equal(t, activityTime, *users[0].LastActivityAt)
 
 	assert.Equal(t, "bob@co.com", users[1].Email)
 	assert.Equal(t, "Bob Jones", users[1].DisplayName)
+	assert.Nil(t, users[1].LastActivityAt)
 }
 
 func TestListUsersNoPublicEmail(t *testing.T) {
@@ -87,6 +96,8 @@ func TestListUsersNoPublicEmail(t *testing.T) {
 			json.NewEncoder(w).Encode([]orgMember{{Login: "private-user", ID: 200}})
 		case r.URL.Path == "/users/private-user":
 			json.NewEncoder(w).Encode(map[string]any{"email": nil, "name": "Private User", "login": "private-user"})
+		case strings.HasSuffix(r.URL.Path, "/events"):
+			json.NewEncoder(w).Encode([]map[string]any{})
 		}
 	}))
 	defer server.Close()
@@ -104,6 +115,10 @@ func TestListUsersPagination(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/graphql" {
 			noSAMLHandler(w, r)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/events") {
+			json.NewEncoder(w).Encode([]map[string]any{})
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/users/") {
@@ -138,6 +153,10 @@ func TestListUsersPagination(t *testing.T) {
 
 func TestListUsersWithSAML(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/events") {
+			json.NewEncoder(w).Encode([]map[string]any{})
+			return
+		}
 		switch {
 		case r.URL.Path == "/graphql":
 			json.NewEncoder(w).Encode(map[string]any{
@@ -188,6 +207,10 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/graphql" {
 			noSAMLHandler(w, r)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/events") {
+			json.NewEncoder(w).Encode([]map[string]any{})
 			return
 		}
 		switch {

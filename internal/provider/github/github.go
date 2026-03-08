@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
 )
@@ -105,7 +106,7 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	// Maps login -> corporate email (nameId).
 	samlMap := p.fetchSAMLIdentities(ctx)
 
-	// Fetch email for each member: SAML first, then /users/{login} fallback.
+	// Fetch email and activity for each member: SAML first, then /users/{login} fallback.
 	all := make([]core.User, 0, len(members))
 	for _, m := range members {
 		var email, displayName string
@@ -118,14 +119,18 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 				displayName = m.Login
 			}
 		}
-		all = append(all, core.User{
+		u := core.User{
 			Email:       email,
 			DisplayName: displayName,
 			Role:        "member",
 			Status:      "active",
 			ProviderID:  fmt.Sprintf("%d", m.ID),
 			Metadata:    map[string]string{"login": m.Login},
-		})
+		}
+		if t := p.fetchUserActivity(ctx, m.Login); t != nil {
+			u.LastActivityAt = t
+		}
+		all = append(all, u)
 	}
 
 	return all, nil
@@ -165,6 +170,37 @@ func (p *Provider) fetchUserEmail(ctx context.Context, login string) (email, nam
 		return user.Login, user.Name
 	}
 	return user.Email, user.Name
+}
+
+// fetchUserActivity calls /users/{login}/events to get the most recent event timestamp.
+func (p *Provider) fetchUserActivity(ctx context.Context, login string) *time.Time {
+	url := fmt.Sprintf("%s/users/%s/events?per_page=1", p.baseURL, login)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	var events []struct {
+		CreatedAt time.Time `json:"created_at"`
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if json.Unmarshal(body, &events) != nil || len(events) == 0 {
+		return nil
+	}
+	t := events[0].CreatedAt.UTC()
+	return &t
 }
 
 // fetchSAMLIdentities queries GitHub's GraphQL API for SAML SSO identity mappings.

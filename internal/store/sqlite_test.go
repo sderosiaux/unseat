@@ -84,6 +84,52 @@ func TestPendingRemovals(t *testing.T) {
 	assert.Len(t, expired, 0)
 }
 
+func TestUpsertAndGetProviderUsers_WithLastActivity(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	users := []core.User{
+		{Email: "active@co.com", DisplayName: "Active", Role: "member", Status: "active", LastActivityAt: &now},
+		{Email: "inactive@co.com", DisplayName: "Inactive", Role: "member", Status: "active"},
+	}
+	require.NoError(t, s.UpsertProviderUsers(ctx, "linear", users))
+
+	got, err := s.GetProviderUsers(ctx, "linear")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+
+	assert.NotNil(t, got[0].LastActivityAt)
+	assert.Equal(t, now.Unix(), got[0].LastActivityAt.Unix())
+	assert.Nil(t, got[1].LastActivityAt)
+}
+
+func TestGetInactiveUsers(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	recent := time.Now().UTC().Truncate(time.Second)
+	old := time.Now().AddDate(0, 0, -60).UTC().Truncate(time.Second)
+
+	users := []core.User{
+		{Email: "recent@co.com", DisplayName: "Recent", Role: "member", Status: "active", LastActivityAt: &recent},
+		{Email: "old@co.com", DisplayName: "Old", Role: "member", Status: "active", LastActivityAt: &old},
+		{Email: "never@co.com", DisplayName: "Never", Role: "member", Status: "active"},
+	}
+	require.NoError(t, s.UpsertProviderUsers(ctx, "linear", users))
+
+	since := time.Now().AddDate(0, 0, -30)
+	inactive, err := s.GetInactiveUsers(ctx, since)
+	require.NoError(t, err)
+	assert.Len(t, inactive, 2) // old + never
+
+	// "never" should be first (NULL sorts first), then "old"
+	assert.Equal(t, "never@co.com", inactive[0].Email)
+	assert.Nil(t, inactive[0].LastActivityAt)
+	assert.Equal(t, "old@co.com", inactive[1].Email)
+	assert.NotNil(t, inactive[1].LastActivityAt)
+}
+
 func TestSyncState(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

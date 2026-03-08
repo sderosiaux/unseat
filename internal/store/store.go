@@ -11,6 +11,7 @@ import (
 type Store interface {
 	UpsertProviderUsers(ctx context.Context, provider string, users []core.User) error
 	GetProviderUsers(ctx context.Context, provider string) ([]core.User, error)
+	GetInactiveUsers(ctx context.Context, since time.Time) ([]InactiveUser, error)
 	InsertEvent(ctx context.Context, event core.Event) error
 	ListEvents(ctx context.Context, filter EventFilter) ([]core.Event, error)
 	InsertPendingRemoval(ctx context.Context, provider, email string, expiresAt time.Time) error
@@ -38,6 +39,15 @@ type PendingRemoval struct {
 	DetectedAt time.Time `json:"detected_at"`
 	ExpiresAt  time.Time `json:"expires_at"`
 	Cancelled  bool      `json:"cancelled"`
+}
+
+// InactiveUser represents a user with no recent activity across any provider.
+type InactiveUser struct {
+	Provider       string     `json:"provider"`
+	Email          string     `json:"email"`
+	DisplayName    string     `json:"display_name"`
+	LastActivityAt *time.Time `json:"last_activity_at"`
+	Status         string     `json:"status"`
 }
 
 // SyncState tracks the last sync status for a provider.

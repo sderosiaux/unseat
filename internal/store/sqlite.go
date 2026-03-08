@@ -62,8 +62,8 @@ func (s *SQLite) UpsertProviderUsers(ctx context.Context, provider string, users
 	}
 
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO provider_users (provider, email, display_name, role, status, provider_id, synced_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`)
+		`INSERT INTO provider_users (provider, email, display_name, role, status, provider_id, synced_at, last_activity_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -71,7 +71,12 @@ func (s *SQLite) UpsertProviderUsers(ctx context.Context, provider string, users
 
 	now := time.Now().UTC()
 	for _, u := range users {
-		if _, err := stmt.ExecContext(ctx, provider, u.Email, u.DisplayName, u.Role, u.Status, u.ProviderID, now); err != nil {
+		var lastActivity *time.Time
+		if u.LastActivityAt != nil {
+			t := u.LastActivityAt.UTC()
+			lastActivity = &t
+		}
+		if _, err := stmt.ExecContext(ctx, provider, u.Email, u.DisplayName, u.Role, u.Status, u.ProviderID, now, lastActivity); err != nil {
 			return err
 		}
 	}
@@ -80,7 +85,7 @@ func (s *SQLite) UpsertProviderUsers(ctx context.Context, provider string, users
 
 func (s *SQLite) GetProviderUsers(ctx context.Context, provider string) ([]core.User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT email, display_name, role, status, provider_id FROM provider_users WHERE provider = ? ORDER BY email`, provider)
+		`SELECT email, display_name, role, status, provider_id, last_activity_at FROM provider_users WHERE provider = ? ORDER BY email`, provider)
 	if err != nil {
 		return nil, err
 	}
@@ -89,8 +94,39 @@ func (s *SQLite) GetProviderUsers(ctx context.Context, provider string) ([]core.
 	var users []core.User
 	for rows.Next() {
 		var u core.User
-		if err := rows.Scan(&u.Email, &u.DisplayName, &u.Role, &u.Status, &u.ProviderID); err != nil {
+		var lastActivity sql.NullTime
+		if err := rows.Scan(&u.Email, &u.DisplayName, &u.Role, &u.Status, &u.ProviderID, &lastActivity); err != nil {
 			return nil, err
+		}
+		if lastActivity.Valid {
+			t := lastActivity.Time
+			u.LastActivityAt = &t
+		}
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+func (s *SQLite) GetInactiveUsers(ctx context.Context, since time.Time) ([]InactiveUser, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT provider, email, display_name, last_activity_at, status FROM provider_users
+		 WHERE last_activity_at IS NULL OR last_activity_at < ?
+		 ORDER BY last_activity_at ASC, provider, email`, since.UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []InactiveUser
+	for rows.Next() {
+		var u InactiveUser
+		var lastActivity sql.NullTime
+		if err := rows.Scan(&u.Provider, &u.Email, &u.DisplayName, &lastActivity, &u.Status); err != nil {
+			return nil, err
+		}
+		if lastActivity.Valid {
+			t := lastActivity.Time
+			u.LastActivityAt = &t
 		}
 		users = append(users, u)
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/sderosiaux/unseat/internal/store"
@@ -74,4 +75,28 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetMappings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.config.Mappings)
+}
+
+func (s *Server) handleInactiveUsers(w http.ResponseWriter, r *http.Request) {
+	days := 30
+	if d := r.URL.Query().Get("days"); d != "" {
+		if n, err := strconv.Atoi(d); err == nil {
+			days = n
+		}
+	}
+	since := time.Now().AddDate(0, 0, -days)
+	users, err := s.store.GetInactiveUsers(r.Context(), since)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	name := chi.URLParam(r, "name")
+	var filtered []store.InactiveUser
+	for _, u := range users {
+		if u.Provider == name {
+			filtered = append(filtered, u)
+		}
+	}
+	writeJSON(w, http.StatusOK, filtered)
 }

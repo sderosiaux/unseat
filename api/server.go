@@ -30,6 +30,7 @@ func (s *Server) setupRoutes() {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/providers", s.handleListProviders)
 		r.Get("/providers/{name}/users", s.handleProviderUsers)
+		r.Get("/providers/{name}/inactive", s.handleInactiveUsers)
 		r.Get("/orphans", s.handleListOrphans)
 		r.Get("/history/events", s.handleListEvents)
 		r.Get("/mappings", s.handleGetMappings)

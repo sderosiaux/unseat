@@ -26,7 +26,6 @@ import (
 	"github.com/sderosiaux/unseat/internal/provider/docusign"
 	"github.com/sderosiaux/unseat/internal/provider/dropbox"
 	"github.com/sderosiaux/unseat/internal/provider/figma"
-	"github.com/sderosiaux/unseat/internal/provider/framer"
 	"github.com/sderosiaux/unseat/internal/provider/freshdesk"
 	"github.com/sderosiaux/unseat/internal/provider/gcpiam"
 	githubprovider "github.com/sderosiaux/unseat/internal/provider/github"
@@ -116,8 +115,6 @@ func buildProvider(name string, pcfg config.ProviderConfig) (Provider, error) {
 		return optBase(hubspot.New(pcfg.APIKey), pcfg.BaseURL), nil
 	case "miro":
 		return optBase(miro.New(pcfg.APIKey, pcfg.ExtraArgs["org_id"]), pcfg.BaseURL), nil
-	case "framer":
-		return framer.New(), nil
 	case "slack":
 		return optBase(slackprovider.New(pcfg.APIKey), pcfg.BaseURL), nil
 	case "anthropic":

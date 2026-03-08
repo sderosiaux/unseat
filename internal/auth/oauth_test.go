@@ -28,7 +28,6 @@ func TestListKnownProviders(t *testing.T) {
 	assert.Contains(t, providers, "linear")
 	assert.Contains(t, providers, "hubspot")
 	assert.Contains(t, providers, "miro")
-	assert.Contains(t, providers, "framer")
 	assert.Contains(t, providers, "google-directory")
 	// Verify sorted
 	for i := 1; i < len(providers); i++ {

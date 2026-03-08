@@ -117,7 +117,6 @@ func TestBuildRegistryWithIdentity_AllProviders(t *testing.T) {
 			"figma":       {APIKey: "k", ExtraArgs: extra("tenant_id", "t")},
 			"hubspot":     {APIKey: "k"},
 			"miro":        {APIKey: "k", ExtraArgs: extra("org_id", "o")},
-			"framer":      {},
 			"slack":       {APIKey: "k"},
 			"anthropic":   {APIKey: "k"},
 			"claude-code": {APIKey: "k"},
@@ -186,11 +185,11 @@ func TestBuildRegistryWithIdentity_AllProviders(t *testing.T) {
 	require.NoError(t, err)
 
 	names := reg.List()
-	assert.Len(t, names, 54) // google-directory + 53 providers
+	assert.Len(t, names, 53) // google-directory + 52 providers
 
 	expectedNames := []string{
 		"google-directory",
-		"linear", "figma", "hubspot", "miro", "framer", "slack", "anthropic", "claude-code",
+		"linear", "figma", "hubspot", "miro", "slack", "anthropic", "claude-code",
 		"github", "gitlab", "atlassian", "notion", "shortcut",
 		"asana", "monday", "clickup", "trello", "vercel",
 		"netlify", "aws-iam", "gcp-iam", "azure-ad", "microsoft-teams",

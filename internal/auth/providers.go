@@ -49,11 +49,6 @@ var KnownProviders = map[string]ProviderAuth{
 		AuthMethod:   "api_key",
 		Instructions: "Create a token at https://miro.com/app/settings/user-profile/apps. Requires org_id.",
 	},
-	"framer": {
-		Name:         "framer",
-		AuthMethod:   "api_key",
-		Instructions: "Framer has no public user management API. Stub provider.",
-	},
 	"slack": {
 		Name:         "slack",
 		AuthMethod:   "api_key",

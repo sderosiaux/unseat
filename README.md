@@ -34,7 +34,7 @@ flowchart LR
 
 Kubernetes-style reconciliation: define which Google Groups map to which SaaS providers, and unseat keeps them in sync. Add someone to a group, they get provisioned. Remove them from Google Workspace, their SaaS seats get cleaned up (with configurable grace period and notifications).
 
-## Providers (56)
+## Providers (55)
 
 | Category | Provider | API | Remove |
 |----------|----------|-----|:------:|
@@ -83,7 +83,7 @@ Kubernetes-style reconciliation: define which Google Groups map to which SaaS pr
 | **AI** | Anthropic (Claude) | Admin API | yes |
 | | Claude Code | Admin API | yes (filtered) |
 | **Finance** | Brex | REST v2 | yes (disable) |
-| | Stripe | — | stub (no API) |
+| | Stripe | SCIM v2 | yes |
 | **HR** | Rippling | SCIM v2 | yes (deactivate) |
 | | BambooHR | REST | yes (terminate) |
 | | Deel | REST v2 | yes (terminate) |
@@ -91,7 +91,6 @@ Kubernetes-style reconciliation: define which Google Groups map to which SaaS pr
 | | Snowflake | SCIM v2 | yes (deactivate) |
 | | Databricks | SCIM v2 | yes (deactivate) |
 | **Other** | Miro | REST v2 | yes |
-| | Framer | — | stub (no API) |
 
 Adding a provider = implement the `Provider` interface + register in factory.
 
@@ -262,7 +261,6 @@ graph TB
         MIRO["Miro"]
         ANTHROPIC["Anthropic"]
         CLAUDE["Claude Code"]
-        FRAMER["Framer"]
     end
 
     subgraph Storage["SQLite"]

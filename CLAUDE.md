@@ -97,7 +97,7 @@ internal/credentials/         File-based credential store
 api/                          Chi REST server + MCP server
 ```
 
-## Providers (9 total)
+## Providers (55 total, see README for full list)
 
 | Provider | Package | API Type | Notes |
 |----------|---------|----------|-------|
@@ -109,7 +109,6 @@ api/                          Chi REST server + MCP server
 | claude-code | provider/claudecode | REST (Admin API) | Same API as anthropic, filters role=claude_code_user |
 | hubspot | provider/hubspot | REST (Settings v3) | RemoveUser = permanent delete |
 | miro | provider/miro | REST v2 | Enterprise only, org_id in extra config |
-| framer | provider/framer | — | Stub, no public API |
 
 ## Commands
 

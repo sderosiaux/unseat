@@ -17,7 +17,6 @@ providers:
     api_key: "${MIRO_ACCESS_TOKEN}"
     extra:
       org_id: "${MIRO_ORG_ID}"
-  framer: {}
   slack:
     api_key: "${SLACK_SCIM_TOKEN}"
   anthropic:
@@ -32,8 +31,6 @@ mappings:
         role: editor
       - name: miro
         role: member
-      - name: framer
-        role: editor
 
   - group: engineering@mycompany.com
     providers:

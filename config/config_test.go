@@ -127,6 +127,29 @@ func TestIsException(t *testing.T) {
 	assert.False(t, cfg.IsException("nobody@co.com", "figma"))
 }
 
+func TestLoadConfigDefaultDryRun(t *testing.T) {
+	yaml := `
+identity_source:
+  provider: google-directory
+  domain: mycompany.com
+providers:
+  linear:
+    api_key: test
+mappings: []
+policies:
+  grace_period: 24h
+`
+	tmpFile, err := os.CreateTemp("", "unseat-dryrun-*.yaml")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	tmpFile.WriteString(yaml)
+	tmpFile.Close()
+
+	cfg, err := Load(tmpFile.Name())
+	require.NoError(t, err)
+	assert.True(t, cfg.Policies.DryRun, "dry_run should default to true when omitted")
+}
+
 func TestLoadAliases(t *testing.T) {
 	yaml := `
 identity_source:

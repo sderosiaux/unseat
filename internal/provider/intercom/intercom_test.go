@@ -25,6 +25,7 @@ func TestProviderCapabilities(t *testing.T) {
 	assert.False(t, caps.CanSuspend)
 	assert.False(t, caps.CanSetRole)
 	assert.False(t, caps.HasWebhook)
+	assert.False(t, caps.ReportsActivity)
 }
 
 func TestListUsers(t *testing.T) {

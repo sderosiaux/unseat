@@ -32,8 +32,15 @@ func (p *Provider) Name() string { return "intercom" }
 func (p *Provider) Capabilities() core.Capabilities {
 	return core.Capabilities{
 		CanRemove: true, // set away
-		// Admins carry last_request_at.
-		ReportsActivity: true,
+		// Deliberately false: last_request_at is not a field on the Admin
+		// object. Per Intercom's published OpenAPI spec, the admin schema
+		// (github.com/intercom/Intercom-OpenAPI, descriptions/2.10/api.intercom.io.yaml)
+		// exposes only type, id, name, email, job_title, away_mode_enabled,
+		// away_mode_reassign, has_inbox_seat, team_ids, avatar, team_priority_level.
+		// last_request_at exists only on Contact and Company objects. Parsing
+		// it off /admins always yields the zero value, and with this flag set,
+		// a nil LastActivityAt reads as "never active" for every admin.
+		ReportsActivity: false,
 	}
 }
 

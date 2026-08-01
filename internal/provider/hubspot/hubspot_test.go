@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/golden"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -243,4 +244,46 @@ func TestListUsersRequiresOwnersScope(t *testing.T) {
 	_, err := New("tok").WithBaseURL(server.URL).ListUsers(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "crm.objects.owners.read")
+}
+
+// TestListUsersGoldenShape replays the real /settings/v3/users/ and
+// /crm/v3/owners response shapes (internal/provider/golden) instead of a
+// mock built from hubspotUser/owner. This is the test that would have caught
+// the shipped defect: a struct field (lastActiveTime) that our code parsed
+// but the live API never actually sent.
+func TestListUsersGoldenShape(t *testing.T) {
+	usersBody := golden.Load(t, "hubspot-users.json")
+	ownersBody := golden.Load(t, "hubspot-archived-owners.json")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/crm/v3/owners") {
+			w.Write(ownersBody)
+			return
+		}
+		assert.Equal(t, "/settings/v3/users/", r.URL.Path)
+		w.Write(usersBody)
+	}))
+	defer server.Close()
+
+	users, err := New("tok").WithBaseURL(server.URL).ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 4)
+
+	assert.Equal(t, "alice.anderson@example.com", users[0].Email)
+	assert.Equal(t, "Alice Anderson", users[0].DisplayName)
+	assert.Equal(t, "member", users[0].Role)
+	assert.Equal(t, core.StatusActive, users[0].Status)
+	assert.Equal(t, "core", users[0].Metadata["seat"])
+	assert.Nil(t, users[0].LastActivityAt, "the real payload carries no activity field at all")
+
+	assert.Equal(t, "Bob Brown", users[1].DisplayName)
+	assert.Equal(t, "sales-enterprise", users[1].Metadata["seat"])
+
+	// No first/last name in the payload, and archived per the owners feed.
+	assert.Equal(t, "carol.chen@example.com", users[2].DisplayName)
+	assert.Equal(t, core.StatusSuspended, users[2].Status)
+	assert.Equal(t, "view-only", users[2].Metadata["seat"])
+
+	assert.Equal(t, "super_admin", users[3].Role)
+	assert.Equal(t, core.StatusActive, users[3].Status)
 }

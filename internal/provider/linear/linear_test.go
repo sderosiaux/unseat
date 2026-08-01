@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/golden"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -336,4 +337,35 @@ func TestBillingPlanWithoutEncodedPrice(t *testing.T) {
 	assert.Equal(t, 250, b.BilledSeats)
 	assert.Zero(t, b.CostPerSeat, "no price may be invented for a custom contract")
 	assert.Empty(t, b.Source)
+}
+
+// TestListUsersGoldenShape replays the real users-query response shape
+// (internal/provider/golden), not a mock built from our own struct. This is
+// the only test in the file that would catch a field our code parses but the
+// live API never actually sends.
+func TestListUsersGoldenShape(t *testing.T) {
+	body := golden.Load(t, "linear-users.json")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(body)
+	}))
+	defer server.Close()
+
+	p := New("test-key").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 2)
+
+	assert.Equal(t, "alice.anderson@example.com", users[0].Email)
+	assert.Equal(t, "Alice Anderson", users[0].DisplayName)
+	assert.Equal(t, "member", users[0].Role)
+	assert.Equal(t, "active", users[0].Status)
+	require.NotNil(t, users[0].LastActivityAt)
+	assert.Equal(t, 2026, users[0].LastActivityAt.Year())
+
+	// A guest with an external (non-company) email is exactly the shape a
+	// self-marshalled mock tends to skip.
+	assert.Equal(t, "bob.brown@gmail.com", users[1].Email)
+	assert.Equal(t, "guest", users[1].Role)
+	assert.Equal(t, "active", users[1].Status)
 }

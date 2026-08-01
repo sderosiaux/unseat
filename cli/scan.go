@@ -82,6 +82,11 @@ func runScan(cmd *cobra.Command, _ []string) error {
 
 	results := scanAll(cmd.Context(), cfg, reg, targets, domain)
 
+	// Cached before the output branch: a scripted --json run left the cache
+	// untouched, so a later `audit inactive` answered from whatever the last
+	// interactive run had written, or from nothing.
+	cacheScan(cmd.Context(), targets, results)
+
 	if jsonOutput {
 		payload := make([]any, 0, len(results))
 		for _, name := range targets {
@@ -92,14 +97,22 @@ func runScan(cmd *cobra.Command, _ []string) error {
 			}
 			payload = append(payload, r.scan)
 		}
+		// The cross-provider correlation is the one finding no single vendor
+		// can produce, and it was reachable only by reading the terminal.
+		seats := core.SeatsByProvider{}
+		for _, name := range targets {
+			if r := results[name]; r.err == nil {
+				seats[name] = r.users
+			}
+		}
 		return printJSON(map[string]any{
-			"currency":       cfg.CurrencyLabel(),
-			"threshold_days": scanDays,
-			"providers":      payload,
+			"currency":               cfg.CurrencyLabel(),
+			"threshold_days":         scanDays,
+			"providers":              payload,
+			"incomplete_offboarding": core.FindOffboardingGaps(seats),
 		})
 	}
 
-	cacheScan(cmd.Context(), targets, results)
 	printScanReport(cfg, targets, results)
 	return nil
 }

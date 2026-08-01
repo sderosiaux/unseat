@@ -493,3 +493,38 @@ func TestSetRoleNotSupported(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not supported")
 }
+
+// GitHub states no price, but it states how many seats were purchased against
+// how many are filled — the gap is the most expensive thing this connector can
+// surface, and it is invisible from the member list.
+func TestBilling(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/orgs/acme", r.URL.Path)
+		fmt.Fprint(w, `{"login":"acme","plan":{"name":"enterprise","seats":80,"filled_seats":41}}`)
+	}))
+	defer server.Close()
+
+	b, err := New("tok", "acme").WithBaseURL(server.URL).Billing(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, b)
+
+	assert.Equal(t, "enterprise", b.Plan)
+	assert.Equal(t, 80, b.BilledSeats)
+	assert.Equal(t, 41, b.FilledSeats)
+	// An Enterprise agreement is unknowable from here: no price may be invented.
+	assert.Zero(t, b.CostPerSeat)
+	assert.Empty(t, b.Source)
+}
+
+// plan is only returned to org admins. A member-scoped token seeing no plan is
+// an absence, not a failure — the seat findings still stand.
+func TestBillingWithoutAdminAccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"login":"acme"}`)
+	}))
+	defer server.Close()
+
+	b, err := New("tok", "acme").WithBaseURL(server.URL).Billing(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, b)
+}

@@ -85,6 +85,13 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 
 		var resp usersResponse
 		if err := p.doGet(ctx, path, &resp); err != nil {
+			// A private app that simply lacks one scope returns the same
+			// opaque 403 as a revoked token. Name the scope: it is a two-click
+			// fix once you know which one.
+			if httpclient.IsUnauthorized(err) {
+				return nil, fmt.Errorf("%w\n  Grant the `settings.users.read` scope to the private app "+
+					"(Settings > Integrations > Private Apps > your app > Scopes)", err)
+			}
 			return nil, err
 		}
 

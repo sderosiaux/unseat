@@ -116,6 +116,7 @@ type ProviderScan struct {
 	// comparing against the seat counts unseat derived itself.
 	Plan          string     `json:"plan,omitempty"`
 	BilledSeats   int        `json:"billed_seats,omitempty"`
+	FilledSeats   int        `json:"filled_seats,omitempty"`
 	NextBillingAt *time.Time `json:"next_billing_at,omitempty"`
 	// MonthlyWaste is spend that is certainly wasted: active, billed seats
 	// with no recorded usage.
@@ -124,6 +125,21 @@ type ProviderScan struct {
 	// depends on the contract, so it is reported apart from MonthlyWaste
 	// rather than summed into a number that would be wrong either way.
 	SuspendedExposure float64 `json:"suspended_exposure"`
+}
+
+// occupiedSeats returns how many purchased seats are actually taken, and the
+// unused remainder.
+//
+// The vendor's own filled count wins when it reports one: it counts things our
+// user listing cannot see — outside collaborators, pending invitations — and
+// those are billed. Using our tally instead would overstate the gap and put a
+// number in front of a finance conversation that the vendor would contradict.
+func (s ProviderScan) occupiedSeats() (occupied, unused int) {
+	occupied = s.FilledSeats
+	if occupied == 0 {
+		occupied = s.Active
+	}
+	return occupied, s.BilledSeats - occupied
 }
 
 // adminRoleTokens are substrings that mark a role as privileged.
@@ -224,6 +240,7 @@ func Scan(in ScanInput) ProviderScan {
 	if in.Billing != nil {
 		scan.Plan = in.Billing.Plan
 		scan.BilledSeats = in.Billing.BilledSeats
+		scan.FilledSeats = in.Billing.FilledSeats
 		scan.NextBillingAt = in.Billing.NextBillingAt
 	}
 
@@ -235,16 +252,20 @@ func Scan(in ScanInput) ProviderScan {
 		scan.SuspendedExposure = float64(scan.Suspended) * rate
 	}
 
-	// The vendor's own billed-seat count against the accounts that actually
-	// exist. A gap here is money leaving with nothing attached to it, and it
-	// is invisible from the user list alone — only the subscription API knows.
-	if gap := scan.BilledSeats - scan.Active; scan.BilledSeats > 0 && gap > 0 {
+	// The vendor's own purchased-seat count against the seats it considers
+	// occupied. A gap here is money leaving with nothing attached to it, and
+	// it is invisible from the user list alone — only the subscription knows.
+	//
+	// The occupied count comes from the vendor when it reports one: GitHub
+	// counts outside collaborators and pending invitations as filled, so our
+	// own active tally would overstate the gap.
+	if occupied, gap := scan.occupiedSeats(); scan.BilledSeats > 0 && gap > 0 {
 		scan.Findings = append(scan.Findings, Finding{
 			Kind:     FindingOverProvisioned,
 			Severity: SeverityHigh,
 			Count:    gap,
 			Message: "the vendor bills " + strconv.Itoa(scan.BilledSeats) + " seats but only " +
-				strconv.Itoa(scan.Active) + " accounts are active — a prepaid block or plan minimum worth revisiting",
+				strconv.Itoa(occupied) + " are occupied — a prepaid block or plan minimum worth revisiting",
 			MonthlyWaste: float64(gap) * rate,
 		})
 		scan.MonthlyCost = float64(scan.BilledSeats) * rate
@@ -307,7 +328,7 @@ func Scan(in ScanInput) ProviderScan {
 		reclaimable[e] = true
 	}
 	scan.MonthlyWaste = float64(len(reclaimable)) * rate
-	if gap := scan.BilledSeats - scan.Active; scan.BilledSeats > 0 && gap > 0 {
+	if _, gap := scan.occupiedSeats(); scan.BilledSeats > 0 && gap > 0 {
 		scan.MonthlyWaste += float64(gap) * rate
 	}
 

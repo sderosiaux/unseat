@@ -47,12 +47,14 @@ var KnownProviders = map[string]ProviderAuth{
 		Instructions: "Create a SCIM token in Figma Admin settings (Enterprise plan). Also requires tenant_id.",
 	},
 	"hubspot": {
-		Name:         "hubspot",
-		AuthMethod:   "oauth2",
-		AuthURL:      "https://app.hubspot.com/oauth/authorize",
-		TokenURL:     "https://api.hubapi.com/oauth/v1/token",
-		Scopes:       []string{"crm.objects.contacts.read", "settings.users.read"},
-		Instructions: "Requires a HubSpot private app.",
+		Name: "hubspot",
+		// A private app issues a `pat-` bearer token. OAuth2 is for public
+		// apps distributed to other companies, and declaring it here forced
+		// the browser flow and a client id/secret nobody has.
+		AuthMethod: "api_key",
+		Instructions: "Settings > Integrations > Private Apps > Create a private app. Grant the " +
+			"`settings.users.read` scope (under CRM > Settings), then copy the pat- access token. " +
+			"Without that exact scope the users endpoint answers 403.",
 	},
 	"miro": {
 		Name:         "miro",

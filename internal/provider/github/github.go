@@ -525,6 +525,48 @@ func splitLinks2(s string) []string {
 	return parts
 }
 
+// Billing reads the organisation's plan so a seat report needs no config.
+//
+// GitHub states no price, but it does state how many seats were PURCHASED
+// against how many are FILLED. That gap is the most expensive thing this
+// connector can find and it is invisible from the member list: an org can
+// carry dozens of paid-for, unoccupied seats for years because nobody looks at
+// the plan and the member list alike.
+func (p *Provider) Billing(ctx context.Context) (*core.Billing, error) {
+	url := fmt.Sprintf("%s/orgs/%s", p.baseURL, p.org)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	var org struct {
+		Plan *struct {
+			Name        string `json:"name"`
+			Seats       int    `json:"seats"`
+			FilledSeats int    `json:"filled_seats"`
+		} `json:"plan"`
+	}
+	if err := p.client.DoJSON(ctx, "github", req, &org); err != nil {
+		return nil, err
+	}
+	if org.Plan == nil {
+		// plan is only returned to org admins; a read:org member sees nothing.
+		return nil, nil
+	}
+
+	// Seats is what is paid for. FilledSeats is what is used. Reporting the
+	// purchased count is the point — using FilledSeats would hide the gap.
+	// No price is inferred: GitHub plan names carry none, and an Enterprise
+	// agreement is unknowable from here.
+	return &core.Billing{
+		Plan:        org.Plan.Name,
+		BilledSeats: org.Plan.Seats,
+		FilledSeats: org.Plan.FilledSeats,
+	}, nil
+}
+
 func (p *Provider) AddUser(_ context.Context, _, _ string) error {
 	return fmt.Errorf("github: programmatic user invites not supported via API")
 }

@@ -32,6 +32,11 @@ type Billing struct {
 	// BilledSeats is how many seats the vendor says it is charging for, which
 	// is authoritative and may differ from what ListUsers returns.
 	BilledSeats int `json:"billed_seats,omitempty"`
+	// FilledSeats is how many of those the vendor considers occupied. It is
+	// authoritative where ListUsers is not: GitHub counts outside
+	// collaborators and pending invitations as filled, and they are billed
+	// even though they never appear in the member list.
+	FilledSeats int `json:"filled_seats,omitempty"`
 	// CostPerSeat is the monthly per-seat amount, when known or inferable.
 	CostPerSeat float64 `json:"cost_per_seat,omitempty"`
 	// Currency as reported by the vendor; empty when unknown.

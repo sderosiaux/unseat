@@ -450,3 +450,62 @@ func TestPriceFromPlanIdentifier(t *testing.T) {
 		}
 	}
 }
+
+// Purchased seats that nobody occupies are the most expensive thing a scan can
+// find, and they are invisible from the user list — only the subscription
+// knows how many were bought.
+func TestScanFlagsUnusedPurchasedSeats(t *testing.T) {
+	users := []User{
+		{Email: "a@co.com", Status: StatusActive},
+		{Email: "b@co.com", Status: StatusActive},
+	}
+
+	t.Run("gap uses the vendor's own filled count when reported", func(t *testing.T) {
+		// GitHub counts outside collaborators and pending invitations as
+		// filled; they are billed but never appear in the member list, so our
+		// own tally would overstate the gap.
+		s := Scan(ScanInput{
+			Provider: "github", Users: users, Domain: "co.com", CostPerSeat: 21,
+			Billing: &Billing{Plan: "enterprise", BilledSeats: 80, FilledSeats: 41},
+			Now:     scanNow,
+		})
+		f := findingOf(t, s, FindingOverProvisioned)
+		require.NotNil(t, f)
+		assert.Equal(t, 39, f.Count, "80 purchased minus 41 filled, not minus our 2 listed")
+		assert.Equal(t, SeverityHigh, f.Severity)
+		assert.InDelta(t, 39*21.0, f.MonthlyWaste, 0.001)
+		// Cost is what is purchased, not what is used.
+		assert.InDelta(t, 80*21.0, s.MonthlyCost, 0.001)
+	})
+
+	t.Run("falls back to active seats when the vendor reports no filled count", func(t *testing.T) {
+		s := Scan(ScanInput{
+			Provider: "acme", Users: users, Domain: "co.com", CostPerSeat: 10,
+			Billing: &Billing{BilledSeats: 5},
+			Now:     scanNow,
+		})
+		f := findingOf(t, s, FindingOverProvisioned)
+		require.NotNil(t, f)
+		assert.Equal(t, 3, f.Count)
+	})
+
+	t.Run("no finding when every purchased seat is taken", func(t *testing.T) {
+		s := Scan(ScanInput{
+			Provider: "linear", Users: users, Domain: "co.com", CostPerSeat: 14,
+			Billing: &Billing{BilledSeats: 2, FilledSeats: 2},
+			Now:     scanNow,
+		})
+		assert.Nil(t, findingOf(t, s, FindingOverProvisioned))
+		assert.InDelta(t, 28.0, s.MonthlyCost, 0.001)
+	})
+
+	t.Run("more filled than purchased is not negative waste", func(t *testing.T) {
+		s := Scan(ScanInput{
+			Provider: "acme", Users: users, Domain: "co.com", CostPerSeat: 10,
+			Billing: &Billing{BilledSeats: 2, FilledSeats: 5},
+			Now:     scanNow,
+		})
+		assert.Nil(t, findingOf(t, s, FindingOverProvisioned))
+		assert.Zero(t, s.MonthlyWaste)
+	})
+}

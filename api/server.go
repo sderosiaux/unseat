@@ -36,7 +36,11 @@ func (s *Server) setupRoutes() {
 		r.Get("/providers/{name}/users", s.handleProviderUsers)
 		r.Get("/providers/{name}/inactive", s.handleInactiveUsers)
 		r.Get("/inactive", s.handleAllInactiveUsers)
-		r.Get("/orphans", s.handleListOrphans)
+		// Named for what it reads. As /orphans it invited "empty means no
+		// orphaned accounts", when it only ever meant "no removal is currently
+		// counting down" — a table that stays empty until a non-dry-run sync
+		// with a grace period has run.
+		r.Get("/pending-removals", s.handleListPendingRemovals)
 		r.Get("/history/events", s.handleListEvents)
 		r.Get("/mappings", s.handleGetMappings)
 	})

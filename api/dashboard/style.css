@@ -334,3 +334,16 @@ td.mono {
   color: var(--text-secondary);
   margin-left: .5rem;
 }
+
+/* Coverage caveats. An audit that does not state what it could not examine
+   reads as complete, so this sits with the results rather than below them. */
+.note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--amber);
+  background: var(--amber-bg);
+  color: var(--text-secondary);
+  border-radius: var(--radius);
+  font-size: 13px;
+  line-height: 1.5;
+}

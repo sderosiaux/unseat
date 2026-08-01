@@ -46,7 +46,7 @@
 
     const container = $('#provider-cards');
     if (!providers || providers.length === 0) {
-      container.innerHTML = emptyState('No providers synced', 'Run unseat sync run to populate data.');
+      container.innerHTML = emptyState('Nothing scanned yet', 'Run unseat scan — it is read-only and needs only provider API keys.');
       return;
     }
 
@@ -128,7 +128,7 @@
     }
 
     if (allUsers.length === 0) {
-      wrap.innerHTML = emptyState('No users found', provider ? `No users in ${provider}.` : 'Run unseat sync run first.');
+      wrap.innerHTML = emptyState('No users found', provider ? `No seats cached for ${provider}.` : 'Run unseat scan first — it populates this view.');
       return;
     }
 
@@ -157,10 +157,32 @@
 
     wrap.innerHTML = '<div class="loading">Loading...</div>';
     cache.inactive = await api(`/inactive?days=${days}`);
-    const users = cache.inactive || [];
+    const payload = cache.inactive || {};
+    const users = payload.users || [];
+    const evaluated = payload.evaluated_providers || [];
+    const unevaluable = payload.unevaluable || [];
+
+    // Only a minority of providers expose activity at all. Saying "everyone is
+    // active" while most of the estate was never examined is the reassuring
+    // lie this whole view has to avoid.
+    const caveat = unevaluable.length
+      ? `<p class="note">Not evaluated: ${unevaluable.join(', ')}. Those APIs expose no activity data, so their seats are
+         absent from this list because the data does not exist — not because they are active.</p>`
+      : '';
+
+    if (evaluated.length === 0) {
+      wrap.innerHTML = emptyState(
+        'Inactivity cannot be assessed',
+        'None of your configured providers exposes activity data.'
+      ) + caveat;
+      return;
+    }
 
     if (users.length === 0) {
-      wrap.innerHTML = emptyState('No inactive users', `Everyone has been active in the last ${days} days.`);
+      wrap.innerHTML = emptyState(
+        'No inactive users',
+        `Nobody has been idle for ${days}+ days on: ${evaluated.join(', ')}.`
+      ) + caveat;
       return;
     }
 
@@ -170,10 +192,10 @@
         u.provider,
         { value: u.email, cls: 'mono' },
         u.display_name || '-',
-        u.last_activity_at ? formatDate(u.last_activity_at) : 'Never',
+        u.last_activity_at ? formatDate(u.last_activity_at) : 'Never seen',
         { value: u.status, badge: statusBadge(u.status) },
       ])
-    );
+    ) + caveat;
   }
 
   // --- Events ---
@@ -191,7 +213,7 @@
     const events = cache.events || [];
 
     if (events.length === 0) {
-      wrap.innerHTML = emptyState('No events yet', 'Events appear after running unseat sync.');
+      wrap.innerHTML = emptyState('No events yet', 'Events are recorded when unseat applies a change. In read-only use there are none, and that is expected.');
       return;
     }
 

@@ -32,7 +32,7 @@ func setupTestServer(t *testing.T) (*Server, store.Store) {
 
 func TestHandleListProviders(t *testing.T) {
 	srv, db := setupTestServer(t)
-	db.UpdateSyncState(context.Background(), "linear", 10)
+	db.UpdateSyncState(context.Background(), "linear", 10, false)
 
 	req := httptest.NewRequest("GET", "/api/v1/providers", nil)
 	w := httptest.NewRecorder()

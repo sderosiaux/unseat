@@ -36,28 +36,42 @@ func (s *Server) handleProviderUsers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, users)
 }
 
-func (s *Server) handleListOrphans(w http.ResponseWriter, r *http.Request) {
+// handleListPendingRemovals returns seats inside their grace period.
+//
+// This is NOT the set of orphaned accounts: it stays empty until a non-dry-run
+// sync with a grace period has detected departures. Orphans are computed live
+// against the directory by `unseat audit orphans`.
+func (s *Server) handleListPendingRemovals(w http.ResponseWriter, r *http.Request) {
 	states, err := s.store.ListSyncStates(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
-	type orphan struct {
-		Provider string `json:"provider"`
-		Email    string `json:"email"`
+	type pending struct {
+		Provider  string    `json:"provider"`
+		Email     string    `json:"email"`
+		ExpiresAt time.Time `json:"expires_at"`
 	}
-	var orphans []orphan
+	var out []pending
 	for _, ss := range states {
 		removals, err := s.store.GetPendingRemovals(r.Context(), ss.Provider)
 		if err != nil {
 			continue
 		}
 		for _, rem := range removals {
-			orphans = append(orphans, orphan{Provider: rem.Provider, Email: rem.Email})
+			out = append(out, pending{Provider: rem.Provider, Email: rem.Email, ExpiresAt: rem.ExpiresAt})
 		}
 	}
-	writeJSON(w, http.StatusOK, orphans)
+	// An empty array rather than null: a client cannot tell "no countdowns" from
+	// "field missing" otherwise.
+	if out == nil {
+		out = []pending{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pending_removals": out,
+		"note":             "seats inside their grace period; empty until a non-dry-run sync with a grace period has run. For orphaned accounts use `unseat audit orphans`.",
+	})
 }
 
 func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {

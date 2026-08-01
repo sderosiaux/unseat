@@ -28,7 +28,7 @@ func TestHandleListProviders(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	require.NoError(t, db.UpdateSyncState(ctx, "slack", 5))
+	require.NoError(t, db.UpdateSyncState(ctx, "slack", 5, false))
 
 	srv := New(db, &config.Config{})
 	_, out, err := srv.handleListProviders(ctx, nil, emptyInput{})
@@ -62,7 +62,7 @@ func TestHandleListOrphans(t *testing.T) {
 	defer db.Close()
 
 	ctx := context.Background()
-	require.NoError(t, db.UpdateSyncState(ctx, "slack", 3))
+	require.NoError(t, db.UpdateSyncState(ctx, "slack", 3, false))
 	require.NoError(t, db.InsertPendingRemoval(ctx, "slack", "gone@test.com", time.Now().Add(72*time.Hour)))
 
 	srv := New(db, &config.Config{})

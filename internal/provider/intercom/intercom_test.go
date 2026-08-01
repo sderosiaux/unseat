@@ -3,11 +3,12 @@ package intercom
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
+	"github.com/sderosiaux/unseat/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -34,13 +35,21 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/admins", r.URL.Path)
 
-		json.NewEncoder(w).Encode(adminsResponse{
-			Type: "admin.list",
-			Admins: []intercomAdmin{
-				{ID: "1", Name: "Alice", Email: "alice@co.com", Role: "admin", Away: false, LastRequestAt: 1706745600},
-				{ID: "2", Name: "Bob", Email: "bob@co.com", Role: "admin", Away: true},
-			},
-		})
+		// Raw JSON in the shape Intercom's own OpenAPI spec declares for the
+		// admin schema (intercom/Intercom-OpenAPI, GET /admins example and
+		// components.schemas.admin): type, id, name, email, job_title,
+		// away_mode_enabled, away_mode_reassign, has_inbox_seat, team_ids,
+		// avatar. There is no role and no last_request_at on this object —
+		// encoding our own intercomAdmin struct would have round-tripped both
+		// and hidden that the live API never sends them, exactly how
+		// last_request_at stayed invisible on three other connectors.
+		fmt.Fprint(w, `{
+		  "type": "admin.list",
+		  "admins": [
+		    {"type":"admin","id":"1","name":"Alice","email":"alice@co.com","job_title":"Support Lead","away_mode_enabled":false,"away_mode_reassign":false,"has_inbox_seat":true,"team_ids":[]},
+		    {"type":"admin","id":"2","name":"Bob","email":"bob@co.com","job_title":"","away_mode_enabled":true,"away_mode_reassign":false,"has_inbox_seat":true,"team_ids":[]}
+		  ]
+		}`)
 	}))
 	defer server.Close()
 
@@ -51,15 +60,26 @@ func TestListUsers(t *testing.T) {
 
 	assert.Equal(t, "alice@co.com", users[0].Email)
 	assert.Equal(t, "Alice", users[0].DisplayName)
-	assert.Equal(t, "admin", users[0].Role)
 	assert.Equal(t, "active", users[0].Status)
 	assert.Equal(t, "1", users[0].ProviderID)
-	require.NotNil(t, users[0].LastActivityAt)
-	assert.Equal(t, time.Unix(1706745600, 0).UTC(), *users[0].LastActivityAt)
+	// intercomAdmin.Role parses a "role" key that this schema does not
+	// declare and the example response never sends, so it is always empty —
+	// dead code, not a mapping this test can claim to cover.
+	assert.Empty(t, users[0].Role, "the Admin object has no role field; none may be invented")
 
 	assert.Equal(t, "bob@co.com", users[1].Email)
-	assert.Equal(t, "away", users[1].Status)
-	assert.Nil(t, users[1].LastActivityAt)
+	// away_mode_enabled is a presence toggle, not account state: a teammate who
+	// stepped away still holds a paid seat. Reporting "away" as a status also
+	// broke the documented contract, which is active or suspended.
+	assert.Equal(t, core.StatusActive, users[1].Status)
+	assert.Equal(t, "true", users[1].Metadata["away"])
+
+	// The Admin object carries no activity field at all — last_request_at
+	// exists only on Contact and Company, per the same spec — so none may be
+	// invented regardless of what a future payload contains.
+	for _, u := range users {
+		assert.Nil(t, u.LastActivityAt)
+	}
 }
 
 func TestRemoveUser(t *testing.T) {
@@ -70,7 +90,7 @@ func TestRemoveUser(t *testing.T) {
 			json.NewEncoder(w).Encode(adminsResponse{
 				Type: "admin.list",
 				Admins: []intercomAdmin{
-					{ID: "42", Name: "Alice", Email: "alice@co.com", Role: "admin"},
+					{ID: "42", Name: "Alice", Email: "alice@co.com"},
 				},
 			})
 		} else {

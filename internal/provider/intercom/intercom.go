@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
+	"strconv"
 
 	"github.com/sderosiaux/unseat/internal/core"
 	"github.com/sderosiaux/unseat/internal/provider/httpclient"
@@ -44,13 +44,22 @@ func (p *Provider) Capabilities() core.Capabilities {
 	}
 }
 
+// intercomAdmin mirrors the Admin object, verified field by field against
+// Intercom's own OpenAPI schema (intercom/Intercom-OpenAPI, Admin).
+//
+// It used to declare `role` and `last_request_at` as well. Neither exists on
+// this object: role has no equivalent at all, and last_request_at lives on
+// Company and Contact. Both decoded to their zero value on every response, so
+// Role was always empty — silently disabling admin-sprawl detection here — and
+// the activity claim rested on a field the API never sends.
 type intercomAdmin struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Email         string `json:"email"`
-	Role          string `json:"role"`
-	Away          bool   `json:"away_mode_enabled"`
-	LastRequestAt int64  `json:"last_request_at,omitempty"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Away  bool   `json:"away_mode_enabled"`
+	// HasInboxSeat is what Intercom actually bills: "identifies if this admin
+	// has a paid inbox seat". A teammate without one occupies no paid seat.
+	HasInboxSeat bool `json:"has_inbox_seat"`
 }
 
 type adminsResponse struct {
@@ -77,20 +86,21 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		if displayName == "" {
 			displayName = a.Email
 		}
-		status := "active"
-		if a.Away {
-			status = "away"
-		}
 		user := core.User{
 			Email:       a.Email,
 			DisplayName: displayName,
-			Role:        a.Role,
-			Status:      status,
-			ProviderID:  a.ID,
-		}
-		if a.LastRequestAt != 0 {
-			t := time.Unix(a.LastRequestAt, 0).UTC()
-			user.LastActivityAt = &t
+			// The Admin object carries no permission or role field, so none is
+			// invented. Admin-sprawl detection cannot work for this provider.
+			Role: "",
+			// away_mode_enabled is a presence toggle, not account state: a
+			// teammate who stepped away still holds their seat. Reporting it as
+			// a status would have reconciliation read them as deactivated.
+			Status:     core.StatusActive,
+			ProviderID: a.ID,
+			Metadata: map[string]string{
+				"away":       strconv.FormatBool(a.Away),
+				"inbox_seat": strconv.FormatBool(a.HasInboxSeat),
+			},
 		}
 		users = append(users, user)
 	}

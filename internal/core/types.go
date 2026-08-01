@@ -37,12 +37,36 @@ type Group struct {
 	MemberCount int    `json:"member_count"`
 }
 
+// SuspendedBilling states whether a vendor keeps charging for a deactivated
+// seat. It is a billing fact about the vendor, not an inference: Linear
+// releases suspended users at the next cycle, while others bill until the
+// account is fully deleted.
+//
+// The zero value is deliberately "unknown". Assuming every vendor bills
+// deactivated seats turned 131 harmless Linear accounts into the largest line
+// of the report and buried the three seats that actually cost money.
+type SuspendedBilling int
+
+const (
+	// SuspendedBillingUnknown: not verified for this vendor. Reported as a
+	// hygiene signal with the cost flagged as conditional.
+	SuspendedBillingUnknown SuspendedBilling = iota
+	// SuspendedBillingCharged: the seat is billed until the user is deleted.
+	SuspendedBillingCharged
+	// SuspendedBillingReleased: the seat stops being billed on deactivation.
+	SuspendedBillingReleased
+)
+
 type Capabilities struct {
 	CanAdd     bool `json:"can_add"`
 	CanRemove  bool `json:"can_remove"`
 	CanSuspend bool `json:"can_suspend"`
 	CanSetRole bool `json:"can_set_role"`
 	HasWebhook bool `json:"has_webhook"`
+	// SuspendedBilling declares the vendor's billing behaviour for deactivated
+	// seats. Leave it unset unless the vendor's own documentation or contract
+	// says so — a wrong value here invents or hides real money.
+	SuspendedBilling SuspendedBilling `json:"suspended_billing"`
 	// ReportsActivity declares that ListUsers populates User.LastActivityAt.
 	// Without it, a nil LastActivityAt means "this API tells us nothing", not
 	// "this person never logged in" — conflating the two made every user of

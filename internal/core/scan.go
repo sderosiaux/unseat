@@ -15,9 +15,12 @@ import (
 type FindingKind string
 
 const (
-	// FindingSuspendedBilled: the account is deactivated in the SaaS but still
-	// occupies a seat. Many vendors bill until the user is fully removed.
+	// FindingSuspendedBilled: the account is deactivated and the vendor is
+	// known to keep billing it until deletion. Real, reclaimable money.
 	FindingSuspendedBilled FindingKind = "suspended_but_billed"
+	// FindingSuspendedAccounts: deactivated accounts that are not known to
+	// cost anything. A hygiene and access-review signal, not a saving.
+	FindingSuspendedAccounts FindingKind = "suspended_accounts"
 	// FindingExternal: the identity is outside the corporate domain.
 	FindingExternal FindingKind = "external_identity"
 	// FindingAdminSprawl: an unusually large share of privileged accounts.
@@ -64,6 +67,9 @@ type ScanInput struct {
 	InactiveThreshold time.Duration
 	// CostPerSeat is the monthly price of a seat; zero leaves money unreported.
 	CostPerSeat float64
+	// SuspendedBilling mirrors Capabilities.SuspendedBilling, optionally
+	// overridden per provider in config for a non-standard contract.
+	SuspendedBilling SuspendedBilling
 	// Now is the reference time, injected for deterministic tests.
 	Now time.Time
 	// AdminRatioThreshold is the share of privileged accounts above which
@@ -171,18 +177,15 @@ func Scan(in ScanInput) ProviderScan {
 	}
 
 	scan.MonthlyCost = float64(scan.Active) * in.CostPerSeat
-	scan.SuspendedExposure = float64(scan.Suspended) * in.CostPerSeat
+
+	// A released seat costs nothing, so it must not be priced — otherwise the
+	// biggest number in the report is money that was never spent.
+	if in.SuspendedBilling != SuspendedBillingReleased {
+		scan.SuspendedExposure = float64(scan.Suspended) * in.CostPerSeat
+	}
 
 	if len(suspended) > 0 {
-		scan.Findings = append(scan.Findings, Finding{
-			Kind:     FindingSuspendedBilled,
-			Severity: SeverityMed,
-			Count:    len(suspended),
-			Subjects: capSubjects(suspended),
-			Message: "deactivated accounts still holding a seat — many vendors bill these until the user is fully deleted, " +
-				"but not all (Linear drops them at the next cycle). Check your contract before counting the saving",
-			MonthlyWaste: 0,
-		})
+		scan.Findings = append(scan.Findings, suspendedFinding(in.SuspendedBilling, suspended, in.CostPerSeat))
 	}
 
 	if len(inactive) > 0 {
@@ -240,6 +243,36 @@ func Scan(in ScanInput) ProviderScan {
 
 	sortFindings(scan.Findings)
 	return scan
+}
+
+// suspendedFinding describes deactivated seats according to what is actually
+// known about the vendor's billing, rather than assuming the expensive case.
+func suspendedFinding(billing SuspendedBilling, subjects []string, costPerSeat float64) Finding {
+	f := Finding{
+		Count:    len(subjects),
+		Subjects: capSubjects(subjects),
+	}
+
+	switch billing {
+	case SuspendedBillingCharged:
+		f.Kind = FindingSuspendedBilled
+		f.Severity = SeverityHigh
+		f.Message = "deactivated accounts still billed — this vendor charges for a seat until the user is fully deleted"
+		f.MonthlyWaste = float64(len(subjects)) * costPerSeat
+
+	case SuspendedBillingReleased:
+		f.Kind = FindingSuspendedAccounts
+		f.Severity = SeverityInfo
+		f.Message = "deactivated accounts, not billed by this vendor — no saving to make, but they remain reactivatable and are worth an access review"
+
+	default:
+		f.Kind = FindingSuspendedAccounts
+		f.Severity = SeverityMed
+		f.Message = "deactivated accounts still holding a seat — billing depends on the vendor and your contract; " +
+			"set bills_suspended_seats on this provider once you know which it is"
+	}
+
+	return f
 }
 
 func capSubjects(s []string) []string {

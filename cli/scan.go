@@ -128,11 +128,22 @@ func scanAll(ctx context.Context, cfg *config.Config, reg *provider.Registry, ta
 				return
 			}
 
+			caps := p.Capabilities()
+
+			billing := caps.SuspendedBilling
+			if billed, overridden := config.SuspendedBillingOverride(cfg.Providers[name]); overridden {
+				billing = core.SuspendedBillingReleased
+				if billed {
+					billing = core.SuspendedBillingCharged
+				}
+			}
+
 			set(scanResult{scan: core.Scan(core.ScanInput{
 				Provider:          name,
 				Users:             users,
 				Domain:            domain,
-				ReportsActivity:   p.Capabilities().ReportsActivity,
+				ReportsActivity:   caps.ReportsActivity,
+				SuspendedBilling:  billing,
 				InactiveThreshold: threshold,
 				CostPerSeat:       cfg.Providers[name].CostPerSeat,
 				Now:               now,

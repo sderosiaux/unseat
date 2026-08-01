@@ -24,6 +24,11 @@ providers:
   linear:
     api_key: "${LINEAR_API_KEY}"
     cost_per_seat: 8
+    # Whether deactivated seats keep being charged. Each connector already
+    # declares what its vendor does; set this only when your contract differs.
+    # Linear releases suspended seats at the next cycle, so they cost nothing
+    # and are reported as an access-review item rather than as waste.
+    # bills_suspended_seats: false
   figma:
     api_key: "${FIGMA_SCIM_TOKEN}"
     cost_per_seat: 12

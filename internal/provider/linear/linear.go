@@ -39,6 +39,9 @@ func (p *Provider) Capabilities() core.Capabilities {
 		CanSuspend:      true,
 		CanSetRole:      false,
 		ReportsActivity: true,
+		// "Customers are billed for the number of unsuspended users" — a
+		// suspended seat leaves the next billing cycle, so it is not waste.
+		SuspendedBilling: core.SuspendedBillingReleased,
 	}
 }
 

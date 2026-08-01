@@ -41,6 +41,20 @@ type ProviderConfig struct {
 	// CostPerSeat is the monthly list price of one seat, in Currency.
 	// Zero means unpriced: counts are still reported, money is not.
 	CostPerSeat float64 `yaml:"cost_per_seat,omitempty"`
+	// BillsSuspendedSeats overrides the connector's own knowledge of whether
+	// deactivated seats keep being charged. Nil means "use what the connector
+	// declares"; set it when your contract differs from the vendor's default.
+	BillsSuspendedSeats *bool `yaml:"bills_suspended_seats,omitempty"`
+}
+
+// SuspendedBillingFor resolves the billing behaviour for a provider's
+// deactivated seats: an explicit config value wins, otherwise the connector's
+// own declaration stands.
+func SuspendedBillingOverride(pc ProviderConfig) (billed bool, set bool) {
+	if pc.BillsSuspendedSeats == nil {
+		return false, false
+	}
+	return *pc.BillsSuspendedSeats, true
 }
 
 type Mapping struct {

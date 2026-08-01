@@ -55,17 +55,68 @@ func TestScanFlagsSuspendedButBilled(t *testing.T) {
 		Now:         scanNow,
 	})
 
-	f := findingOf(t, s, FindingSuspendedBilled)
+	// Billing behaviour unverified for this vendor: report the accounts, flag
+	// the cost as conditional, claim no saving.
+	f := findingOf(t, s, FindingSuspendedAccounts)
 	require.NotNil(t, f, "a deactivated account still holding a seat must be reported")
 	assert.Equal(t, 1, f.Count)
 	assert.Equal(t, []string{"gone@co.com"}, f.Subjects)
-
-	// Vendors disagree on whether a deactivated seat is billed, so the money
-	// is reported apart from confirmed waste rather than asserted as a saving.
 	assert.Zero(t, f.MonthlyWaste)
+	assert.Nil(t, findingOf(t, s, FindingSuspendedBilled))
+
 	assert.InDelta(t, 10.0, s.SuspendedExposure, 0.001)
 	assert.Zero(t, s.MonthlyWaste)
 	assert.InDelta(t, 10.0, s.MonthlyCost, 0.001, "only the one active seat is priced")
+}
+
+// Linear releases suspended seats at the next billing cycle. Pricing them
+// would make the largest line of the report money that was never spent, and
+// bury the seats that genuinely cost something.
+func TestScanSuspendedSeatsNotBilledCostNothing(t *testing.T) {
+	s := Scan(ScanInput{
+		Provider: "linear",
+		Users: []User{
+			{Email: "a@co.com", Status: StatusActive},
+			{Email: "gone@co.com", Status: StatusSuspended},
+			{Email: "left@co.com", Status: StatusSuspended},
+		},
+		Domain:           "co.com",
+		CostPerSeat:      8,
+		SuspendedBilling: SuspendedBillingReleased,
+		Now:              scanNow,
+	})
+
+	f := findingOf(t, s, FindingSuspendedAccounts)
+	require.NotNil(t, f, "still worth an access review even when free")
+	assert.Equal(t, SeverityInfo, f.Severity, "no money at stake, so it must not compete with real findings")
+	assert.Zero(t, f.MonthlyWaste)
+
+	assert.Zero(t, s.SuspendedExposure, "a released seat costs nothing")
+	assert.InDelta(t, 8.0, s.MonthlyCost, 0.001)
+	assert.Nil(t, findingOf(t, s, FindingSuspendedBilled))
+}
+
+// Where the vendor is known to charge until deletion, this is real money and
+// should outrank everything else.
+func TestScanSuspendedSeatsBilledAreWaste(t *testing.T) {
+	s := Scan(ScanInput{
+		Provider: "hubspot",
+		Users: []User{
+			{Email: "a@co.com", Status: StatusActive},
+			{Email: "gone@co.com", Status: StatusSuspended},
+		},
+		Domain:           "co.com",
+		CostPerSeat:      90,
+		SuspendedBilling: SuspendedBillingCharged,
+		Now:              scanNow,
+	})
+
+	f := findingOf(t, s, FindingSuspendedBilled)
+	require.NotNil(t, f)
+	assert.Equal(t, SeverityHigh, f.Severity)
+	assert.InDelta(t, 90.0, f.MonthlyWaste, 0.001)
+	assert.InDelta(t, 90.0, s.SuspendedExposure, 0.001)
+	assert.Nil(t, findingOf(t, s, FindingSuspendedAccounts))
 }
 
 func TestScanFlagsExternalIdentities(t *testing.T) {
@@ -153,7 +204,7 @@ func TestScanDoesNotCountSuspendedSeatAsInactive(t *testing.T) {
 		Now:               scanNow,
 	})
 
-	require.NotNil(t, findingOf(t, s, FindingSuspendedBilled))
+	require.NotNil(t, findingOf(t, s, FindingSuspendedAccounts))
 	assert.Nil(t, findingOf(t, s, FindingInactive), "a deactivated seat is not an inactivity finding")
 	assert.Zero(t, s.MonthlyWaste)
 	assert.InDelta(t, 10.0, s.SuspendedExposure, 0.001)
@@ -223,7 +274,7 @@ func TestScanUnpricedReportsCountsWithoutMoney(t *testing.T) {
 		Domain: "co.com",
 		Now:    scanNow,
 	})
-	f := findingOf(t, s, FindingSuspendedBilled)
+	f := findingOf(t, s, FindingSuspendedAccounts)
 	require.NotNil(t, f)
 	assert.Equal(t, 1, f.Count)
 	assert.Zero(t, s.MonthlyCost)
@@ -257,7 +308,7 @@ func TestScanCapsSubjects(t *testing.T) {
 	}
 	s := Scan(ScanInput{Provider: "figma", Users: users, Domain: "co.com", Now: scanNow})
 
-	f := findingOf(t, s, FindingSuspendedBilled)
+	f := findingOf(t, s, FindingSuspendedAccounts)
 	require.NotNil(t, f)
 	assert.Equal(t, maxSubjects+10, f.Count, "the count must reflect reality")
 	assert.Len(t, f.Subjects, maxSubjects, "only the display list is capped")

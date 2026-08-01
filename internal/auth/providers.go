@@ -52,9 +52,10 @@ var KnownProviders = map[string]ProviderAuth{
 		// apps distributed to other companies, and declaring it here forced
 		// the browser flow and a client id/secret nobody has.
 		AuthMethod: "api_key",
-		Instructions: "Settings > Integrations > Private Apps > Create a private app. Grant the " +
-			"`settings.users.read` scope (under CRM > Settings), then copy the pat- access token. " +
-			"Without that exact scope the users endpoint answers 403.",
+		Instructions: "Settings > Integrations > Private Apps > Create a private app. Grant " +
+			"`settings.users.read` (live users) and `crm.objects.owners.read` (deactivated ones — " +
+			"/settings/v3/users returns active users only and ignores ?archived), then copy the pat- " +
+			"access token. Without the exact scope the endpoint answers 403.",
 	},
 	"miro": {
 		Name:         "miro",

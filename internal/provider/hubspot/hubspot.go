@@ -132,9 +132,15 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 				Email:       u.Email,
 				DisplayName: u.displayName(),
 				Role:        role,
-				// Every user this endpoint returns holds a seat. HubSpot has
-				// no deactivated-but-listed state: removing someone removes
-				// them from this list, so being here means being billed.
+				// /settings/v3/users returns ACTIVE users only — verified
+				// against a live portal that holds 74 here while its admin UI
+				// shows 46 further deactivated accounts, and where the
+				// `archived` query parameter is silently ignored.
+				//
+				// So everyone listed here is live and holding a seat. The
+				// deactivated ones are not under-reported as active; they are
+				// invisible, which is a different and honest gap: see the
+				// owners API note in Billing.
 				Status:     core.StatusActive,
 				ProviderID: u.ID,
 			}
@@ -153,6 +159,16 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	return all, nil
 }
 
+// Deactivated accounts are not reachable from /settings/v3/users: it returns
+// active users only and ignores the `archived` parameter. They live behind
+// GET /crm/v3/owners/?archived=true, which needs the `crm.objects.owners.read`
+// scope on top of `settings.users.read`.
+//
+// Until that scope is granted the connector reports the live seats correctly
+// and simply cannot see the deactivated ones — an absence, not a wrong number.
+// Implementing this is worth it: it closes the loop on offboarding, since a
+// person deactivated here and suspended elsewhere is finished business rather
+// than a gap.
 func (p *Provider) AddUser(_ context.Context, _, _ string) error {
 	return fmt.Errorf("hubspot: adding users not supported via API")
 }

@@ -14,6 +14,17 @@ type Config struct {
 	Mappings       []Mapping                 `yaml:"mappings"`
 	Policies       Policies                  `yaml:"policies"`
 	Aliases        map[string][]string       `yaml:"aliases,omitempty"`
+	// Currency labels the cost_per_seat amounts. Purely cosmetic — unseat does
+	// no conversion, so every cost_per_seat must be in the same currency.
+	Currency string `yaml:"currency,omitempty"`
+}
+
+// CurrencyLabel returns the configured currency, defaulting to EUR.
+func (c *Config) CurrencyLabel() string {
+	if c.Currency == "" {
+		return "EUR"
+	}
+	return c.Currency
 }
 
 type IdentitySource struct {
@@ -27,6 +38,9 @@ type ProviderConfig struct {
 	APIKey    string            `yaml:"api_key"`
 	BaseURL   string            `yaml:"base_url,omitempty"`
 	ExtraArgs map[string]string `yaml:"extra,omitempty"`
+	// CostPerSeat is the monthly list price of one seat, in Currency.
+	// Zero means unpriced: counts are still reported, money is not.
+	CostPerSeat float64 `yaml:"cost_per_seat,omitempty"`
 }
 
 type Mapping struct {
@@ -74,10 +88,16 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+
+	expanded, err := ExpandEnv(data)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+
 	cfg := Config{
 		Policies: Policies{DryRun: true},
 	}
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := yaml.Unmarshal(expanded, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 	return &cfg, nil

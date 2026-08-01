@@ -45,6 +45,9 @@ policies:
     - email: cto@mycompany.com
       providers: ["*"]
 `
+	t.Setenv("LINEAR_API_KEY", "lin_api_test")
+	t.Setenv("FIGMA_API_KEY", "figd_test")
+
 	tmpFile, err := os.CreateTemp("", "unseat-*.yaml")
 	require.NoError(t, err)
 	defer os.Remove(tmpFile.Name())
@@ -54,6 +57,11 @@ policies:
 
 	cfg, err := Load(tmpFile.Name())
 	require.NoError(t, err)
+
+	// Env references must be resolved by Load: a literal "${LINEAR_API_KEY}"
+	// reaching a provider becomes an opaque 401.
+	assert.Equal(t, "lin_api_test", cfg.Providers["linear"].APIKey)
+	assert.Equal(t, "figd_test", cfg.Providers["figma"].APIKey)
 
 	assert.Equal(t, "google-directory", cfg.IdentitySource.Provider)
 	assert.Equal(t, "mycompany.com", cfg.IdentitySource.Domain)

@@ -76,3 +76,25 @@ providers:
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "DEFINITELY_NOT_SET_ANYWHERE")
 }
+
+// scan must be able to spot external identities without an identity source:
+// comparing an email suffix should not require Google credentials.
+func TestCorporateDomainFallsBackToIdentitySource(t *testing.T) {
+	t.Run("top-level domain wins", func(t *testing.T) {
+		cfg, err := Load(writeConfig(t, "domain: co.com\nidentity_source:\n  domain: legacy.com\n"))
+		require.NoError(t, err)
+		assert.Equal(t, "co.com", cfg.CorporateDomain())
+	})
+
+	t.Run("falls back to the identity source", func(t *testing.T) {
+		cfg, err := Load(writeConfig(t, "identity_source:\n  domain: co.com\n"))
+		require.NoError(t, err)
+		assert.Equal(t, "co.com", cfg.CorporateDomain())
+	})
+
+	t.Run("neither set", func(t *testing.T) {
+		cfg, err := Load(writeConfig(t, "currency: EUR\n"))
+		require.NoError(t, err)
+		assert.Empty(t, cfg.CorporateDomain())
+	})
+}

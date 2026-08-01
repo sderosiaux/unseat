@@ -17,6 +17,20 @@ type Config struct {
 	// Currency labels the cost_per_seat amounts. Purely cosmetic — unseat does
 	// no conversion, so every cost_per_seat must be in the same currency.
 	Currency string `yaml:"currency,omitempty"`
+	// Domain is the corporate email domain, used to spot external identities.
+	// It lives at the top level so `scan` can use it without configuring an
+	// identity source: telling an outside address from an inside one is a
+	// suffix comparison, and should not require Google credentials.
+	Domain string `yaml:"domain,omitempty"`
+}
+
+// CorporateDomain returns the configured domain, preferring the top-level
+// setting and falling back to the identity source.
+func (c *Config) CorporateDomain() string {
+	if c.Domain != "" {
+		return c.Domain
+	}
+	return c.IdentitySource.Domain
 }
 
 // CurrencyLabel returns the configured currency, defaulting to EUR.

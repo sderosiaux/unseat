@@ -50,7 +50,7 @@ func runScan(cmd *cobra.Command, _ []string) error {
 
 	domain := scanDomain
 	if domain == "" {
-		domain = cfg.IdentitySource.Domain
+		domain = cfg.CorporateDomain()
 	}
 
 	// No identity source is built: scan must work with API keys alone.

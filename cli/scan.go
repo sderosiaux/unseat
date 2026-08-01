@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -130,11 +131,24 @@ func scanAll(ctx context.Context, cfg *config.Config, reg *provider.Registry, ta
 
 			caps := p.Capabilities()
 
-			billing := caps.SuspendedBilling
+			// Ask the provider about its own subscription. A price unseat can
+			// read is a price nobody has to type. A failure here must not sink
+			// the scan: the seat findings stand on their own.
+			var sub *core.Billing
+			if bp, ok := p.(provider.BillingProvider); ok {
+				b, err := bp.Billing(ctx)
+				if err != nil {
+					slog.Debug("billing lookup failed", "provider", name, "error", err)
+				} else {
+					sub = b
+				}
+			}
+
+			suspendedBilling := caps.SuspendedBilling
 			if billed, overridden := config.SuspendedBillingOverride(cfg.Providers[name]); overridden {
-				billing = core.SuspendedBillingReleased
+				suspendedBilling = core.SuspendedBillingReleased
 				if billed {
-					billing = core.SuspendedBillingCharged
+					suspendedBilling = core.SuspendedBillingCharged
 				}
 			}
 
@@ -143,10 +157,11 @@ func scanAll(ctx context.Context, cfg *config.Config, reg *provider.Registry, ta
 				Users:             users,
 				Domain:            domain,
 				ReportsActivity:   caps.ReportsActivity,
-				SuspendedBilling:  billing,
+				SuspendedBilling:  suspendedBilling,
 				InactiveThreshold: threshold,
 				CostPerSeat:       cfg.Providers[name].CostPerSeat,
 				MonthlySpend:      cfg.Providers[name].MonthlySpend,
+				Billing:           sub,
 				Now:               now,
 			})})
 		}(name)
@@ -180,12 +195,9 @@ func printScanReport(cfg *config.Config, targets []string, results map[string]sc
 			unpriced = append(unpriced, name)
 		}
 
-		// The rate is always shown, and marked when it was derived, so it can
-		// be checked against the invoice it came from.
-		perSeat := money(s.CostPerSeat, s.CostPerSeat)
-		if s.RateDerived {
-			perSeat += "*"
-		}
+		// The rate carries a marker for how it was established: a figure read
+		// from a vendor API and one typed by hand must not look alike.
+		perSeat := money(s.CostPerSeat, s.CostPerSeat) + rateMarker(s.RateSource)
 
 		rows = append(rows, []string{
 			name,
@@ -201,9 +213,7 @@ func printScanReport(cfg *config.Config, targets []string, results map[string]sc
 
 	if len(rows) > 0 {
 		printTable([]string{"PROVIDER", "ACTIVE", "SUSPENDED", "ADMINS", "PER SEAT", "MONTHLY COST", "WASTED", "SUSPENDED €"}, rows)
-		if derivedAny(targets, results) {
-			fmt.Println("\n* rate derived from monthly_spend / active seats — check it against your invoice")
-		}
+		printRateLegend(targets, results)
 	}
 
 	for _, name := range targets {
@@ -211,7 +221,20 @@ func printScanReport(cfg *config.Config, targets []string, results map[string]sc
 		if r.err != nil || len(r.scan.Findings) == 0 {
 			continue
 		}
-		fmt.Printf("\n%s\n", strings.ToUpper(name))
+		fmt.Printf("\n%s", strings.ToUpper(name))
+		// Subscription facts read straight from the vendor, printed so the
+		// figures above can be checked against the account they came from.
+		if r.scan.Plan != "" {
+			fmt.Printf("  [plan %s", r.scan.Plan)
+			if r.scan.BilledSeats > 0 {
+				fmt.Printf(", %d seats billed", r.scan.BilledSeats)
+			}
+			if r.scan.NextBillingAt != nil {
+				fmt.Printf(", renews %s", r.scan.NextBillingAt.Format("2006-01-02"))
+			}
+			fmt.Print("]")
+		}
+		fmt.Println()
 		for _, f := range r.scan.Findings {
 			marker := map[core.Severity]string{
 				core.SeverityHigh: "!!",
@@ -263,13 +286,39 @@ func printScanReport(cfg *config.Config, targets []string, results map[string]sc
 	}
 }
 
-func derivedAny(targets []string, results map[string]scanResult) bool {
+// rateMarkers annotate each rate with how it was established. Principle 3:
+// never state a number more precisely than it is known.
+var rateMarkers = map[core.BillingSource]string{
+	core.BillingSourceAPI:     "",
+	core.BillingSourcePlan:    "~",
+	core.BillingSourceInvoice: "*",
+	core.BillingSourceConfig:  "",
+}
+
+var rateLegend = map[core.BillingSource]string{
+	core.BillingSourcePlan:    "~ inferred from the plan identifier reported by the vendor's API — confirm against your invoice",
+	core.BillingSourceInvoice: "* derived from monthly_spend / active seats",
+}
+
+func rateMarker(s core.BillingSource) string { return rateMarkers[s] }
+
+func printRateLegend(targets []string, results map[string]scanResult) {
+	seen := map[core.BillingSource]bool{}
 	for _, name := range targets {
-		if r := results[name]; r.err == nil && r.scan.RateDerived {
-			return true
+		if r := results[name]; r.err == nil {
+			seen[r.scan.RateSource] = true
 		}
 	}
-	return false
+	var lines []string
+	for src, text := range rateLegend {
+		if seen[src] {
+			lines = append(lines, text)
+		}
+	}
+	sort.Strings(lines)
+	for _, l := range lines {
+		fmt.Println("\n" + l)
+	}
 }
 
 // money renders an amount, or a dash when the provider has no configured price

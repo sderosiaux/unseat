@@ -160,6 +160,66 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	}
 }
 
+const billingQuery = `query {
+  organization {
+    subscription {
+      type
+      seats
+      nextBillingAt
+    }
+  }
+}`
+
+// Billing reads the workspace subscription so the operator does not have to
+// type a price unseat can read.
+//
+// Linear does not expose an amount, but encodes it in the plan identifier —
+// "business_yearly_14" is 14 per seat per month. That is an inference about a
+// vendor's naming, not a documented contract, so the rate is reported as
+// derived from the plan rather than as a figure Linear stated. `seats` is
+// authoritative: it is what Linear actually charges for.
+func (p *Provider) Billing(ctx context.Context) (*core.Billing, error) {
+	data, err := p.graphql(ctx, billingQuery, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Organization struct {
+			Subscription *struct {
+				Type          string `json:"type"`
+				Seats         float64
+				NextBillingAt string `json:"nextBillingAt"`
+			} `json:"subscription"`
+		} `json:"organization"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("linear: decode subscription: %w", err)
+	}
+
+	sub := result.Organization.Subscription
+	if sub == nil {
+		// A free workspace has no subscription. Not an error: there is simply
+		// nothing to bill.
+		return nil, nil
+	}
+
+	b := &core.Billing{
+		Plan:        sub.Type,
+		BilledSeats: int(sub.Seats),
+	}
+	if rate, ok := core.PriceFromPlanIdentifier(sub.Type); ok {
+		b.CostPerSeat = rate
+		b.Source = core.BillingSourcePlan
+	}
+	if sub.NextBillingAt != "" {
+		if t, err := time.Parse(time.RFC3339, sub.NextBillingAt); err == nil {
+			b.NextBillingAt = &t
+		}
+	}
+	return b, nil
+}
+
 func (p *Provider) AddUser(_ context.Context, _, _ string) error {
 	return fmt.Errorf("linear: programmatic user invites not supported via API")
 }

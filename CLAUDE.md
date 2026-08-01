@@ -4,6 +4,50 @@
 
 unseat — Identity Lifecycle Management tool. Go binary that cross-references Google Workspace with SaaS providers (Linear, Figma, Slack, Anthropic, HubSpot, Miro, etc.) to automate provisioning/deprovisioning and seat optimization.
 
+## Product Principles
+
+These decide design arguments. When a change would violate one, the change is
+wrong — not the principle.
+
+### 1. Connections in, value out. Configuration is a last resort.
+
+A user supplies API keys. Everything unseat can determine for itself, it
+determines for itself. Asking for a value the provider's own API could answer
+is a defect, not a design choice.
+
+Concretely: seat counts, plan tier, billed seats, per-seat price, activity,
+roles and account state all come from the APIs. Config exists for facts no API
+can know — which Google Groups map to which providers, which seats policy
+protects, and corrections when a contract differs from what the vendor reports.
+
+Before adding a config field, the question is always: can an API answer this?
+If yes, call it. If only some providers can, call it for those and degrade
+honestly for the rest — never demand the field from everyone because one
+provider is silent.
+
+`domain` was briefly readable only from `identity_source`, so telling an
+external email from an internal one required setting up Google domain-wide
+delegation. That is the failure mode this principle exists to prevent.
+
+### 2. Degrade to reporting, never to acting.
+
+Missing information reduces what unseat claims, never what it does. No
+directory means nothing is removable. No activity API means "unknown", not
+"inactive". An unpriced provider shows a dash, not 0.00.
+
+### 3. Never state a number more precisely than it is known.
+
+Every figure carries its provenance. A rate read from a billing API, one
+inferred from a plan identifier, one derived from an invoice, and one typed by
+hand are four different levels of confidence and must be displayed as such.
+A confident wrong number is worse than an absent one — it gets taken to a
+budget meeting.
+
+### 4. Read-only until explicitly told otherwise.
+
+`scan` and `audit` cannot write. `sync plan` cannot write. Only `sync apply`
+and `sync watch` can, and only once `dry_run` is explicitly false.
+
 ## Architecture
 
 Kubernetes-style reconciliation loop:
@@ -64,6 +108,24 @@ type Provider interface {
 ```
 
 `IdentityProvider` extends `Provider` with `ListGroups()` and `ListGroupMembers()` (only Google Directory).
+
+### Billing Comes From The API First
+
+`BillingProvider` is an optional interface for connectors whose API exposes
+subscription data. Implement it wherever the vendor exposes anything —
+principle 1 makes a readable price a price nobody should have to type.
+
+Linear encodes the rate in the plan identifier (`business_yearly_14`) and
+reports the seat count it actually charges for. That seat count is worth more
+than the price: comparing it against live accounts surfaces prepaid blocks and
+plan minimums, which are invisible from the user list alone.
+
+Rate precedence: `cost_per_seat` in config, then `monthly_spend / active
+seats`, then the provider API. Every one is tagged with a `BillingSource` and
+displayed with a marker, because a figure inferred from a plan name must never
+look like one the vendor stated. Never invent a price for a plan that does not
+encode one — an Enterprise contract is unknowable, and a plausible guess in a
+budget meeting is worse than a blank.
 
 ### Provider Construction
 

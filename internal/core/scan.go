@@ -30,6 +30,9 @@ const (
 	FindingInactive FindingKind = "inactive"
 	// FindingNoActivityData: the provider cannot answer the usage question at all.
 	FindingNoActivityData FindingKind = "no_activity_data"
+	// FindingOverProvisioned: the vendor says it bills more seats than there
+	// are live accounts — a prepaid block or a plan minimum nobody revisited.
+	FindingOverProvisioned FindingKind = "billed_seats_unused"
 )
 
 // Severity ranks findings for display order.
@@ -70,6 +73,10 @@ type ScanInput struct {
 	// MonthlySpend is the real invoice total for this provider. When
 	// CostPerSeat is unset, the rate is derived from it.
 	MonthlySpend float64
+	// Billing is whatever the provider's own API reported. It is used when
+	// config states no price, so a connector that can read its subscription
+	// needs no configuration at all.
+	Billing *Billing
 	// SuspendedBilling mirrors Capabilities.SuspendedBilling, optionally
 	// overridden per provider in config for a non-standard contract.
 	SuspendedBilling SuspendedBilling
@@ -100,10 +107,16 @@ type ProviderScan struct {
 	// bill until deletion — so counting them here would overstate spend for
 	// half the connectors.
 	MonthlyCost float64 `json:"monthly_cost"`
-	// RateDerived reports that CostPerSeat was computed from MonthlySpend
-	// rather than stated. The rate is always shown so it can be checked
-	// against the invoice it came from.
-	RateDerived bool `json:"rate_derived"`
+	// RateSource records how CostPerSeat was established, so a figure read
+	// from a vendor API is never displayed with the same confidence as one
+	// inferred from a plan name.
+	RateSource BillingSource `json:"rate_source,omitempty"`
+	// Plan, BilledSeats and NextBillingAt are whatever the provider's own
+	// subscription API reported. BilledSeats is authoritative and worth
+	// comparing against the seat counts unseat derived itself.
+	Plan          string     `json:"plan,omitempty"`
+	BilledSeats   int        `json:"billed_seats,omitempty"`
+	NextBillingAt *time.Time `json:"next_billing_at,omitempty"`
 	// MonthlyWaste is spend that is certainly wasted: active, billed seats
 	// with no recorded usage.
 	MonthlyWaste float64 `json:"monthly_waste"`
@@ -190,12 +203,29 @@ func Scan(in ScanInput) ProviderScan {
 	// which is the question every downstream number depends on. Dividing by
 	// total seats would quietly deflate the rate on a tenant like Linear,
 	// where 131 of 168 seats are deactivated.
-	rate := in.CostPerSeat
-	if rate == 0 && in.MonthlySpend > 0 && scan.Active > 0 {
-		rate = in.MonthlySpend / float64(scan.Active)
-		scan.RateDerived = true
+	// Precedence: what the operator stated, then their invoice, then whatever
+	// the provider's own API knows. The API path is what makes a priced report
+	// possible with nothing but a key.
+	var rate float64
+	var source BillingSource
+
+	switch {
+	case in.CostPerSeat > 0:
+		rate, source = in.CostPerSeat, BillingSourceConfig
+	case in.MonthlySpend > 0 && scan.Active > 0:
+		rate, source = in.MonthlySpend/float64(scan.Active), BillingSourceInvoice
+	case in.Billing != nil && in.Billing.CostPerSeat > 0:
+		rate, source = in.Billing.CostPerSeat, in.Billing.Source
 	}
+
 	scan.CostPerSeat = rate
+	scan.RateSource = source
+
+	if in.Billing != nil {
+		scan.Plan = in.Billing.Plan
+		scan.BilledSeats = in.Billing.BilledSeats
+		scan.NextBillingAt = in.Billing.NextBillingAt
+	}
 
 	scan.MonthlyCost = float64(scan.Active) * rate
 
@@ -203,6 +233,21 @@ func Scan(in ScanInput) ProviderScan {
 	// biggest number in the report is money that was never spent.
 	if in.SuspendedBilling != SuspendedBillingReleased {
 		scan.SuspendedExposure = float64(scan.Suspended) * rate
+	}
+
+	// The vendor's own billed-seat count against the accounts that actually
+	// exist. A gap here is money leaving with nothing attached to it, and it
+	// is invisible from the user list alone — only the subscription API knows.
+	if gap := scan.BilledSeats - scan.Active; scan.BilledSeats > 0 && gap > 0 {
+		scan.Findings = append(scan.Findings, Finding{
+			Kind:     FindingOverProvisioned,
+			Severity: SeverityHigh,
+			Count:    gap,
+			Message: "the vendor bills " + strconv.Itoa(scan.BilledSeats) + " seats but only " +
+				strconv.Itoa(scan.Active) + " accounts are active — a prepaid block or plan minimum worth revisiting",
+			MonthlyWaste: float64(gap) * rate,
+		})
+		scan.MonthlyCost = float64(scan.BilledSeats) * rate
 	}
 
 	if len(suspended) > 0 {
@@ -253,14 +298,18 @@ func Scan(in ScanInput) ProviderScan {
 		})
 	}
 
-	// Waste counts only live, billed seats with no usage. Deactivated seats
-	// are priced into SuspendedExposure instead, because whether they cost
-	// anything is a contract question this tool cannot answer.
+	// Waste counts only live, billed seats with no usage, plus any seats the
+	// vendor bills that no account occupies. Deactivated seats are priced into
+	// SuspendedExposure instead, because whether they cost anything is a
+	// contract question this tool cannot answer.
 	reclaimable := make(map[string]bool, len(inactive))
 	for _, e := range inactive {
 		reclaimable[e] = true
 	}
 	scan.MonthlyWaste = float64(len(reclaimable)) * rate
+	if gap := scan.BilledSeats - scan.Active; scan.BilledSeats > 0 && gap > 0 {
+		scan.MonthlyWaste += float64(gap) * rate
+	}
 
 	sortFindings(scan.Findings)
 	return scan

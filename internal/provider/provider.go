@@ -22,3 +22,15 @@ type IdentityProvider interface {
 	ListGroups(ctx context.Context) ([]core.Group, error)
 	ListGroupMembers(ctx context.Context, groupEmail string) ([]core.User, error)
 }
+
+// BillingProvider is implemented by connectors whose API exposes subscription
+// data — plan, billed seat count, renewal date, sometimes the rate itself.
+//
+// Implement it wherever the vendor exposes anything: a price unseat can read
+// is a price the operator does not have to type, and asking for a value the
+// API already knows is a defect. Connectors that cannot answer simply do not
+// implement it, and unseat degrades to whatever config provides.
+type BillingProvider interface {
+	Provider
+	Billing(ctx context.Context) (*core.Billing, error)
+}

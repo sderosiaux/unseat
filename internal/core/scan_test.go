@@ -340,7 +340,7 @@ func TestScanDerivesRateFromMonthlySpend(t *testing.T) {
 			Provider: "linear", Users: users, Domain: "co.com",
 			MonthlySpend: 32, SuspendedBilling: SuspendedBillingReleased, Now: scanNow,
 		})
-		assert.True(t, s.RateDerived)
+		assert.Equal(t, BillingSourceInvoice, s.RateSource)
 		assert.InDelta(t, 16.0, s.CostPerSeat, 0.001, "32 / 2 active, not / 4 total")
 		assert.InDelta(t, 32.0, s.MonthlyCost, 0.001)
 	})
@@ -350,7 +350,7 @@ func TestScanDerivesRateFromMonthlySpend(t *testing.T) {
 			Provider: "linear", Users: users, Domain: "co.com",
 			CostPerSeat: 10, MonthlySpend: 32, Now: scanNow,
 		})
-		assert.False(t, s.RateDerived)
+		assert.Equal(t, BillingSourceConfig, s.RateSource)
 		assert.InDelta(t, 10.0, s.CostPerSeat, 0.001)
 	})
 
@@ -360,7 +360,7 @@ func TestScanDerivesRateFromMonthlySpend(t *testing.T) {
 			Users:    []User{{Email: "gone@co.com", Status: StatusSuspended}},
 			Domain:   "co.com", MonthlySpend: 500, Now: scanNow,
 		})
-		assert.False(t, s.RateDerived, "dividing by zero must not invent a rate")
+		assert.Empty(t, s.RateSource, "dividing by zero must not invent a rate")
 		assert.Zero(t, s.CostPerSeat)
 	})
 
@@ -377,4 +377,76 @@ func TestScanDerivesRateFromMonthlySpend(t *testing.T) {
 		assert.InDelta(t, 16.0, s.CostPerSeat, 0.001)
 		assert.InDelta(t, 16.0, s.MonthlyWaste, 0.001, "one idle seat at the derived rate")
 	})
+}
+
+// Principle 1: a price the provider's API can report is a price nobody should
+// have to type. Principle 3: it must not be displayed as confidently as a
+// figure the vendor stated outright.
+func TestScanUsesProviderBillingWhenConfigIsSilent(t *testing.T) {
+	users := []User{
+		{Email: "a@co.com", Status: StatusActive},
+		{Email: "b@co.com", Status: StatusActive},
+	}
+	renewal := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
+	sub := &Billing{
+		Plan: "business_yearly_14", BilledSeats: 2, CostPerSeat: 14,
+		Source: BillingSourcePlan, NextBillingAt: &renewal,
+	}
+
+	t.Run("no config at all: the API supplies the rate", func(t *testing.T) {
+		s := Scan(ScanInput{Provider: "linear", Users: users, Domain: "co.com", Billing: sub, Now: scanNow})
+		assert.InDelta(t, 14.0, s.CostPerSeat, 0.001)
+		assert.Equal(t, BillingSourcePlan, s.RateSource, "an inference must be labelled as one")
+		assert.InDelta(t, 28.0, s.MonthlyCost, 0.001)
+		assert.Equal(t, "business_yearly_14", s.Plan)
+		assert.Equal(t, 2, s.BilledSeats)
+		require.NotNil(t, s.NextBillingAt)
+	})
+
+	t.Run("an invoice beats the vendor's plan name", func(t *testing.T) {
+		s := Scan(ScanInput{Provider: "linear", Users: users, Domain: "co.com",
+			Billing: sub, MonthlySpend: 40, Now: scanNow})
+		assert.InDelta(t, 20.0, s.CostPerSeat, 0.001)
+		assert.Equal(t, BillingSourceInvoice, s.RateSource)
+	})
+
+	t.Run("an explicit price beats everything", func(t *testing.T) {
+		s := Scan(ScanInput{Provider: "linear", Users: users, Domain: "co.com",
+			Billing: sub, MonthlySpend: 40, CostPerSeat: 9, Now: scanNow})
+		assert.InDelta(t, 9.0, s.CostPerSeat, 0.001)
+		assert.Equal(t, BillingSourceConfig, s.RateSource)
+	})
+
+	t.Run("plan metadata survives even when the API knows no price", func(t *testing.T) {
+		s := Scan(ScanInput{Provider: "linear", Users: users, Domain: "co.com",
+			Billing: &Billing{Plan: "free", BilledSeats: 0}, Now: scanNow})
+		assert.Zero(t, s.CostPerSeat)
+		assert.Equal(t, "free", s.Plan)
+	})
+}
+
+func TestPriceFromPlanIdentifier(t *testing.T) {
+	cases := map[string]struct {
+		want float64
+		ok   bool
+	}{
+		"business_yearly_14":  {14, true},
+		"standard_monthly_10": {10, true},
+		"plus_9.5":            {9.5, true},
+		"free":                {0, false},
+		"enterprise":          {0, false},
+		"":                    {0, false},
+		// A trailing zero is not a price, it is a missing one.
+		"trial_0": {0, false},
+		// A year is not a price, but this heuristic cannot tell — documented
+		// as an inference precisely because of cases like this.
+		"legacy_2019": {2019, true},
+	}
+	for plan, want := range cases {
+		got, ok := PriceFromPlanIdentifier(plan)
+		assert.Equal(t, want.ok, ok, plan)
+		if want.ok {
+			assert.InDelta(t, want.want, got, 0.001, plan)
+		}
+	}
 }

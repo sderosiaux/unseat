@@ -3,11 +3,13 @@ package linear
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/sderosiaux/unseat/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -282,4 +284,56 @@ func TestSetRoleNotSupported(t *testing.T) {
 	err := p.SetRole(context.Background(), "test@co.com", "admin")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not supported")
+}
+
+// Linear encodes the per-seat price in the plan identifier and reports the
+// seat count it actually charges for, so a priced report needs no config.
+func TestBilling(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// The exact shape the live API returns.
+		fmt.Fprint(w, `{"data":{"organization":{"subscription":{
+		  "type":"business_yearly_14","seats":37,"nextBillingAt":"2026-08-27T13:59:14.000Z"}}}}`)
+	}))
+	defer server.Close()
+
+	b, err := New("tok").WithBaseURL(server.URL).Billing(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, b)
+
+	assert.Equal(t, "business_yearly_14", b.Plan)
+	assert.Equal(t, 37, b.BilledSeats)
+	assert.InDelta(t, 14.0, b.CostPerSeat, 0.001)
+	// An inference about a naming convention, never presented as a stated price.
+	assert.Equal(t, core.BillingSourcePlan, b.Source)
+	require.NotNil(t, b.NextBillingAt)
+	assert.Equal(t, 2026, b.NextBillingAt.Year())
+}
+
+// A free workspace has no subscription. That is an absence, not a failure.
+func TestBillingFreeWorkspace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"data":{"organization":{"subscription":null}}}`)
+	}))
+	defer server.Close()
+
+	b, err := New("tok").WithBaseURL(server.URL).Billing(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, b)
+}
+
+// A plan with no price encoded still yields the seat count, which is the part
+// that reveals over-provisioning.
+func TestBillingPlanWithoutEncodedPrice(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"data":{"organization":{"subscription":{"type":"enterprise","seats":250}}}}`)
+	}))
+	defer server.Close()
+
+	b, err := New("tok").WithBaseURL(server.URL).Billing(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, b)
+	assert.Equal(t, "enterprise", b.Plan)
+	assert.Equal(t, 250, b.BilledSeats)
+	assert.Zero(t, b.CostPerSeat, "no price may be invented for a custom contract")
+	assert.Empty(t, b.Source)
 }

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/sderosiaux/unseat/internal/store"
@@ -28,13 +27,13 @@ func init() {
 }
 
 func runHistoryEvents(cmd *cobra.Command, args []string) error {
-	db, err := store.NewSQLite("unseat.db")
+	db, err := openStore()
 	if err != nil {
-		return fmt.Errorf("open db: %w", err)
+		return err
 	}
 	defer db.Close()
 
-	events, err := db.ListEvents(context.Background(), store.EventFilter{Limit: eventsLimit})
+	events, err := db.ListEvents(cmd.Context(), store.EventFilter{Limit: eventsLimit})
 	if err != nil {
 		return err
 	}

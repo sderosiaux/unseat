@@ -7,6 +7,8 @@ import (
 var (
 	jsonOutput bool
 	configFile string
+	dbPath     string
+	envFile    string
 )
 
 var rootCmd = &cobra.Command{
@@ -18,6 +20,8 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	rootCmd.PersistentFlags().StringVar(&configFile, "config", "unseat.yaml", "Config file path")
+	rootCmd.PersistentFlags().StringVar(&dbPath, "db", "unseat.db", "Local cache database path")
+	rootCmd.PersistentFlags().StringVar(&envFile, "env-file", ".env", "Environment file loaded before config expansion")
 }
 
 func Execute() error {

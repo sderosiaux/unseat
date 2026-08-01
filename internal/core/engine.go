@@ -25,21 +25,61 @@ type ReconcileInput struct {
 	AliasIndex      map[string]string // lowercased alias -> canonical email
 	DryRun          bool
 	GracePeriod     time.Duration
+	// Directory is every identity known to the identity source, keyed by
+	// lowercased email. Removal requires it: without a directory there is no
+	// way to tell a departed employee from an unmapped one, and everything
+	// falls into ToReview instead of ToRemove.
+	Directory map[string]DirectoryUser
+	// Domain is the corporate domain used to spot external identities.
+	Domain string
 }
 
-// ReconcilePlan is the computed diff: who to add, who to remove, how many unchanged.
+// ReconcilePlan is the computed diff: who to add, who to remove, what a human
+// must look at, and how many seats are already correct.
 type ReconcilePlan struct {
 	ProviderName string       `json:"provider"`
 	ToAdd        []UserAction `json:"to_add"`
-	ToRemove     []UserAction `json:"to_remove"`
-	Unchanged    int          `json:"unchanged"`
-	DryRun       bool         `json:"dry_run"`
+	// ToRemove holds only seats with no active directory identity. An active
+	// employee is never in here, however incomplete the mappings are.
+	ToRemove []UserAction `json:"to_remove"`
+	// ToReview holds seats that differ from the mappings but must not be
+	// touched automatically: active employees outside every mapped group,
+	// external identities, and usernames that resolve to nobody.
+	ToReview []SeatReview `json:"to_review"`
+	// AlreadyDeactivated holds orphaned seats the provider already reports as
+	// suspended. There is nothing left to execute on them, but most vendors
+	// keep billing a deactivated seat until it is fully deleted, so they are
+	// surfaced rather than folded into Unchanged.
+	AlreadyDeactivated []UserAction `json:"already_deactivated"`
+	Unchanged          int          `json:"unchanged"`
+	DryRun             bool         `json:"dry_run"`
+}
+
+// SeatReview is a seat that needs a human decision rather than an action.
+type SeatReview struct {
+	Email  string    `json:"email"`
+	Class  SeatClass `json:"class"`
+	Reason string    `json:"reason"`
 }
 
 // UserAction represents a single add or remove action on a SaaS seat.
 type UserAction struct {
+	// Email is the canonical corporate identity, after alias resolution.
 	Email string `json:"email"`
-	Role  string `json:"role,omitempty"`
+	// ProviderEmail is the identifier the provider itself uses, before alias
+	// resolution. Removal must target this: a provider that only knows the
+	// login "tiger-khan" 404s on "tkhan@co.com", and the seat stays billed
+	// while the run reports it as reclaimed.
+	ProviderEmail string `json:"provider_email,omitempty"`
+	Role          string `json:"role,omitempty"`
+}
+
+// Target returns the identifier to use when calling a provider API.
+func (a UserAction) Target() string {
+	if a.ProviderEmail != "" {
+		return a.ProviderEmail
+	}
+	return a.Email
 }
 
 // BuildAliasIndex creates a lookup table mapping aliases to canonical emails.
@@ -118,15 +158,58 @@ func Reconcile(ctx context.Context, input ReconcileInput) (*ReconcilePlan, error
 		}
 	}
 
-	// To remove: in actual but not in desired, minus exceptions.
-	for _, u := range input.ActualUsers {
-		resolved := input.resolveEmail(u.Email)
-		if _, desired := desiredMap[resolved]; !desired && !exceptions[resolved] {
-			plan.ToRemove = append(plan.ToRemove, UserAction{Email: resolved})
-		}
+	// Removal is driven by directory status, not by group membership.
+	// "Not in a mapped group" is a mapping gap; "not in the directory" is a
+	// departure. Only the second justifies taking a seat away.
+	desiredSet := make(map[string]bool, len(desiredMap))
+	for email := range desiredMap {
+		desiredSet[email] = true
 	}
 
-	plan.Unchanged = len(input.ActualUsers) - len(plan.ToRemove)
+	seats := ClassifySeats(ClassifyInput{
+		ProviderName:  input.ProviderName,
+		ActualUsers:   input.ActualUsers,
+		Directory:     input.Directory,
+		DesiredEmails: desiredSet,
+		Domain:        input.Domain,
+		AliasIndex:    input.AliasIndex,
+		Exceptions:    exceptions,
+	})
+
+	for _, seat := range seats {
+		switch {
+		case seat.Protected:
+			// Declared intentional by policy: never acted on, and never
+			// re-reported either — an exception the operator has to re-read
+			// every run is an exception they stop reading.
+			plan.Unchanged++
+		case seat.Class == SeatOrphan:
+			// Most providers implement removal as deactivation, so the seat
+			// keeps coming back as an orphan on every run. Re-issuing the
+			// removal would re-log an event and re-send a notification for the
+			// same person forever, so an already-suspended seat is recorded,
+			// not re-actioned.
+			if seat.User.Status == StatusSuspended {
+				plan.AlreadyDeactivated = append(plan.AlreadyDeactivated, UserAction{
+					Email:         seat.Email,
+					ProviderEmail: seat.RawEmail,
+				})
+				continue
+			}
+			plan.ToRemove = append(plan.ToRemove, UserAction{
+				Email:         seat.Email,
+				ProviderEmail: seat.RawEmail,
+			})
+		case seat.Class == SeatManaged:
+			plan.Unchanged++
+		default:
+			plan.ToReview = append(plan.ToReview, SeatReview{
+				Email:  seat.Email,
+				Class:  seat.Class,
+				Reason: seat.Reason,
+			})
+		}
+	}
 
 	return plan, nil
 }

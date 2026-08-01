@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/sderosiaux/unseat/config"
@@ -74,10 +75,18 @@ func (r *Reconciler) Run(ctx context.Context) ([]*core.ReconcilePlan, error) {
 
 	aliasIndex := core.BuildAliasIndex(r.config.Aliases, allDesiredEmails)
 
+	// The full directory decides who has actually left. Without it every seat
+	// degrades to "review", which is the safe direction: unseat would report
+	// rather than remove.
+	directory, err := r.buildDirectory(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read directory: %w", err)
+	}
+
 	var plans []*core.ReconcilePlan
 
 	for name := range providerNames {
-		plan, err := r.reconcileProvider(ctx, name, aliasIndex)
+		plan, err := r.reconcileProvider(ctx, name, aliasIndex, directory)
 		if err != nil {
 			slog.Error("reconcile failed", "provider", name, "error", err)
 			continue
@@ -88,7 +97,20 @@ func (r *Reconciler) Run(ctx context.Context) ([]*core.ReconcilePlan, error) {
 	return plans, nil
 }
 
-func (r *Reconciler) reconcileProvider(ctx context.Context, name string, aliasIndex map[string]string) (*core.ReconcilePlan, error) {
+func (r *Reconciler) buildDirectory(ctx context.Context) (map[string]core.DirectoryUser, error) {
+	users, err := r.identity.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	directory := make(map[string]core.DirectoryUser, len(users))
+	for _, u := range users {
+		key := strings.ToLower(u.Email)
+		directory[key] = core.DirectoryUser{Email: key, Suspended: u.Status == "suspended"}
+	}
+	return directory, nil
+}
+
+func (r *Reconciler) reconcileProvider(ctx context.Context, name string, aliasIndex map[string]string, directory map[string]core.DirectoryUser) (*core.ReconcilePlan, error) {
 	p, err := r.registry.Get(name)
 	if err != nil {
 		slog.Warn("provider not registered, skipping", "provider", name, "error", err)
@@ -136,6 +158,8 @@ func (r *Reconciler) reconcileProvider(ctx context.Context, name string, aliasIn
 		AliasIndex:  aliasIndex,
 		DryRun:      r.config.Policies.DryRun,
 		GracePeriod: r.config.Policies.GracePeriod,
+		Directory:   directory,
+		Domain:      r.config.IdentitySource.Domain,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reconcile %s: %w", name, err)
@@ -143,7 +167,9 @@ func (r *Reconciler) reconcileProvider(ctx context.Context, name string, aliasIn
 
 	// Execute actions unless dry-run.
 	if !plan.DryRun {
+		r.cancelReturnedUsers(ctx, name, plan)
 		r.executeActions(ctx, name, p, plan)
+		r.executeExpiredRemovals(ctx, name, p, actualUsers)
 	}
 
 	// Log sync completed.
@@ -182,17 +208,105 @@ func (r *Reconciler) executeActions(ctx context.Context, name string, p provider
 			continue
 		}
 		if !caps.CanRemove {
+			slog.Warn("removal skipped: provider does not support it",
+				"provider", name, "email", ua.Email)
 			continue
 		}
-		if err := p.RemoveUser(ctx, ua.Email); err != nil {
-			slog.Error("remove user failed", "provider", name, "email", ua.Email, "error", err)
+		r.removeSeat(ctx, name, p, ua.Email, ua.Target())
+	}
+}
+
+// removeSeat performs one removal and records it. target is the identifier the
+// provider itself knows, which differs from email whenever an alias is in play.
+func (r *Reconciler) removeSeat(ctx context.Context, name string, p provider.Provider, email, target string) {
+	if err := p.RemoveUser(ctx, target); err != nil {
+		slog.Error("remove user failed", "provider", name, "email", email, "target", target, "error", err)
+		return
+	}
+	r.store.InsertEvent(ctx, core.Event{
+		Type: core.EventUserRemoved, Provider: name, Email: email,
+		Trigger: "sync", OccurredAt: time.Now(),
+	})
+	r.sendNotification(ctx, name, email, "removed")
+}
+
+// cancelReturnedUsers clears the countdown for anyone who is no longer an
+// orphan. Without it, someone who leaves a group and comes back before the
+// grace period elapses is still removed when it fires.
+func (r *Reconciler) cancelReturnedUsers(ctx context.Context, name string, plan *core.ReconcilePlan) {
+	if r.config.Policies.GracePeriod <= 0 {
+		return
+	}
+
+	stillOrphaned := make(map[string]bool, len(plan.ToRemove))
+	for _, ua := range plan.ToRemove {
+		stillOrphaned[ua.Email] = true
+	}
+
+	pending, err := r.store.GetPendingRemovals(ctx, name)
+	if err != nil {
+		slog.Error("read pending removals failed", "provider", name, "error", err)
+		return
+	}
+	for _, pr := range pending {
+		if stillOrphaned[pr.Email] {
 			continue
 		}
-		r.store.InsertEvent(ctx, core.Event{
-			Type: core.EventUserRemoved, Provider: name, Email: ua.Email,
-			Trigger: "sync", OccurredAt: time.Now(),
-		})
-		r.sendNotification(ctx, name, ua.Email, "removed")
+		if err := r.store.CancelPendingRemoval(ctx, name, pr.Email); err != nil {
+			slog.Error("cancel pending removal failed", "provider", name, "email", pr.Email, "error", err)
+			continue
+		}
+		slog.Info("pending removal cancelled: identity is active again", "provider", name, "email", pr.Email)
+	}
+}
+
+// executeExpiredRemovals reclaims seats whose grace period has elapsed.
+//
+// Nothing used to read the pending_removals table, so a configured grace
+// period silently meant "never remove anything".
+func (r *Reconciler) executeExpiredRemovals(ctx context.Context, name string, p provider.Provider, actualUsers []core.User) {
+	if r.config.Policies.GracePeriod <= 0 {
+		return
+	}
+	if !p.Capabilities().CanRemove {
+		return
+	}
+
+	expired, err := r.store.GetExpiredRemovals(ctx, name)
+	if err != nil {
+		slog.Error("read expired removals failed", "provider", name, "error", err)
+		return
+	}
+
+	// Map canonical identities back to the identifier the provider uses.
+	target := make(map[string]string, len(actualUsers))
+	for _, u := range actualUsers {
+		target[strings.ToLower(u.Email)] = u.Email
+	}
+	if r.config.Aliases != nil {
+		for canonical, aliases := range r.config.Aliases {
+			for _, alias := range aliases {
+				if raw, ok := target[strings.ToLower(alias)]; ok {
+					target[strings.ToLower(canonical)] = raw
+				}
+			}
+		}
+	}
+
+	for _, pr := range expired {
+		raw, ok := target[strings.ToLower(pr.Email)]
+		if !ok {
+			// The seat is gone from the provider already: close the countdown
+			// rather than retrying a removal that can only fail.
+			if err := r.store.CancelPendingRemoval(ctx, name, pr.Email); err != nil {
+				slog.Error("close stale pending removal failed", "provider", name, "email", pr.Email, "error", err)
+			}
+			continue
+		}
+		r.removeSeat(ctx, name, p, pr.Email, raw)
+		if err := r.store.CancelPendingRemoval(ctx, name, pr.Email); err != nil {
+			slog.Error("close pending removal failed", "provider", name, "email", pr.Email, "error", err)
+		}
 	}
 }
 

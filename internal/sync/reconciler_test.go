@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -21,19 +22,44 @@ import (
 
 type fakeIdentity struct {
 	groups map[string][]core.User
+	// users is what ListUsers returns: the corporate directory the reconciler
+	// builds removal decisions from. A seat only becomes removable when its
+	// email is absent here, or present with Status "suspended".
+	users    []core.User
+	usersErr error
 }
 
-func (f *fakeIdentity) Name() string                                     { return "fake-identity" }
-func (f *fakeIdentity) ListUsers(_ context.Context) ([]core.User, error) { return nil, nil }
-func (f *fakeIdentity) AddUser(_ context.Context, _, _ string) error     { return nil }
-func (f *fakeIdentity) RemoveUser(_ context.Context, _ string) error     { return nil }
-func (f *fakeIdentity) SetRole(_ context.Context, _, _ string) error     { return nil }
-func (f *fakeIdentity) Capabilities() core.Capabilities                  { return core.Capabilities{} }
+func (f *fakeIdentity) Name() string { return "fake-identity" }
+func (f *fakeIdentity) ListUsers(_ context.Context) ([]core.User, error) {
+	if f.usersErr != nil {
+		return nil, f.usersErr
+	}
+	return f.users, nil
+}
+func (f *fakeIdentity) AddUser(_ context.Context, _, _ string) error { return nil }
+func (f *fakeIdentity) RemoveUser(_ context.Context, _ string) error { return nil }
+func (f *fakeIdentity) SetRole(_ context.Context, _, _ string) error { return nil }
+func (f *fakeIdentity) Capabilities() core.Capabilities              { return core.Capabilities{} }
 func (f *fakeIdentity) ListGroups(_ context.Context) ([]core.Group, error) {
 	return nil, nil
 }
 func (f *fakeIdentity) ListGroupMembers(_ context.Context, group string) ([]core.User, error) {
 	return f.groups[group], nil
+}
+
+// directoryOf builds the active half of a directory for the fake identity.
+func directoryOf(emails ...string) []core.User {
+	users := make([]core.User, 0, len(emails))
+	for _, e := range emails {
+		users = append(users, core.User{Email: e, Status: "active"})
+	}
+	return users
+}
+
+// suspendedUser is a directory identity that has been deactivated: still
+// listed, but no longer an employee, so its SaaS seats are reclaimable.
+func suspendedUser(email string) core.User {
+	return core.User{Email: email, Status: "suspended"}
 }
 
 type fakeTarget struct {
@@ -64,6 +90,8 @@ func TestReconcilerFullSync(t *testing.T) {
 		groups: map[string][]core.User{
 			"design@co.com": {{Email: "alice@co.com"}, {Email: "bob@co.com"}},
 		},
+		// charlie has no directory identity: he has left the company.
+		users: directoryOf("alice@co.com", "bob@co.com"),
 	}
 
 	target := &fakeTarget{
@@ -80,6 +108,7 @@ func TestReconcilerFullSync(t *testing.T) {
 	defer db.Close()
 
 	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
 		Mappings: []config.Mapping{
 			{Group: "design@co.com", Providers: []config.ProviderMapping{{Name: "figma", Role: "editor"}}},
 		},
@@ -92,10 +121,14 @@ func TestReconcilerFullSync(t *testing.T) {
 
 	require.Len(t, results, 1)
 	assert.Equal(t, "figma", results[0].ProviderName)
-	assert.Len(t, results[0].ToAdd, 1)
-	assert.Len(t, results[0].ToRemove, 1)
+	require.Len(t, results[0].ToAdd, 1)
+	assert.Equal(t, "alice@co.com", results[0].ToAdd[0].Email)
+	require.Len(t, results[0].ToRemove, 1)
+	assert.Equal(t, "charlie@co.com", results[0].ToRemove[0].Email)
+	assert.Empty(t, results[0].ToReview)
+	assert.Equal(t, 1, results[0].Unchanged, "bob is managed")
 	assert.Contains(t, target.added, "alice@co.com")
-	assert.Contains(t, target.removed, "charlie@co.com")
+	assert.Equal(t, []string{"charlie@co.com"}, target.removed)
 
 	// Verify events were logged
 	events, err := db.ListEvents(context.Background(), store.EventFilter{Limit: 10})
@@ -108,6 +141,7 @@ func TestReconcilerDryRun(t *testing.T) {
 		groups: map[string][]core.User{
 			"design@co.com": {{Email: "alice@co.com"}},
 		},
+		users: directoryOf("alice@co.com"), // old@co.com has left
 	}
 
 	target := &fakeTarget{
@@ -124,6 +158,7 @@ func TestReconcilerDryRun(t *testing.T) {
 	defer db.Close()
 
 	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
 		Mappings: []config.Mapping{
 			{Group: "design@co.com", Providers: []config.ProviderMapping{{Name: "figma", Role: "editor"}}},
 		},
@@ -136,7 +171,10 @@ func TestReconcilerDryRun(t *testing.T) {
 
 	require.Len(t, results, 1)
 	assert.True(t, results[0].DryRun)
-	// No actual actions executed
+	// The plan is still computed in full...
+	assert.Len(t, results[0].ToAdd, 1)
+	assert.Len(t, results[0].ToRemove, 1)
+	// ...but no actual actions executed.
 	assert.Empty(t, target.added)
 	assert.Empty(t, target.removed)
 }
@@ -146,6 +184,7 @@ func TestReconcilerGracePeriod(t *testing.T) {
 		groups: map[string][]core.User{
 			"design@co.com": {{Email: "alice@co.com"}},
 		},
+		users: directoryOf("alice@co.com"), // old@co.com has left
 	}
 
 	target := &fakeTarget{
@@ -162,6 +201,7 @@ func TestReconcilerGracePeriod(t *testing.T) {
 	defer db.Close()
 
 	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
 		Mappings: []config.Mapping{
 			{Group: "design@co.com", Providers: []config.ProviderMapping{{Name: "figma", Role: "editor"}}},
 		},
@@ -169,8 +209,12 @@ func TestReconcilerGracePeriod(t *testing.T) {
 	}
 
 	r := NewReconciler(db, cfg, reg, identity)
-	_, err = r.Run(context.Background())
+	results, err := r.Run(context.Background())
 	require.NoError(t, err)
+
+	require.Len(t, results, 1)
+	require.Len(t, results[0].ToRemove, 1)
+	assert.Equal(t, "old@co.com", results[0].ToRemove[0].Email)
 
 	// User NOT removed immediately (grace period)
 	assert.Empty(t, target.removed)
@@ -187,6 +231,9 @@ func TestReconcilerExceptions(t *testing.T) {
 		groups: map[string][]core.User{
 			"eng@co.com": {{Email: "alice@co.com"}},
 		},
+		// service-bot has no directory identity — it would be an orphan if
+		// policy did not protect it.
+		users: directoryOf("alice@co.com"),
 	}
 
 	target := &fakeTarget{
@@ -203,6 +250,7 @@ func TestReconcilerExceptions(t *testing.T) {
 	defer db.Close()
 
 	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
 		Mappings: []config.Mapping{
 			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
 		},
@@ -218,8 +266,276 @@ func TestReconcilerExceptions(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, results, 1)
-	// service-bot should NOT be in ToRemove because it's an exception
+	// service-bot is an orphan, but the exception protects it: neither removed
+	// nor re-reported for review.
 	assert.Empty(t, results[0].ToRemove)
+	assert.Empty(t, results[0].ToReview, "a protected seat must not be re-reported every run")
+	assert.Equal(t, 2, results[0].Unchanged)
+	assert.Empty(t, target.removed)
+}
+
+// The single most important guarantee: an active employee the mappings do not
+// cover is a mapping gap, not a departure. It goes to review, never to removal.
+func TestReconcilerNeverRemovesActiveEmployee(t *testing.T) {
+	identity := &fakeIdentity{
+		groups: map[string][]core.User{
+			"design@co.com": {{Email: "alice@co.com"}},
+		},
+		// dana is employed, just not in design@.
+		users: directoryOf("alice@co.com", "dana@co.com"),
+	}
+
+	target := &fakeTarget{
+		name:  "figma",
+		users: []core.User{{Email: "alice@co.com"}, {Email: "dana@co.com"}},
+		caps:  core.Capabilities{CanAdd: true, CanRemove: true},
+	}
+
+	reg := provider.NewRegistry()
+	reg.Register(target)
+
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
+		Mappings: []config.Mapping{
+			{Group: "design@co.com", Providers: []config.ProviderMapping{{Name: "figma", Role: "editor"}}},
+		},
+		Policies: config.Policies{DryRun: false},
+	}
+
+	r := NewReconciler(db, cfg, reg, identity)
+	results, err := r.Run(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, results, 1)
+	assert.Empty(t, results[0].ToRemove, "an active employee is never removable")
+	require.Len(t, results[0].ToReview, 1)
+	assert.Equal(t, "dana@co.com", results[0].ToReview[0].Email)
+	assert.Equal(t, core.SeatUnmapped, results[0].ToReview[0].Class)
+	assert.Equal(t, 1, results[0].Unchanged, "alice is managed")
+
+	assert.Empty(t, target.removed)
+	removals, err := db.GetPendingRemovals(context.Background(), "figma")
+	require.NoError(t, err)
+	assert.Empty(t, removals, "an active employee must not even be queued for removal")
+}
+
+// A suspended directory identity is a departure: the seat is reclaimed.
+func TestReconcilerRemovesSuspendedDirectoryUser(t *testing.T) {
+	identity := &fakeIdentity{
+		groups: map[string][]core.User{
+			"design@co.com": {{Email: "alice@co.com"}},
+		},
+		users: append(directoryOf("alice@co.com"), suspendedUser("gone@co.com")),
+	}
+
+	target := &fakeTarget{
+		name:  "figma",
+		users: []core.User{{Email: "alice@co.com"}, {Email: "gone@co.com"}},
+		caps:  core.Capabilities{CanAdd: true, CanRemove: true},
+	}
+
+	reg := provider.NewRegistry()
+	reg.Register(target)
+
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
+		Mappings: []config.Mapping{
+			{Group: "design@co.com", Providers: []config.ProviderMapping{{Name: "figma", Role: "editor"}}},
+		},
+		Policies: config.Policies{DryRun: false},
+	}
+
+	r := NewReconciler(db, cfg, reg, identity)
+	results, err := r.Run(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, results, 1)
+	require.Len(t, results[0].ToRemove, 1)
+	assert.Equal(t, "gone@co.com", results[0].ToRemove[0].Email)
+	assert.Empty(t, results[0].ToReview)
+	assert.Equal(t, []string{"gone@co.com"}, target.removed)
+}
+
+// A directory read failure must abort the run. Degrading to "no directory"
+// would classify every seat as an orphan and wipe the tenant.
+func TestReconcilerDirectoryFailureAbortsRun(t *testing.T) {
+	boom := errors.New("directory API 503")
+	identity := &fakeIdentity{
+		groups: map[string][]core.User{
+			"design@co.com": {{Email: "alice@co.com"}},
+		},
+		usersErr: boom,
+	}
+
+	target := &fakeTarget{
+		name:  "figma",
+		users: []core.User{{Email: "alice@co.com"}, {Email: "charlie@co.com"}},
+		caps:  core.Capabilities{CanAdd: true, CanRemove: true},
+	}
+
+	reg := provider.NewRegistry()
+	reg.Register(target)
+
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
+		Mappings: []config.Mapping{
+			{Group: "design@co.com", Providers: []config.ProviderMapping{{Name: "figma", Role: "editor"}}},
+		},
+		Policies: config.Policies{DryRun: false},
+	}
+
+	r := NewReconciler(db, cfg, reg, identity)
+	results, err := r.Run(context.Background())
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, boom)
+	assert.Nil(t, results)
+	assert.Empty(t, target.removed, "no seat may be touched when the directory is unreadable")
+	assert.Empty(t, target.added)
+
+	removals, err := db.GetPendingRemovals(context.Background(), "figma")
+	require.NoError(t, err)
+	assert.Empty(t, removals)
+}
+
+// An identity outside the corporate domain needs a human decision.
+func TestReconcilerExternalSeatGoesToReview(t *testing.T) {
+	identity := &fakeIdentity{
+		groups: map[string][]core.User{
+			"design@co.com": {{Email: "alice@co.com"}},
+		},
+		users: directoryOf("alice@co.com"),
+	}
+
+	target := &fakeTarget{
+		name:  "figma",
+		users: []core.User{{Email: "alice@co.com"}, {Email: "contractor@agency.com"}},
+		caps:  core.Capabilities{CanAdd: true, CanRemove: true},
+	}
+
+	reg := provider.NewRegistry()
+	reg.Register(target)
+
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
+		Mappings: []config.Mapping{
+			{Group: "design@co.com", Providers: []config.ProviderMapping{{Name: "figma", Role: "editor"}}},
+		},
+		Policies: config.Policies{DryRun: false},
+	}
+
+	r := NewReconciler(db, cfg, reg, identity)
+	results, err := r.Run(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, results, 1)
+	assert.Empty(t, results[0].ToRemove)
+	require.Len(t, results[0].ToReview, 1)
+	assert.Equal(t, "contractor@agency.com", results[0].ToReview[0].Email)
+	assert.Equal(t, core.SeatExternal, results[0].ToReview[0].Class)
+	assert.Empty(t, target.removed)
+}
+
+// A provider username no alias resolves cannot be judged, so it is surfaced
+// rather than removed.
+func TestReconcilerUnresolvedUsernameGoesToReview(t *testing.T) {
+	identity := &fakeIdentity{
+		groups: map[string][]core.User{
+			"eng@co.com": {{Email: "alice@co.com"}},
+		},
+		users: directoryOf("alice@co.com"),
+	}
+
+	target := &fakeTarget{
+		name:  "linear",
+		users: []core.User{{Email: "alice@co.com"}, {Email: "ci-bot"}}, // no @, no alias
+		caps:  core.Capabilities{CanAdd: true, CanRemove: true},
+	}
+
+	reg := provider.NewRegistry()
+	reg.Register(target)
+
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
+		Mappings: []config.Mapping{
+			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
+		},
+		Policies: config.Policies{DryRun: false},
+	}
+
+	r := NewReconciler(db, cfg, reg, identity)
+	results, err := r.Run(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, results, 1)
+	assert.Empty(t, results[0].ToRemove)
+	require.Len(t, results[0].ToReview, 1)
+	assert.Equal(t, "ci-bot", results[0].ToReview[0].Email)
+	assert.Equal(t, core.SeatUnresolved, results[0].ToReview[0].Class)
+	assert.Empty(t, target.removed)
+}
+
+// A configured alias makes a provider username resolve to a directory
+// identity, so the seat is managed rather than reviewed.
+func TestReconcilerAliasResolvesToDirectoryIdentity(t *testing.T) {
+	identity := &fakeIdentity{
+		groups: map[string][]core.User{
+			"eng@co.com": {{Email: "tkhan@co.com"}},
+		},
+		users: directoryOf("tkhan@co.com"),
+	}
+
+	target := &fakeTarget{
+		name:  "linear",
+		users: []core.User{{Email: "tiger-khan"}},
+		caps:  core.Capabilities{CanAdd: true, CanRemove: true},
+	}
+
+	reg := provider.NewRegistry()
+	reg.Register(target)
+
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer db.Close()
+
+	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
+		Mappings: []config.Mapping{
+			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
+		},
+		Aliases:  map[string][]string{"tkhan@co.com": {"tiger-khan"}},
+		Policies: config.Policies{DryRun: false},
+	}
+
+	r := NewReconciler(db, cfg, reg, identity)
+	results, err := r.Run(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, results, 1)
+	assert.Empty(t, results[0].ToAdd, "tiger-khan already holds tkhan's seat")
+	assert.Empty(t, results[0].ToRemove)
+	assert.Empty(t, results[0].ToReview)
+	assert.Equal(t, 1, results[0].Unchanged)
 	assert.Empty(t, target.removed)
 }
 
@@ -228,6 +544,7 @@ func TestReconcilerSkipsUnregisteredProvider(t *testing.T) {
 		groups: map[string][]core.User{
 			"design@co.com": {{Email: "alice@co.com"}},
 		},
+		users: directoryOf("alice@co.com"),
 	}
 
 	reg := provider.NewRegistry() // empty registry — no providers registered
@@ -237,6 +554,7 @@ func TestReconcilerSkipsUnregisteredProvider(t *testing.T) {
 	defer db.Close()
 
 	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
 		Mappings: []config.Mapping{
 			{Group: "design@co.com", Providers: []config.ProviderMapping{{Name: "figma", Role: "editor"}}},
 		},
@@ -254,6 +572,7 @@ func TestReconcilerMultipleProviders(t *testing.T) {
 			"design@co.com": {{Email: "alice@co.com"}},
 			"eng@co.com":    {{Email: "bob@co.com"}},
 		},
+		users: directoryOf("alice@co.com", "bob@co.com"),
 	}
 
 	figma := &fakeTarget{
@@ -276,6 +595,7 @@ func TestReconcilerMultipleProviders(t *testing.T) {
 	defer db.Close()
 
 	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
 		Mappings: []config.Mapping{
 			{Group: "design@co.com", Providers: []config.ProviderMapping{{Name: "figma", Role: "editor"}}},
 			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
@@ -296,6 +616,8 @@ func TestReconcilerSyncStateUpdated(t *testing.T) {
 		groups: map[string][]core.User{
 			"eng@co.com": {{Email: "alice@co.com"}},
 		},
+		// bob is an active employee outside eng@: counted, not removed.
+		users: directoryOf("alice@co.com", "bob@co.com"),
 	}
 
 	target := &fakeTarget{
@@ -312,6 +634,7 @@ func TestReconcilerSyncStateUpdated(t *testing.T) {
 	defer db.Close()
 
 	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
 		Mappings: []config.Mapping{
 			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
 		},
@@ -326,6 +649,7 @@ func TestReconcilerSyncStateUpdated(t *testing.T) {
 	require.NotNil(t, state)
 	assert.Equal(t, 2, state.UserCount)
 	assert.Equal(t, "ok", state.Status)
+	assert.Empty(t, target.removed)
 }
 
 // --- Notification integration tests ---
@@ -343,6 +667,7 @@ func TestReconcilerNotifiesOnRemoval(t *testing.T) {
 		groups: map[string][]core.User{
 			"eng@co.com": {{Email: "alice@co.com"}},
 		},
+		users: directoryOf("alice@co.com"), // old@co.com has left
 	}
 
 	target := &fakeTarget{
@@ -367,6 +692,7 @@ func TestReconcilerNotifiesOnRemoval(t *testing.T) {
 	})
 
 	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
 		Mappings: []config.Mapping{
 			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
 		},
@@ -377,7 +703,7 @@ func TestReconcilerNotifiesOnRemoval(t *testing.T) {
 	_, err = r.Run(context.Background())
 	require.NoError(t, err)
 
-	assert.Contains(t, target.removed, "old@co.com")
+	assert.Equal(t, []string{"old@co.com"}, target.removed)
 	assert.Equal(t, int32(1), notifyCount.Load(), "expected exactly 1 notification for removal")
 }
 
@@ -386,6 +712,7 @@ func TestReconcilerNotifiesOnPendingRemoval(t *testing.T) {
 		groups: map[string][]core.User{
 			"eng@co.com": {{Email: "alice@co.com"}},
 		},
+		users: directoryOf("alice@co.com"), // old@co.com has left
 	}
 
 	target := &fakeTarget{
@@ -410,6 +737,7 @@ func TestReconcilerNotifiesOnPendingRemoval(t *testing.T) {
 	})
 
 	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
 		Mappings: []config.Mapping{
 			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
 		},
@@ -432,6 +760,7 @@ func TestReconcilerNoNotificationWhenDisabled(t *testing.T) {
 		groups: map[string][]core.User{
 			"eng@co.com": {{Email: "alice@co.com"}},
 		},
+		users: directoryOf("alice@co.com"), // old@co.com has left
 	}
 
 	target := &fakeTarget{
@@ -456,6 +785,7 @@ func TestReconcilerNoNotificationWhenDisabled(t *testing.T) {
 	})
 
 	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
 		Mappings: []config.Mapping{
 			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
 		},
@@ -475,6 +805,7 @@ func TestReconcilerNilNotifierSafe(t *testing.T) {
 		groups: map[string][]core.User{
 			"eng@co.com": {{Email: "alice@co.com"}},
 		},
+		users: directoryOf("alice@co.com"), // old@co.com has left
 	}
 
 	target := &fakeTarget{
@@ -491,6 +822,7 @@ func TestReconcilerNilNotifierSafe(t *testing.T) {
 	defer db.Close()
 
 	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
 		Mappings: []config.Mapping{
 			{Group: "eng@co.com", Providers: []config.ProviderMapping{{Name: "linear", Role: "member"}}},
 		},

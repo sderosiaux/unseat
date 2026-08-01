@@ -168,6 +168,12 @@ func mask(s string) string {
 	return s[:4] + "****"
 }
 
+// InjectIntoConfig fills in provider API keys from the credential store.
+//
+// An api_key set explicitly in the config file always wins — the YAML is the
+// declared intent, the store is a convenience filled by `providers add`.
+// Providers present only in the store are added to the config, so a plain
+// `providers add` is enough to make a provider usable without editing YAML.
 func (s *FileStore) InjectIntoConfig(cfg *config.Config) error {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -181,11 +187,17 @@ func (s *FileStore) InjectIntoConfig(cfg *config.Config) error {
 	}
 	for _, c := range creds {
 		existing := cfg.Providers[c.Provider]
+		if existing.APIKey != "" {
+			continue
+		}
 		switch c.Type {
 		case CredentialOAuth2:
 			existing.APIKey = c.AccessToken
 		case CredentialAPIKey:
 			existing.APIKey = c.APIKey
+		}
+		if existing.APIKey == "" {
+			continue
 		}
 		cfg.Providers[c.Provider] = existing
 	}

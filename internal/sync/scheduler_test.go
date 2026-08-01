@@ -22,6 +22,7 @@ func newTestReconciler(t *testing.T) *Reconciler {
 		groups: map[string][]core.User{
 			"eng@co.com": {{Email: "alice@co.com"}},
 		},
+		users: directoryOf("alice@co.com"),
 	}
 	target := &fakeTarget{
 		name:  "linear",

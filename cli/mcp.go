@@ -1,12 +1,7 @@
 package cli
 
 import (
-	"context"
-	"fmt"
-
 	mcpserver "github.com/sderosiaux/unseat/api/mcp"
-	"github.com/sderosiaux/unseat/config"
-	"github.com/sderosiaux/unseat/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -21,17 +16,17 @@ func init() {
 }
 
 func runMCP(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load(configFile)
+	cfg, err := loadConfig()
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return err
 	}
 
-	db, err := store.NewSQLite("unseat.db")
+	db, err := openStore()
 	if err != nil {
-		return fmt.Errorf("open db: %w", err)
+		return err
 	}
 	defer db.Close()
 
 	srv := mcpserver.New(db, cfg)
-	return srv.Run(context.Background())
+	return srv.Run(cmd.Context())
 }

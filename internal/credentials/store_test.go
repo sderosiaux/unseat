@@ -21,11 +21,11 @@ func TestCredentialStoreSetAndGet(t *testing.T) {
 	store := NewFileStore(tempStorePath(t))
 
 	cred := Credential{
-		Provider:    "linear",
-		Type:        CredentialAPIKey,
-		APIKey:      "lin_api_abc123",
-		CreatedAt:   time.Now().Truncate(time.Second),
-		UpdatedAt:   time.Now().Truncate(time.Second),
+		Provider:  "linear",
+		Type:      CredentialAPIKey,
+		APIKey:    "lin_api_abc123",
+		CreatedAt: time.Now().Truncate(time.Second),
+		UpdatedAt: time.Now().Truncate(time.Second),
 	}
 
 	require.NoError(t, store.Set(cred))
@@ -50,8 +50,8 @@ func TestCredentialStoreDelete(t *testing.T) {
 	store := NewFileStore(tempStorePath(t))
 
 	require.NoError(t, store.Set(Credential{
-		Provider: "slack",
-		Type:     CredentialOAuth2,
+		Provider:    "slack",
+		Type:        CredentialOAuth2,
 		AccessToken: "xoxb-token",
 	}))
 
@@ -103,10 +103,10 @@ func TestCredentialStoreUpsert(t *testing.T) {
 	store := NewFileStore(tempStorePath(t))
 
 	require.NoError(t, store.Set(Credential{
-		Provider:    "linear",
-		Type:        CredentialAPIKey,
-		APIKey:      "old-key",
-		CreatedAt:   time.Now().Add(-time.Hour).Truncate(time.Second),
+		Provider:  "linear",
+		Type:      CredentialAPIKey,
+		APIKey:    "old-key",
+		CreatedAt: time.Now().Add(-time.Hour).Truncate(time.Second),
 	}))
 
 	require.NoError(t, store.Set(Credential{
@@ -164,9 +164,9 @@ func TestCredentialStoreInjectIntoConfig(t *testing.T) {
 	store := NewFileStore(tempStorePath(t))
 
 	require.NoError(t, store.Set(Credential{
-		Provider:    "linear",
-		Type:        CredentialAPIKey,
-		APIKey:      "lin_key_123",
+		Provider: "linear",
+		Type:     CredentialAPIKey,
+		APIKey:   "lin_key_123",
 	}))
 	require.NoError(t, store.Set(Credential{
 		Provider:    "slack",

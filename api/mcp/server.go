@@ -2,10 +2,12 @@ package mcp
 
 import (
 	"context"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sderosiaux/unseat/config"
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider"
 	"github.com/sderosiaux/unseat/internal/store"
 )
 
@@ -72,6 +74,17 @@ type getMappingsOutput struct {
 	Mappings []config.Mapping `json:"mappings"`
 }
 
+type inactiveInput struct {
+	Days int `json:"days" jsonschema:"inactivity threshold in days (default 30)"`
+}
+
+type listInactiveOutput struct {
+	ThresholdDays int                  `json:"threshold_days"`
+	Evaluated     []string             `json:"evaluated_providers"`
+	Unevaluable   []string             `json:"unevaluable"`
+	Users         []store.InactiveUser `json:"users"`
+}
+
 // --- Tool registration ---
 
 func (s *MCPServer) registerTools() {
@@ -85,10 +98,22 @@ func (s *MCPServer) registerTools() {
 		Description: "List cached users for a specific SaaS provider",
 	}, s.handleProviderUsers)
 
+	// Named for what it actually reads. It used to be called list_orphans,
+	// which invited agents to treat "empty" as "no orphaned accounts" when it
+	// only ever meant "no removal is currently counting down".
 	mcp.AddTool(s.server, &mcp.Tool{
-		Name:        "list_orphans",
-		Description: "List pending removals (orphan accounts) across all providers",
+		Name: "list_pending_removals",
+		Description: "List seats currently inside their grace period, awaiting removal. " +
+			"This is NOT the set of orphaned accounts: it is empty until a sync with a " +
+			"grace period has detected departures. To find orphaned seats, run `unseat audit orphans`.",
 	}, s.handleListOrphans)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name: "list_inactive_users",
+		Description: "List users with no activity in the last N days. Only providers whose API " +
+			"exposes activity data are evaluated; the others are returned in `unevaluable` and " +
+			"their absence from the list means unknown, not active.",
+	}, s.handleListInactive)
 
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "list_events",
@@ -159,6 +184,46 @@ func (s *MCPServer) handleListEvents(ctx context.Context, _ *mcp.CallToolRequest
 		events = []core.Event{}
 	}
 	return nil, listEventsOutput{Events: events}, nil
+}
+
+func (s *MCPServer) handleListInactive(ctx context.Context, _ *mcp.CallToolRequest, input inactiveInput) (*mcp.CallToolResult, listInactiveOutput, error) {
+	days := input.Days
+	if days <= 0 {
+		days = 30
+	}
+
+	reporting, err := provider.ActivityReportingProviders(s.config)
+	if err != nil {
+		return nil, listInactiveOutput{}, err
+	}
+	silent, err := provider.NonActivityReportingProviders(s.config)
+	if err != nil {
+		return nil, listInactiveOutput{}, err
+	}
+
+	users, err := s.store.GetInactiveUsers(ctx, time.Now().AddDate(0, 0, -days), reporting)
+	if err != nil {
+		return nil, listInactiveOutput{}, err
+	}
+
+	out := listInactiveOutput{
+		ThresholdDays: days,
+		Evaluated:     reporting,
+		Unevaluable:   silent,
+		Users:         users,
+	}
+	// Empty slices rather than nil: an agent reading `null` cannot tell an
+	// empty result from a missing field.
+	if out.Evaluated == nil {
+		out.Evaluated = []string{}
+	}
+	if out.Unevaluable == nil {
+		out.Unevaluable = []string{}
+	}
+	if out.Users == nil {
+		out.Users = []store.InactiveUser{}
+	}
+	return nil, out, nil
 }
 
 func (s *MCPServer) handleGetMappings(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, getMappingsOutput, error) {

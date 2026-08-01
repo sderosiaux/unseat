@@ -3,10 +3,12 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/sderosiaux/unseat/internal/provider"
 	"github.com/sderosiaux/unseat/internal/store"
 )
 
@@ -85,12 +87,37 @@ func (s *Server) handleAllInactiveUsers(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	since := time.Now().AddDate(0, 0, -days)
-	users, err := s.store.GetInactiveUsers(r.Context(), since)
+	reporting, silent, err := s.activityProviders()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, users)
+	users, err := s.store.GetInactiveUsers(r.Context(), since, reporting)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"threshold_days":      days,
+		"evaluated_providers": reporting,
+		"unevaluable":         silent,
+		"users":               users,
+	})
+}
+
+// activityProviders splits configured providers into those whose API reports
+// activity and those that cannot answer the question at all. Callers must
+// surface the second list: an empty result otherwise reads as "all active".
+func (s *Server) activityProviders() (reporting, silent []string, err error) {
+	reporting, err = provider.ActivityReportingProviders(s.config)
+	if err != nil {
+		return nil, nil, err
+	}
+	silent, err = provider.NonActivityReportingProviders(s.config)
+	if err != nil {
+		return nil, nil, err
+	}
+	return reporting, silent, nil
 }
 
 func (s *Server) handleInactiveUsers(w http.ResponseWriter, r *http.Request) {
@@ -100,19 +127,32 @@ func (s *Server) handleInactiveUsers(w http.ResponseWriter, r *http.Request) {
 			days = n
 		}
 	}
-	since := time.Now().AddDate(0, 0, -days)
-	users, err := s.store.GetInactiveUsers(r.Context(), since)
+	name := chi.URLParam(r, "name")
+
+	reporting, _, err := s.activityProviders()
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-
-	name := chi.URLParam(r, "name")
-	var filtered []store.InactiveUser
-	for _, u := range users {
-		if u.Provider == name {
-			filtered = append(filtered, u)
-		}
+	if !slices.Contains(reporting, name) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"provider":    name,
+			"unevaluable": true,
+			"reason":      "this provider's API exposes no activity data",
+			"users":       []store.InactiveUser{},
+		})
+		return
 	}
-	writeJSON(w, http.StatusOK, filtered)
+
+	since := time.Now().AddDate(0, 0, -days)
+	users, err := s.store.GetInactiveUsers(r.Context(), since, []string{name})
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"provider":       name,
+		"threshold_days": days,
+		"users":          users,
+	})
 }

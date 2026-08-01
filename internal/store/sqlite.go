@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -32,6 +33,9 @@ func NewSQLite(dsn string) (*SQLite, error) {
 	}
 
 	goose.SetBaseFS(migrations)
+	// Migrations run on every command. Their progress on stdout corrupted
+	// --json output, so it is silenced; failures still surface as errors.
+	goose.SetLogger(goose.NopLogger())
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("goose dialect: %w", err)
@@ -107,11 +111,33 @@ func (s *SQLite) GetProviderUsers(ctx context.Context, provider string) ([]core.
 	return users, rows.Err()
 }
 
-func (s *SQLite) GetInactiveUsers(ctx context.Context, since time.Time) ([]InactiveUser, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT provider, email, display_name, last_activity_at, status FROM provider_users
-		 WHERE last_activity_at IS NULL OR last_activity_at < ?
-		 ORDER BY last_activity_at ASC, provider, email`, since.UTC())
+// GetInactiveUsers returns users with no activity since the given time,
+// restricted to providers whose API actually reports activity.
+//
+// Restricting by provider is not an optimisation: a NULL last_activity_at
+// means "never seen active" for an instrumented provider, but "unknown" for
+// every other one. Querying across both makes the result meaningless.
+// An empty providers slice returns no rows, which is the honest answer when
+// nothing is instrumented.
+func (s *SQLite) GetInactiveUsers(ctx context.Context, since time.Time, providers []string) ([]InactiveUser, error) {
+	if len(providers) == 0 {
+		return nil, nil
+	}
+
+	args := make([]any, 0, len(providers)+1)
+	placeholders := make([]string, len(providers))
+	for i, p := range providers {
+		placeholders[i] = "?"
+		args = append(args, p)
+	}
+	args = append(args, since.UTC())
+
+	query := `SELECT provider, email, display_name, last_activity_at, status FROM provider_users
+		 WHERE provider IN (` + strings.Join(placeholders, ",") + `)
+		   AND (last_activity_at IS NULL OR last_activity_at < ?)
+		 ORDER BY last_activity_at ASC, provider, email`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -186,10 +212,20 @@ func (s *SQLite) ListEvents(ctx context.Context, filter EventFilter) ([]core.Eve
 
 // --- Pending Removals ---
 
+// InsertPendingRemoval records a seat as due for removal once the grace period
+// elapses.
+//
+// An existing, still-active countdown keeps its original deadline. Refreshing
+// expires_at on every run made the grace period unreachable: with an hourly
+// sync and a 72h grace, the deadline moved forward faster than the clock.
+// A previously cancelled row does restart, because the user left again.
 func (s *SQLite) InsertPendingRemoval(ctx context.Context, provider, email string, expiresAt time.Time) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO pending_removals (provider, email, expires_at) VALUES (?, ?, ?)
-		 ON CONFLICT(provider, email) DO UPDATE SET expires_at = excluded.expires_at, cancelled = FALSE`,
+		 ON CONFLICT(provider, email) DO UPDATE SET
+		   expires_at = CASE WHEN pending_removals.cancelled THEN excluded.expires_at
+		                     ELSE pending_removals.expires_at END,
+		   cancelled = FALSE`,
 		provider, email, expiresAt.UTC())
 	return err
 }
@@ -220,10 +256,11 @@ func (s *SQLite) CancelPendingRemoval(ctx context.Context, provider, email strin
 	return err
 }
 
-func (s *SQLite) GetExpiredRemovals(ctx context.Context) ([]PendingRemoval, error) {
+func (s *SQLite) GetExpiredRemovals(ctx context.Context, provider string) ([]PendingRemoval, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT provider, email, detected_at, expires_at, cancelled FROM pending_removals
-		 WHERE cancelled = FALSE AND expires_at <= ? ORDER BY expires_at`, time.Now().UTC())
+		 WHERE provider = ? AND cancelled = FALSE AND expires_at <= ? ORDER BY expires_at`,
+		provider, time.Now().UTC())
 	if err != nil {
 		return nil, err
 	}

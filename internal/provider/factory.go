@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/sderosiaux/unseat/config"
 	"github.com/sderosiaux/unseat/internal/provider/adobe"
@@ -99,9 +100,43 @@ func BuildRegistryWithIdentity(cfg *config.Config, identity IdentityProvider) (*
 	return reg, identity, nil
 }
 
-// withBase applies BaseURL override when configured and the provider supports it.
-type baseURLSetter interface {
-	WithBaseURL(string) *struct{} // marker — not used directly
+// ActivityReportingProviders returns the configured providers whose API
+// actually reports last-activity data.
+//
+// Constructing providers performs no I/O, so this is a cheap capability
+// lookup. Callers use it to scope inactivity queries: outside this set a null
+// last-activity means "unknown", not "inactive".
+func ActivityReportingProviders(cfg *config.Config) ([]string, error) {
+	var names []string
+	for name, pcfg := range cfg.Providers {
+		p, err := buildProvider(name, pcfg)
+		if err != nil {
+			return nil, err
+		}
+		if p.Capabilities().ReportsActivity {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+// NonActivityReportingProviders is the complement of ActivityReportingProviders:
+// configured providers that cannot answer the inactivity question at all.
+// Surfacing them keeps "no inactive users" from being read as "nothing to clean up".
+func NonActivityReportingProviders(cfg *config.Config) ([]string, error) {
+	var names []string
+	for name, pcfg := range cfg.Providers {
+		p, err := buildProvider(name, pcfg)
+		if err != nil {
+			return nil, err
+		}
+		if !p.Capabilities().ReportsActivity {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func buildProvider(name string, pcfg config.ProviderConfig) (Provider, error) {

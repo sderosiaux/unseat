@@ -1,11 +1,10 @@
 package cli
 
 import (
-	"context"
 	"fmt"
+	"slices"
 	"time"
 
-	"github.com/sderosiaux/unseat/config"
 	"github.com/sderosiaux/unseat/internal/provider"
 	"github.com/sderosiaux/unseat/internal/store"
 	"github.com/spf13/cobra"
@@ -42,44 +41,105 @@ func init() {
 }
 
 func runProvidersList(cmd *cobra.Command, args []string) error {
-	db, err := store.NewSQLite("unseat.db")
-	if err != nil {
-		return fmt.Errorf("open db: %w", err)
-	}
-	defer db.Close()
-
-	states, err := db.ListSyncStates(context.Background())
+	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
 
-	if jsonOutput {
-		return printJSON(states)
-	}
-
-	if len(states) == 0 {
-		fmt.Println("No providers synced yet. Run `unseat sync run` first.")
-		return nil
-	}
-
-	rows := make([][]string, len(states))
-	for i, s := range states {
-		rows[i] = []string{s.Provider, s.LastSyncedAt.Format("2006-01-02 15:04:05"), fmt.Sprintf("%d", s.UserCount), s.Status}
-	}
-	printTable([]string{"PROVIDER", "LAST SYNCED", "USERS", "STATUS"}, rows)
-	return nil
-}
-
-func runProvidersUsers(cmd *cobra.Command, args []string) error {
-	provider := args[0]
-
-	db, err := store.NewSQLite("unseat.db")
+	db, err := openStore()
 	if err != nil {
-		return fmt.Errorf("open db: %w", err)
+		return err
 	}
 	defer db.Close()
 
-	users, err := db.GetProviderUsers(context.Background(), provider)
+	states, err := db.ListSyncStates(cmd.Context())
+	if err != nil {
+		return err
+	}
+	syncState := make(map[string]store.SyncState, len(states))
+	for _, s := range states {
+		syncState[s.Provider] = s
+	}
+
+	activity, err := provider.ActivityReportingProviders(cfg)
+	if err != nil {
+		return err
+	}
+
+	// List every configured provider, not just those already synced: a
+	// provider with credentials but no sync yet is the normal starting state,
+	// and hiding it made the tool look empty on first run.
+	type row struct {
+		Provider     string `json:"provider"`
+		Credential   string `json:"credential"`
+		Mapped       bool   `json:"mapped"`
+		ReportsUsage bool   `json:"reports_usage"`
+		LastSynced   string `json:"last_synced,omitempty"`
+		Users        int    `json:"users"`
+	}
+
+	names := sortedProviderNames(cfg)
+	out := make([]row, 0, len(names))
+	for _, name := range names {
+		r := row{
+			Provider:     name,
+			Credential:   "missing",
+			Mapped:       len(cfg.GroupsForProvider(name)) > 0,
+			ReportsUsage: slices.Contains(activity, name),
+			LastSynced:   "never",
+		}
+		if cfg.Providers[name].APIKey != "" {
+			r.Credential = "ok"
+		}
+		if s, ok := syncState[name]; ok {
+			r.LastSynced = s.LastSyncedAt.Format("2006-01-02 15:04")
+			r.Users = s.UserCount
+		}
+		out = append(out, r)
+	}
+
+	if jsonOutput {
+		return printJSON(out)
+	}
+
+	if len(out) == 0 {
+		fmt.Println("No providers configured. Add one with `unseat providers add <name>`,")
+		fmt.Println("or list what is available with `unseat providers supported`.")
+		return nil
+	}
+
+	rows := make([][]string, len(out))
+	for i, r := range out {
+		rows[i] = []string{
+			r.Provider,
+			r.Credential,
+			yesNo(r.Mapped),
+			yesNo(r.ReportsUsage),
+			r.LastSynced,
+			fmt.Sprintf("%d", r.Users),
+		}
+	}
+	printTable([]string{"PROVIDER", "CREDENTIAL", "MAPPED", "USAGE DATA", "LAST SYNCED", "USERS"}, rows)
+	return nil
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
+}
+
+func runProvidersUsers(cmd *cobra.Command, args []string) error {
+	name := args[0]
+
+	db, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	users, err := db.GetProviderUsers(cmd.Context(), name)
 	if err != nil {
 		return err
 	}
@@ -89,7 +149,7 @@ func runProvidersUsers(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(users) == 0 {
-		fmt.Printf("No users cached for %s. Run `unseat sync run` first.\n", provider)
+		fmt.Printf("No users cached for %s. Run `unseat sync plan` to populate the cache.\n", name)
 		return nil
 	}
 
@@ -102,7 +162,7 @@ func runProvidersUsers(cmd *cobra.Command, args []string) error {
 }
 
 func runProvidersTest(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Load(configFile)
+	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
@@ -113,7 +173,7 @@ func runProvidersTest(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx := context.Background()
+	ctx := cmd.Context()
 	var results []map[string]any
 
 	for _, name := range args {

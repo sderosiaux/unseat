@@ -5,11 +5,20 @@ import (
 	"time"
 )
 
+// Seat statuses. Providers must report one of these: reconciliation treats
+// StatusSuspended as "already deactivated, do not act again", so a connector
+// inventing its own vocabulary silently re-triggers removals every sync.
+const (
+	StatusActive    = "active"
+	StatusSuspended = "suspended"
+	StatusInvited   = "invited"
+)
+
 type User struct {
 	Email          string            `json:"email"`
 	DisplayName    string            `json:"display_name"`
 	Role           string            `json:"role"`
-	Status         string            `json:"status"` // active, suspended, invited
+	Status         string            `json:"status"` // one of the Status* constants
 	ProviderID     string            `json:"provider_id"`
 	LastActivityAt *time.Time        `json:"last_activity_at,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
@@ -34,6 +43,11 @@ type Capabilities struct {
 	CanSuspend bool `json:"can_suspend"`
 	CanSetRole bool `json:"can_set_role"`
 	HasWebhook bool `json:"has_webhook"`
+	// ReportsActivity declares that ListUsers populates User.LastActivityAt.
+	// Without it, a nil LastActivityAt means "this API tells us nothing", not
+	// "this person never logged in" — conflating the two made every user of
+	// every non-instrumented provider look inactive.
+	ReportsActivity bool `json:"reports_activity"`
 }
 
 type EventType string

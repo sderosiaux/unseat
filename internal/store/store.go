@@ -11,13 +11,13 @@ import (
 type Store interface {
 	UpsertProviderUsers(ctx context.Context, provider string, users []core.User) error
 	GetProviderUsers(ctx context.Context, provider string) ([]core.User, error)
-	GetInactiveUsers(ctx context.Context, since time.Time) ([]InactiveUser, error)
+	GetInactiveUsers(ctx context.Context, since time.Time, providers []string) ([]InactiveUser, error)
 	InsertEvent(ctx context.Context, event core.Event) error
 	ListEvents(ctx context.Context, filter EventFilter) ([]core.Event, error)
 	InsertPendingRemoval(ctx context.Context, provider, email string, expiresAt time.Time) error
 	GetPendingRemovals(ctx context.Context, provider string) ([]PendingRemoval, error)
 	CancelPendingRemoval(ctx context.Context, provider, email string) error
-	GetExpiredRemovals(ctx context.Context) ([]PendingRemoval, error)
+	GetExpiredRemovals(ctx context.Context, provider string) ([]PendingRemoval, error)
 	UpdateSyncState(ctx context.Context, provider string, userCount int) error
 	GetSyncState(ctx context.Context, provider string) (*SyncState, error)
 	ListSyncStates(ctx context.Context) ([]SyncState, error)

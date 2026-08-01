@@ -5,17 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 type Provider struct {
 	token   string
 	account string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token, account string) *Provider {
@@ -23,7 +23,7 @@ func New(token, account string) *Provider {
 		token:   token,
 		account: account,
 		baseURL: fmt.Sprintf("https://%s.snowflakecomputing.com", account),
-		client:  &http.Client{},
+		client:  httpclient.New(),
 	}
 }
 
@@ -62,46 +62,20 @@ type scimListResponse struct {
 	StartIndex   int        `json:"startIndex"`
 }
 
+func (p *Provider) authorize(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Accept", "application/scim+json")
+}
+
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	var all []scimUser
-	startIndex := 1
-	count := 100
-
-	for {
-		url := fmt.Sprintf("%s/scim/v2/Users?startIndex=%d&count=%d", p.baseURL, startIndex, count)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+p.token)
-		req.Header.Set("Accept", "application/scim+json")
-
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("snowflake: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("snowflake: API error (status %d): %s", resp.StatusCode, body)
-		}
-
-		var result scimListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("snowflake: decode response: %w", err)
-		}
-
-		all = append(all, result.Resources...)
-
-		if startIndex+len(result.Resources) > result.TotalResults {
-			break
-		}
-		startIndex += len(result.Resources)
+	all, err := httpclient.ListSCIM[scimUser](ctx, p.client, httpclient.SCIMPageOptions{
+		Provider: "snowflake",
+		URL:      p.baseURL + "/scim/v2/Users",
+		PageSize: 100,
+		Decorate: p.authorize,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(all))
@@ -164,17 +138,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Content-Type", "application/scim+json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("snowflake: deactivate user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "snowflake", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

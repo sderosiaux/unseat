@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.rippling.com"
@@ -16,11 +16,11 @@ const defaultBaseURL = "https://api.rippling.com"
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token string) *Provider {
-	return &Provider{token: token, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the API base URL (useful for testing).
@@ -58,46 +58,19 @@ type scimListResponse struct {
 	StartIndex   int        `json:"startIndex"`
 }
 
+func (p *Provider) authenticate(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Accept", "application/scim+json")
+}
+
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	var all []scimUser
-	startIndex := 1
-	count := 100
-
-	for {
-		url := fmt.Sprintf("%s/scim/v2/Users?startIndex=%d&count=%d", p.baseURL, startIndex, count)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+p.token)
-		req.Header.Set("Accept", "application/scim+json")
-
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("rippling: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("rippling: API error (status %d): %s", resp.StatusCode, body)
-		}
-
-		var result scimListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("rippling: decode response: %w", err)
-		}
-
-		all = append(all, result.Resources...)
-
-		if startIndex+len(result.Resources) > result.TotalResults {
-			break
-		}
-		startIndex += len(result.Resources)
+	all, err := httpclient.ListSCIM[scimUser](ctx, p.client, httpclient.SCIMPageOptions{
+		Provider: "rippling",
+		URL:      p.baseURL + "/scim/v2/Users",
+		Decorate: p.authenticate,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(all))
@@ -160,17 +133,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Content-Type", "application/scim+json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("rippling: deactivate user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "rippling", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

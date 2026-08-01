@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +36,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/scim/v2/Users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(scimListResponse{
+		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 			Resources: []scimUser{
 				{
 					ID:          "u-abc",
@@ -77,7 +81,7 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "1", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(scimListResponse{
+			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "u1", UserName: "u1@co.com", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
 					{ID: "u2", UserName: "u2@co.com", DisplayName: "User 2", Emails: []scimEmail{{Value: "u2@co.com", Primary: true}}, Active: true},
@@ -88,7 +92,7 @@ func TestListUsersPagination(t *testing.T) {
 			})
 		} else {
 			assert.Equal(t, "3", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(scimListResponse{
+			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "u3", UserName: "u3@co.com", DisplayName: "User 3", Emails: []scimEmail{{Value: "u3@co.com", Primary: true}}, Active: true},
 				},
@@ -110,12 +114,154 @@ func TestListUsersPagination(t *testing.T) {
 	assert.Equal(t, "u3@co.com", users[2].Email)
 }
 
+// A page with zero Resources cannot advance startIndex; if the loop keeps
+// going because totalResults is still ahead, it spins forever with no HTTP
+// timeout to break it. Bounded so a regression fails the suite instead of
+// hanging it.
+//
+// The shared SCIM walker stops AND fails here rather than returning the two
+// users it did get: a truncated inventory is cached with DELETE-then-INSERT,
+// so the eight missing users would look absent from Notion and get re-invited.
+func TestListUsersStopsOnEmptyPage(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+				Resources: []scimUser{
+					{ID: "u1", UserName: "u1@co.com", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
+					{ID: "u2", UserName: "u2@co.com", DisplayName: "User 2", Emails: []scimEmail{{Value: "u2@co.com", Primary: true}}, Active: true},
+				},
+				TotalResults: 10,
+				ItemsPerPage: 2,
+				StartIndex:   1,
+			})
+			return
+		}
+		// Server still claims 10 total but hands back nothing.
+		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+			Resources:    []scimUser{},
+			TotalResults: 10,
+			ItemsPerPage: 2,
+			StartIndex:   3,
+		})
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	p := New("test-token").WithBaseURL(server.URL)
+
+	type listResult struct {
+		users []core.User
+		err   error
+	}
+	done := make(chan listResult, 1)
+	go func() {
+		users, err := p.ListUsers(ctx)
+		done <- listResult{users, err}
+	}()
+
+	select {
+	case res := <-done:
+		require.Error(t, res.err)
+		assert.Contains(t, res.err.Error(), "pagination stalled")
+		assert.Empty(t, res.users, "a partial roster must not be passed off as the full one")
+		assert.Equal(t, int32(2), calls.Load())
+	case <-time.After(5 * time.Second):
+		cancel()
+		<-done // unwind the loop so httptest.Server can shut down
+		t.Fatal("ListUsers never returned: pagination loop spun on an empty page")
+	}
+}
+
+func TestListUsersDisplayNameFallbacks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+			Resources: []scimUser{
+				{ID: "u1", UserName: "a@co.com", DisplayName: "Top Level", Name: scimName{Formatted: "Ignored", GivenName: "Ig", FamilyName: "Nored"}, Active: true},
+				{ID: "u2", UserName: "b@co.com", Name: scimName{Formatted: "Bea Formatted", GivenName: "Bea", FamilyName: "Parts"}, Active: true},
+				{ID: "u3", UserName: "c@co.com", Name: scimName{GivenName: "Carl", FamilyName: "Parts"}, Active: true},
+				{ID: "u4", UserName: "d@co.com", Name: scimName{FamilyName: "Solo"}, Active: true},
+				{ID: "u5", UserName: "e@co.com", Active: true},
+			},
+			TotalResults: 5,
+			ItemsPerPage: 100,
+			StartIndex:   1,
+		})
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 5)
+
+	assert.Equal(t, "Top Level", users[0].DisplayName)
+	assert.Equal(t, "Bea Formatted", users[1].DisplayName)
+	assert.Equal(t, "Carl Parts", users[2].DisplayName)
+	assert.Equal(t, "Solo", users[3].DisplayName)
+	assert.Equal(t, "e@co.com", users[4].DisplayName)
+}
+
+func TestListUsersRoleFromNotionExtension(t *testing.T) {
+	raw := `{
+	  "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+	  "totalResults": 4,
+	  "itemsPerPage": 100,
+	  "startIndex": 1,
+	  "Resources": [
+	    {"id":"u1","userName":"owner@co.com","displayName":"Owner","active":true,
+	     "urn:ietf:params:scim:schemas:extension:notion:2.0:User":{"role":"owner"}},
+	    {"id":"u2","userName":"admin@co.com","displayName":"Admin","active":true,
+	     "urn:ietf:params:scim:schemas:extension:notion:2.0:User":{"role":"membership_admin"}},
+	    {"id":"u3","userName":"guest@co.com","displayName":"Guest","active":true,
+	     "urn:ietf:params:scim:schemas:extension:notion:2.0:User":{"role":"restricted_member"}},
+	    {"id":"u4","userName":"plain@co.com","displayName":"Plain","active":true}
+	  ]
+	}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(raw))
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 4)
+
+	assert.Equal(t, "owner", users[0].Role)
+	assert.Equal(t, "membership_admin", users[1].Role)
+	assert.Equal(t, "restricted_member", users[2].Role)
+	assert.Equal(t, "member", users[3].Role, "missing extension falls back to member")
+}
+
+func TestListUsersRoleEmptyExtensionFallsBack(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+			Resources: []scimUser{
+				{ID: "u1", UserName: "a@co.com", DisplayName: "A", Active: true, NotionExtension: &scimNotionExtension{}},
+			},
+			TotalResults: 1,
+			ItemsPerPage: 100,
+			StartIndex:   1,
+		})
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	assert.Equal(t, "member", users[0].Role)
+}
+
 func TestRemoveUser(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(scimListResponse{
+			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "u-abc", UserName: "alice@co.com", DisplayName: "Alice", Emails: []scimEmail{{Value: "alice@co.com", Primary: true}}, Active: true},
 				},
@@ -140,7 +286,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(scimListResponse{
+		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 			Resources:    []scimUser{},
 			TotalResults: 0,
 			ItemsPerPage: 100,

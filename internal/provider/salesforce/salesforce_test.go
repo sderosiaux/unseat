@@ -3,6 +3,7 @@ package salesforce
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -171,4 +172,39 @@ func TestSetRoleNotSupported(t *testing.T) {
 	err := p.SetRole(context.Background(), "test@co.com", "admin")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not supported")
+}
+
+// SOQL returns datetimes with a colon-less numeric offset, which time.RFC3339
+// rejects. Parsing only with RFC3339 left LastActivityAt nil for every user,
+// and because this connector declares ReportsActivity, nil reads as
+// "never active" — a whole org flagged as reclaimable waste.
+func TestParseSalesforceTimeAcceptsSOQLFormat(t *testing.T) {
+	cases := map[string]bool{
+		"2024-01-15T10:30:00.000+0000": true, // the format SOQL actually returns
+		"2024-01-15T10:30:00.000Z":     true,
+		"2024-01-15T10:30:00Z":         true,
+		"2024-01-15T10:30:00+0200":     true,
+		"":                             false,
+		"not-a-date":                   false,
+	}
+	for raw, wantOK := range cases {
+		_, ok := parseSalesforceTime(raw)
+		assert.Equal(t, wantOK, ok, "input %q", raw)
+	}
+}
+
+func TestListUsersParsesSOQLLastLogin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"done":true,"totalSize":1,"records":[
+		  {"Id":"005x","Name":"Alice","Email":"alice@co.com","IsActive":true,
+		   "LastLoginDate":"2024-01-15T10:30:00.000+0000"}
+		]}`)
+	}))
+	defer server.Close()
+
+	users, err := New("tok", server.URL).ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	require.NotNil(t, users[0].LastActivityAt, "SOQL offset format must parse")
+	assert.Equal(t, 2024, users[0].LastActivityAt.Year())
 }

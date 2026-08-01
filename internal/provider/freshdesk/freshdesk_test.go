@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sderosiaux/unseat/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,30 +39,60 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "test-key", user)
 		assert.Equal(t, "X", pass)
 
-		json.NewEncoder(w).Encode([]freshdeskAgent{
-			{ID: 100, Contact: freshdeskContact{Email: "alice@co.com", Name: "Alice Smith"}, Occasional: false, Available: true, LastLoginAt: "2025-02-28T15:00:00Z"},
-			{ID: 200, Contact: freshdeskContact{Email: "bob@co.com", Name: "Bob Jones"}, Occasional: true, Available: false},
-		})
+		// Raw JSON in the shape Freshdesk actually returns, NOT an encoded
+		// freshdeskAgent. Marshalling our own struct round-trips perfectly and
+		// would hide a misplaced field — which is exactly how `active` and
+		// `last_login_at` sat on the wrong struct without a test noticing.
+		fmt.Fprint(w, `[
+		  {"id":100,"occasional":false,"available":true,
+		   "contact":{"name":"Alice Smith","email":"alice@co.com","active":true,"last_login_at":"2025-02-28T15:00:00Z"}},
+		  {"id":200,"occasional":true,"available":false,
+		   "contact":{"name":"Bob Jones","email":"bob@co.com","active":true}},
+		  {"id":300,"occasional":false,"available":false,
+		   "contact":{"name":"Carol Diaz","email":"carol@co.com","active":false}}
+		]`)
 	}))
 	defer server.Close()
 
 	p := New("test-key", "mycompany").WithBaseURL(server.URL)
 	users, err := p.ListUsers(context.Background())
 	require.NoError(t, err)
-	require.Len(t, users, 2)
+	require.Len(t, users, 3)
 
 	assert.Equal(t, "alice@co.com", users[0].Email)
 	assert.Equal(t, "Alice Smith", users[0].DisplayName)
 	assert.Equal(t, "agent", users[0].Role)
-	assert.Equal(t, "active", users[0].Status)
+	assert.Equal(t, core.StatusActive, users[0].Status)
 	assert.Equal(t, "100", users[0].ProviderID)
 	require.NotNil(t, users[0].LastActivityAt)
 	assert.Equal(t, time.Date(2025, 2, 28, 15, 0, 0, 0, time.UTC), *users[0].LastActivityAt)
 
+	// Availability is a routing toggle, not account state. Reporting it as
+	// suspended would make reconciliation treat a working agent as already
+	// deactivated and stop reclaiming the seat when they actually leave.
 	assert.Equal(t, "bob@co.com", users[1].Email)
 	assert.Equal(t, "occasional", users[1].Role)
-	assert.Equal(t, "unavailable", users[1].Status)
+	assert.Equal(t, core.StatusActive, users[1].Status)
+	assert.Equal(t, "false", users[1].Metadata["available"])
 	assert.Nil(t, users[1].LastActivityAt)
+
+	assert.Equal(t, "carol@co.com", users[2].Email)
+	assert.Equal(t, core.StatusSuspended, users[2].Status)
+}
+
+// If `active` is missing from the payload, the agent must be treated as active.
+// Defaulting a missing field to "deactivated" would report an entire helpdesk
+// as suspended, which reconciliation reads as "already deprovisioned".
+func TestListUsersMissingActiveDefaultsToActive(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `[{"id":1,"available":true,"contact":{"name":"Dana","email":"dana@co.com"}}]`)
+	}))
+	defer server.Close()
+
+	users, err := New("test-key", "mycompany").WithBaseURL(server.URL).ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	assert.Equal(t, core.StatusActive, users[0].Status)
 }
 
 func TestListUsersPagination(t *testing.T) {
@@ -73,8 +104,8 @@ func TestListUsersPagination(t *testing.T) {
 			agents := make([]freshdeskAgent, 100)
 			for i := range agents {
 				agents[i] = freshdeskAgent{
-					ID:      int64(i + 1),
-					Contact: freshdeskContact{Email: fmt.Sprintf("user%d@co.com", i+1), Name: fmt.Sprintf("User %d", i+1)},
+					ID:        int64(i + 1),
+					Contact:   freshdeskContact{Email: fmt.Sprintf("user%d@co.com", i+1), Name: fmt.Sprintf("User %d", i+1)},
 					Available: true,
 				}
 			}

@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.linear.app/graphql"
@@ -17,11 +17,11 @@ const defaultBaseURL = "https://api.linear.app/graphql"
 type Provider struct {
 	apiKey  string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(apiKey string) *Provider {
-	return &Provider{apiKey: apiKey, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{apiKey: apiKey, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the GraphQL endpoint (useful for testing).
@@ -34,10 +34,11 @@ func (p *Provider) Name() string { return "linear" }
 
 func (p *Provider) Capabilities() core.Capabilities {
 	return core.Capabilities{
-		CanAdd:     false,
-		CanRemove:  true,
-		CanSuspend: true,
-		CanSetRole: false,
+		CanAdd:          false,
+		CanRemove:       true,
+		CanSuspend:      true,
+		CanSetRole:      false,
+		ReportsActivity: true,
 	}
 }
 
@@ -62,20 +63,9 @@ func (p *Provider) graphql(ctx context.Context, query string, variables map[stri
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", p.apiKey)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
 	var gqlResp gqlResponse
-	if err := json.Unmarshal(respBody, &gqlResp); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+	if err := p.client.DoJSON(ctx, "linear", req, &gqlResp); err != nil {
+		return nil, err
 	}
 	if len(gqlResp.Errors) > 0 {
 		return nil, fmt.Errorf("graphql error: %s", gqlResp.Errors[0].Message)
@@ -83,57 +73,88 @@ func (p *Provider) graphql(ctx context.Context, query string, variables map[stri
 	return gqlResp.Data, nil
 }
 
+// Linear caps connections at 50 nodes without an explicit `first`, and 250 is the
+// per-page ceiling it accepts. includeDisabled surfaces suspended-but-billed seats,
+// which are hidden by default.
+const usersPageSize = 250
+
+const listUsersQuery = `query($first: Int!, $after: String) {
+  users(first: $first, after: $after, includeDisabled: true) {
+    nodes { id name email active admin guest app lastSeen }
+    pageInfo { hasNextPage endCursor }
+  }
+}`
+
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	query := `query { users { nodes { id name email active admin guest lastSeen } } }`
-	data, err := p.graphql(ctx, query, nil)
-	if err != nil {
-		return nil, err
-	}
+	users := make([]core.User, 0)
+	var after *string
 
-	var result struct {
-		Users struct {
-			Nodes []struct {
-				ID       string `json:"id"`
-				Name     string `json:"name"`
-				Email    string `json:"email"`
-				Active   bool   `json:"active"`
-				Admin    bool   `json:"admin"`
-				Guest    bool   `json:"guest"`
-				LastSeen string `json:"lastSeen"`
-			} `json:"nodes"`
-		} `json:"users"`
-	}
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
+	for {
+		data, err := p.graphql(ctx, listUsersQuery, map[string]any{"first": usersPageSize, "after": after})
+		if err != nil {
+			return nil, err
+		}
 
-	users := make([]core.User, 0, len(result.Users.Nodes))
-	for _, u := range result.Users.Nodes {
-		status := "active"
-		if !u.Active {
-			status = "suspended"
+		var result struct {
+			Users struct {
+				Nodes []struct {
+					ID       string `json:"id"`
+					Name     string `json:"name"`
+					Email    string `json:"email"`
+					Active   bool   `json:"active"`
+					Admin    bool   `json:"admin"`
+					Guest    bool   `json:"guest"`
+					App      bool   `json:"app"`
+					LastSeen string `json:"lastSeen"`
+				} `json:"nodes"`
+				PageInfo struct {
+					HasNextPage bool   `json:"hasNextPage"`
+					EndCursor   string `json:"endCursor"`
+				} `json:"pageInfo"`
+			} `json:"users"`
 		}
-		role := "member"
-		if u.Admin {
-			role = "admin"
-		} else if u.Guest {
-			role = "guest"
+		if err := json.Unmarshal(data, &result); err != nil {
+			return nil, err
 		}
-		user := core.User{
-			Email:       u.Email,
-			DisplayName: u.Name,
-			Role:        role,
-			Status:      status,
-			ProviderID:  u.ID,
-		}
-		if u.LastSeen != "" {
-			if t, err := time.Parse(time.RFC3339, u.LastSeen); err == nil {
-				user.LastActivityAt = &t
+
+		for _, u := range result.Users.Nodes {
+			// OAuth integrations and the Linear agent are users too, with synthetic
+			// emails that can never match a directory identity.
+			if u.App {
+				continue
 			}
+			status := "active"
+			if !u.Active {
+				status = "suspended"
+			}
+			role := "member"
+			if u.Admin {
+				role = "admin"
+			} else if u.Guest {
+				role = "guest"
+			}
+			user := core.User{
+				Email:       u.Email,
+				DisplayName: u.Name,
+				Role:        role,
+				Status:      status,
+				ProviderID:  u.ID,
+			}
+			if u.LastSeen != "" {
+				if t, err := time.Parse(time.RFC3339, u.LastSeen); err == nil {
+					user.LastActivityAt = &t
+				}
+			}
+			users = append(users, user)
 		}
-		users = append(users, user)
+
+		// A missing cursor with hasNextPage set would loop forever on the same page.
+		if !result.Users.PageInfo.HasNextPage || result.Users.PageInfo.EndCursor == "" {
+			return users, nil
+		}
+		cursor := result.Users.PageInfo.EndCursor
+		after = &cursor
 	}
-	return users, nil
 }
 
 func (p *Provider) AddUser(_ context.Context, _, _ string) error {

@@ -17,12 +17,22 @@ type ProviderAuth struct {
 var KnownProviders = map[string]ProviderAuth{
 	// --- Identity ---
 	"google-directory": {
-		Name:         "google-directory",
-		AuthMethod:   "oauth2",
-		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
-		TokenURL:     "https://oauth2.googleapis.com/token",
-		Scopes:       []string{"https://www.googleapis.com/auth/admin.directory.user.readonly", "https://www.googleapis.com/auth/admin.directory.group.readonly"},
-		Instructions: "Requires a Google Cloud service account with domain-wide delegation.",
+		Name:       "google-directory",
+		AuthMethod: "oauth2",
+		AuthURL:    "https://accounts.google.com/o/oauth2/v2/auth",
+		TokenURL:   "https://oauth2.googleapis.com/token",
+		// Write scopes, not the .readonly pair: the provider suspends users and
+		// toggles admin status. Domain-wide delegation pre-authorizes an exact
+		// scope list, so a mismatch here fails the JWT exchange outright —
+		// reads included, not just writes.
+		Scopes: []string{
+			"https://www.googleapis.com/auth/admin.directory.user",
+			"https://www.googleapis.com/auth/admin.directory.group",
+		},
+		Instructions: "Google Cloud service account with domain-wide delegation. In the Workspace admin console " +
+			"(Security > Access and data control > API controls > Domain-wide delegation), authorize the service " +
+			"account's client ID for BOTH scopes above. The .readonly variants are not sufficient — unseat suspends " +
+			"accounts. Set identity_source.admin_email to the admin being impersonated.",
 	},
 
 	// --- Original providers ---

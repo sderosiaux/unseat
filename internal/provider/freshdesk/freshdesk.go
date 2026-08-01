@@ -2,27 +2,26 @@ package freshdesk
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 type Provider struct {
 	apiKey  string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(apiKey, subdomain string) *Provider {
 	return &Provider{
 		apiKey:  apiKey,
 		baseURL: fmt.Sprintf("https://%s.freshdesk.com", subdomain),
-		client:  &http.Client{},
+		client:  httpclient.New(),
 	}
 }
 
@@ -36,12 +35,23 @@ func (p *Provider) Name() string { return "freshdesk" }
 func (p *Provider) Capabilities() core.Capabilities {
 	return core.Capabilities{
 		CanRemove: true,
+		// Agents carry last_login_at.
+		ReportsActivity: true,
 	}
 }
 
+// freshdeskContact holds the person behind the agent. Account state and login
+// history live HERE, not on the agent: `active` and `last_login_at` are
+// documented as contact attributes. They were previously declared on the agent
+// struct, where they silently decoded to the zero value on every response.
 type freshdeskContact struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
+	// Active is a pointer so an absent field is distinguishable from an
+	// explicit false. Defaulting a missing field to "deactivated" would mark
+	// an entire helpdesk as suspended.
+	Active      *bool  `json:"active"`
+	LastLoginAt string `json:"last_login_at,omitempty"`
 }
 
 type freshdeskAgent struct {
@@ -50,18 +60,16 @@ type freshdeskAgent struct {
 	RoleIDs    []int64          `json:"role_ids"`
 	Available  bool             `json:"available"`
 	Contact    freshdeskContact `json:"contact"`
-	Active     bool             `json:"active"`
-	LastLoginAt string          `json:"last_login_at,omitempty"`
 }
 
-func (p *Provider) doGet(ctx context.Context, url string) (*http.Response, error) {
+func (p *Provider) getJSON(ctx context.Context, url string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req.SetBasicAuth(p.apiKey, "X")
 	req.Header.Set("Accept", "application/json")
-	return p.client.Do(req)
+	return p.client.DoJSON(ctx, "freshdesk", req, out)
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
@@ -71,23 +79,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	for {
 		url := fmt.Sprintf("%s/api/v2/agents?per_page=100&page=%d", p.baseURL, page)
 
-		resp, err := p.doGet(ctx, url)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("freshdesk: read response: %w", err)
-		}
-		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("freshdesk: API error %d: %s", resp.StatusCode, body)
-		}
-
 		var agents []freshdeskAgent
-		if err := json.Unmarshal(body, &agents); err != nil {
-			return nil, fmt.Errorf("freshdesk: decode response: %w", err)
+		if err := p.getJSON(ctx, url, &agents); err != nil {
+			return nil, err
 		}
 
 		if len(agents) == 0 {
@@ -103,9 +97,14 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			if a.Occasional {
 				role = "occasional"
 			}
-			status := "active"
-			if !a.Available {
-				status = "unavailable"
+			// `available` is a ticket-routing toggle, not account state — an
+			// agent who stepped away is still a paid, active seat. Only
+			// `active` means the account is deactivated, and reconciliation
+			// depends on that distinction: it reads StatusSuspended as
+			// "already deactivated, do not act again".
+			status := core.StatusActive
+			if a.Contact.Active != nil && !*a.Contact.Active {
+				status = core.StatusSuspended
 			}
 			user := core.User{
 				Email:       a.Contact.Email,
@@ -113,9 +112,10 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 				Role:        role,
 				Status:      status,
 				ProviderID:  strconv.FormatInt(a.ID, 10),
+				Metadata:    map[string]string{"available": strconv.FormatBool(a.Available)},
 			}
-			if a.LastLoginAt != "" {
-				if t, err := time.Parse(time.RFC3339, a.LastLoginAt); err == nil {
+			if a.Contact.LastLoginAt != "" {
+				if t, err := time.Parse(time.RFC3339, a.Contact.LastLoginAt); err == nil {
 					user.LastActivityAt = &t
 				}
 			}
@@ -158,17 +158,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.SetBasicAuth(p.apiKey, "X")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("freshdesk: delete agent failed %d: %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "freshdesk", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

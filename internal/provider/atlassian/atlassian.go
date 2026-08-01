@@ -2,12 +2,11 @@ package atlassian
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.atlassian.com"
@@ -16,11 +15,11 @@ type Provider struct {
 	token       string
 	directoryID string
 	baseURL     string
-	client      *http.Client
+	client      *httpclient.Client
 }
 
 func New(token, directoryID string) *Provider {
-	return &Provider{token: token, directoryID: directoryID, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, directoryID: directoryID, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the API base URL (useful for testing).
@@ -57,54 +56,19 @@ type scimUser struct {
 	Active      bool        `json:"active"`
 }
 
-type scimListResponse struct {
-	Schemas      []string   `json:"schemas"`
-	Resources    []scimUser `json:"Resources"`
-	TotalResults int        `json:"totalResults"`
-	ItemsPerPage int        `json:"itemsPerPage"`
-	StartIndex   int        `json:"startIndex"`
+func (p *Provider) decorate(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Accept", "application/json")
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	var all []scimUser
-	startIndex := 1
-	count := 100
-
-	for {
-		url := fmt.Sprintf("%s/scim/directory/%s/Users?startIndex=%d&count=%d", p.baseURL, p.directoryID, startIndex, count)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+p.token)
-		req.Header.Set("Accept", "application/json")
-
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("atlassian: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("atlassian: API error (status %d): %s", resp.StatusCode, body)
-		}
-
-		var result scimListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("atlassian: decode response: %w", err)
-		}
-
-		all = append(all, result.Resources...)
-
-		if startIndex+len(result.Resources) > result.TotalResults {
-			break
-		}
-		startIndex += len(result.Resources)
+	all, err := httpclient.ListSCIM[scimUser](ctx, p.client, httpclient.SCIMPageOptions{
+		Provider: "atlassian",
+		URL:      fmt.Sprintf("%s/scim/directory/%s/Users", p.baseURL, p.directoryID),
+		Decorate: p.decorate,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(all))
@@ -159,17 +123,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("atlassian: delete user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "atlassian", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

@@ -2,24 +2,27 @@ package slack
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.slack.com"
 
+const pageSize = 100
+
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token string) *Provider {
-	return &Provider{token: token, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the API base URL (useful for testing).
@@ -44,10 +47,16 @@ type scimEmail struct {
 	Primary bool   `json:"primary"`
 }
 
+type scimName struct {
+	GivenName  string `json:"givenName"`
+	FamilyName string `json:"familyName"`
+}
+
 type scimUser struct {
 	ID          string      `json:"id"`
 	UserName    string      `json:"userName"`
 	DisplayName string      `json:"displayName"`
+	Name        scimName    `json:"name"`
 	Emails      []scimEmail `json:"emails"`
 	Active      bool        `json:"active"`
 	Title       string      `json:"title"`
@@ -60,66 +69,121 @@ type scimListResponse struct {
 	StartIndex   int        `json:"startIndex"`
 }
 
-func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	var all []scimUser
-	startIndex := 1
-	count := 100
-
-	for {
-		url := fmt.Sprintf("%s/scim/v2/Users?startIndex=%d&count=%d", p.baseURL, startIndex, count)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+p.token)
-
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("slack: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("slack: API error (status %d): %s", resp.StatusCode, body)
-		}
-
-		var result scimListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("slack: decode response: %w", err)
-		}
-
-		all = append(all, result.Resources...)
-
-		if startIndex+result.ItemsPerPage > result.TotalResults {
-			break
-		}
-		startIndex += result.ItemsPerPage
+func (u scimUser) email() string {
+	if len(u.Emails) > 0 {
+		return u.Emails[0].Value
 	}
+	return ""
+}
 
+// name is empty for users provisioned with only userName/name, so degrade
+// through the fields Slack does populate rather than surfacing a blank label.
+func (u scimUser) name() string {
+	if u.DisplayName != "" {
+		return u.DisplayName
+	}
+	if full := strings.TrimSpace(u.Name.GivenName + " " + u.Name.FamilyName); full != "" {
+		return full
+	}
+	return u.UserName
+}
+
+func (u scimUser) toCore() core.User {
+	status := "active"
+	if !u.Active {
+		status = "suspended"
+	}
+	return core.User{
+		Email:       u.email(),
+		DisplayName: u.name(),
+		Role:        "member",
+		Status:      status,
+		ProviderID:  u.ID,
+	}
+}
+
+func (p *Provider) authorize(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+p.token)
+}
+
+// planGate annotates auth-shaped failures. SCIM is gated behind the Business+
+// and Enterprise Grid plans, so a 401/403/404 is far more often a plan/scope
+// problem than a malformed token.
+func planGate(err error) error {
+	if err == nil {
+		return nil
+	}
+	if httpclient.IsUnauthorized(err) || httpclient.IsNotFound(err) {
+		return fmt.Errorf("%w — the SCIM API requires a Business+ or Enterprise Grid plan and an admin-scoped token (admin scope, org/workspace owner)", err)
+	}
+	return err
+}
+
+func (p *Provider) getUsers(ctx context.Context, query url.Values) (*scimListResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("%s/scim/v2/Users?%s", p.baseURL, query.Encode()), nil)
+	if err != nil {
+		return nil, err
+	}
+	p.authorize(req)
+
+	var result scimListResponse
+	if err := p.client.DoJSON(ctx, "slack", req, &result); err != nil {
+		return nil, planGate(err)
+	}
+	return &result, nil
+}
+
+func (p *Provider) listAll(ctx context.Context) ([]scimUser, error) {
+	all, err := httpclient.ListSCIM[scimUser](ctx, p.client, httpclient.SCIMPageOptions{
+		Provider: "slack",
+		URL:      p.baseURL + "/scim/v2/Users",
+		PageSize: pageSize,
+		Decorate: p.authorize,
+	})
+	if err != nil {
+		return nil, planGate(err)
+	}
+	return all, nil
+}
+
+func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
+	all, err := p.listAll(ctx)
+	if err != nil {
+		return nil, err
+	}
 	users := make([]core.User, 0, len(all))
 	for _, u := range all {
-		email := ""
-		if len(u.Emails) > 0 {
-			email = u.Emails[0].Value
-		}
-		status := "active"
-		if !u.Active {
-			status = "suspended"
-		}
-		users = append(users, core.User{
-			Email:       email,
-			DisplayName: u.DisplayName,
-			Role:        "member",
-			Status:      status,
-			ProviderID:  u.ID,
-		})
+		users = append(users, u.toCore())
 	}
 	return users, nil
+}
+
+// resolveUserID trades a full org crawl for a single filtered lookup — a bulk
+// offboard would otherwise re-list every member once per removal.
+func (p *Provider) resolveUserID(ctx context.Context, email string) (string, error) {
+	q := url.Values{}
+	q.Set("filter", fmt.Sprintf("email eq %q", email))
+	q.Set("count", "1")
+
+	if result, err := p.getUsers(ctx, q); err == nil {
+		for _, u := range result.Resources {
+			if u.email() == email {
+				return u.ID, nil
+			}
+		}
+	}
+
+	// Filtering is rejected or unmatched on some tenants; only then pay for the crawl.
+	all, err := p.listAll(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, u := range all {
+		if u.email() == email {
+			return u.ID, nil
+		}
+	}
+	return "", fmt.Errorf("slack: user %s not found", email)
 }
 
 func (p *Provider) AddUser(_ context.Context, _, _ string) error {
@@ -127,39 +191,19 @@ func (p *Provider) AddUser(_ context.Context, _, _ string) error {
 }
 
 func (p *Provider) RemoveUser(ctx context.Context, email string) error {
-	users, err := p.ListUsers(ctx)
+	userID, err := p.resolveUserID(ctx, email)
 	if err != nil {
 		return err
 	}
-	var userID string
-	for _, u := range users {
-		if u.Email == email {
-			userID = u.ProviderID
-			break
-		}
-	}
-	if userID == "" {
-		return fmt.Errorf("slack: user %s not found", email)
-	}
 
-	url := fmt.Sprintf("%s/scim/v2/Users/%s", p.baseURL, userID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	endpoint := fmt.Sprintf("%s/scim/v2/Users/%s", p.baseURL, userID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+p.token)
+	p.authorize(req)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("slack: deactivate user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "slack", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

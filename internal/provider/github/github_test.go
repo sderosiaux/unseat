@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sderosiaux/unseat/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,6 +28,9 @@ func TestProviderCapabilities(t *testing.T) {
 	assert.False(t, caps.CanSuspend)
 	assert.False(t, caps.CanSetRole)
 	assert.False(t, caps.HasWebhook)
+	// /orgs/{org}/events only carries public events, so a missing timestamp is
+	// not evidence of inactivity and must not be reported as such.
+	assert.False(t, caps.ReportsActivity)
 }
 
 func noSAMLHandler(w http.ResponseWriter, _ *http.Request) {
@@ -39,17 +43,36 @@ func noSAMLHandler(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// handleCommon answers the endpoints every ListUsers call touches but which most
+// tests don't exercise: the org-visibility preflight, SAML, and the event feed.
+func handleCommon(w http.ResponseWriter, r *http.Request) bool {
+	switch r.URL.Path {
+	case "/user/memberships/orgs/my-org":
+		json.NewEncoder(w).Encode(map[string]any{"state": "active", "role": "member"})
+		return true
+	case "/graphql":
+		noSAMLHandler(w, r)
+		return true
+	case "/orgs/my-org/events":
+		json.NewEncoder(w).Encode([]map[string]any{})
+		return true
+	}
+	return false
+}
+
 func TestListUsers(t *testing.T) {
 	activityTime := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/graphql" {
-			noSAMLHandler(w, r)
+		if r.URL.Path == "/user/memberships/orgs/my-org" || r.URL.Path == "/graphql" {
+			handleCommon(w, r)
 			return
 		}
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "application/vnd.github+json", r.Header.Get("Accept"))
 
 		switch {
+		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
+			json.NewEncoder(w).Encode([]orgMember{{Login: "bob", ID: 102}})
 		case r.URL.Path == "/orgs/my-org/members":
 			json.NewEncoder(w).Encode([]orgMember{
 				{Login: "alice", ID: 101},
@@ -77,23 +100,24 @@ func TestListUsers(t *testing.T) {
 	assert.Equal(t, "member", users[0].Role)
 	assert.Equal(t, "active", users[0].Status)
 	assert.Equal(t, "101", users[0].ProviderID)
+	assert.Equal(t, "profile", users[0].Metadata["email_source"])
 	require.NotNil(t, users[0].LastActivityAt)
 	assert.Equal(t, activityTime, *users[0].LastActivityAt)
 
 	assert.Equal(t, "bob@co.com", users[1].Email)
 	assert.Equal(t, "Bob Jones", users[1].DisplayName)
-	assert.Nil(t, users[1].LastActivityAt) // not in org events
+	assert.Equal(t, "admin", users[1].Role) // listed by ?role=admin
+	assert.Nil(t, users[1].LastActivityAt)  // not in org events
 }
 
 func TestListUsersNoPublicEmail(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/graphql" {
-			noSAMLHandler(w, r)
+		if handleCommon(w, r) {
 			return
 		}
 		switch {
-		case r.URL.Path == "/orgs/my-org/events":
-			json.NewEncoder(w).Encode([]map[string]any{})
+		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
+			json.NewEncoder(w).Encode([]orgMember{})
 		case r.URL.Path == "/orgs/my-org/members":
 			json.NewEncoder(w).Encode([]orgMember{{Login: "private-user", ID: 200}})
 		case r.URL.Path == "/users/private-user":
@@ -106,24 +130,100 @@ func TestListUsersNoPublicEmail(t *testing.T) {
 	users, err := p.ListUsers(context.Background())
 	require.NoError(t, err)
 	require.Len(t, users, 1)
-	assert.Equal(t, "private-user", users[0].Email) // falls back to login
+
+	// The bare login is the contract: no invented @users.noreply.github.com.
+	assert.Equal(t, "private-user", users[0].Email)
+	assert.NotContains(t, users[0].Email, "@")
+	assert.Equal(t, "unresolved", users[0].Metadata["email_source"])
 	assert.Equal(t, "Private User", users[0].DisplayName)
+}
+
+// An unresolvable login must reach core as SeatUnresolved — the whole point of
+// keeping it free of an "@".
+func TestUnresolvedLoginClassifiesAsUnresolved(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handleCommon(w, r) {
+			return
+		}
+		switch {
+		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
+			json.NewEncoder(w).Encode([]orgMember{})
+		case r.URL.Path == "/orgs/my-org/members":
+			json.NewEncoder(w).Encode([]orgMember{{Login: "ghost", ID: 300}})
+		case r.URL.Path == "/users/ghost":
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	p := New("test-token", "my-org").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+
+	seats := core.ClassifySeats(core.ClassifyInput{
+		ProviderName: "github",
+		ActualUsers:  users,
+		Directory:    map[string]core.DirectoryUser{"someone@co.com": {}},
+		Domain:       "co.com",
+	})
+	require.Len(t, seats, 1)
+	assert.Equal(t, core.SeatUnresolved, seats[0].Class)
+}
+
+// Members absent from the public event feed must never be scored as inactive:
+// the feed is public-only, so silence about them is missing data, not evidence.
+func TestMissingActivityIsNotReportedAsInactive(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handleCommon(w, r) {
+			return
+		}
+		switch {
+		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
+			json.NewEncoder(w).Encode([]orgMember{})
+		case r.URL.Path == "/orgs/my-org/members":
+			json.NewEncoder(w).Encode([]orgMember{{Login: "quiet", ID: 400}})
+		case r.URL.Path == "/users/quiet":
+			json.NewEncoder(w).Encode(map[string]any{"email": "quiet@co.com", "name": "Quiet", "login": "quiet"})
+		}
+	}))
+	defer server.Close()
+
+	p := New("test-token", "my-org").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	require.Nil(t, users[0].LastActivityAt)
+
+	scan := core.Scan(core.ScanInput{
+		Provider:          "github",
+		Users:             users,
+		Domain:            "co.com",
+		ReportsActivity:   p.Capabilities().ReportsActivity,
+		InactiveThreshold: 90 * 24 * time.Hour,
+		Now:               time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	})
+	kinds := make(map[core.FindingKind]bool, len(scan.Findings))
+	for _, f := range scan.Findings {
+		kinds[f.Kind] = true
+	}
+	assert.False(t, kinds[core.FindingInactive], "silence in the public event feed is not inactivity")
+	assert.True(t, kinds[core.FindingNoActivityData])
 }
 
 func TestListUsersPagination(t *testing.T) {
 	memberCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/graphql" {
-			noSAMLHandler(w, r)
-			return
-		}
-		if r.URL.Path == "/orgs/my-org/events" {
-			json.NewEncoder(w).Encode([]map[string]any{})
+		if handleCommon(w, r) {
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/users/") {
 			login := strings.TrimPrefix(r.URL.Path, "/users/")
 			json.NewEncoder(w).Encode(map[string]any{"email": login + "@co.com", "name": login, "login": login})
+			return
+		}
+		if r.URL.Query().Get("role") == "admin" {
+			json.NewEncoder(w).Encode([]orgMember{})
 			return
 		}
 		memberCalls++
@@ -153,8 +253,8 @@ func TestListUsersPagination(t *testing.T) {
 
 func TestListUsersWithSAML(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/orgs/my-org/events" {
-			json.NewEncoder(w).Encode([]map[string]any{})
+		if r.URL.Path == "/user/memberships/orgs/my-org" || r.URL.Path == "/orgs/my-org/events" {
+			handleCommon(w, r)
 			return
 		}
 		switch {
@@ -180,6 +280,8 @@ func TestListUsersWithSAML(t *testing.T) {
 					},
 				},
 			})
+		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
+			json.NewEncoder(w).Encode([]orgMember{})
 		case r.URL.Path == "/orgs/my-org/members":
 			json.NewEncoder(w).Encode([]orgMember{
 				{Login: "alice", ID: 101},
@@ -198,22 +300,134 @@ func TestListUsersWithSAML(t *testing.T) {
 	assert.Equal(t, "alice@corp.com", users[0].Email)
 	assert.Equal(t, "alice", users[0].DisplayName) // SAML path uses login as display name
 	assert.Equal(t, "alice", users[0].Metadata["login"])
+	assert.Equal(t, "saml", users[0].Metadata["email_source"])
 
 	assert.Equal(t, "bob@corp.com", users[1].Email)
+}
+
+// A token that is not an org member gets HTTP 200 and a public-members-only list
+// from GitHub. Reporting that as the truth would fabricate "add user" actions for
+// every private member, so ListUsers must fail instead.
+func TestListUsersRejectsNonMemberToken(t *testing.T) {
+	var membersListed bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user/memberships/orgs/my-org" {
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"message":"Not Found"}`))
+			return
+		}
+		if r.URL.Path == "/orgs/my-org/members" {
+			membersListed = true
+			json.NewEncoder(w).Encode([]orgMember{{Login: "public-only", ID: 1}})
+		}
+	}))
+	defer server.Close()
+
+	p := New("test-token", "my-org").WithBaseURL(server.URL)
+	_, err := p.ListUsers(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot verify org membership")
+	assert.False(t, membersListed, "must not fall back to the public-only member list")
+}
+
+func TestListUsersRejectsTokenWithoutOrgScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user/memberships/orgs/my-org" {
+			w.Header().Set("X-OAuth-Scopes", "repo, user:email")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"message":"Resource not accessible"}`))
+			return
+		}
+		t.Errorf("unexpected call to %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	p := New("test-token", "my-org").WithBaseURL(server.URL)
+	_, err := p.ListUsers(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "read:org")
+	assert.Contains(t, err.Error(), "repo, user:email")
+}
+
+func TestListUsersRejectsPendingMembership(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user/memberships/orgs/my-org" {
+			json.NewEncoder(w).Encode(map[string]any{"state": "pending", "role": "member"})
+			return
+		}
+		t.Errorf("unexpected call to %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	p := New("test-token", "my-org").WithBaseURL(server.URL)
+	_, err := p.ListUsers(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pending")
+}
+
+func TestListUsersAcceptsAdminScopedToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user/memberships/orgs/my-org" {
+			w.Header().Set("X-OAuth-Scopes", "admin:org, repo")
+			json.NewEncoder(w).Encode(map[string]any{"state": "active", "role": "admin"})
+			return
+		}
+		if handleCommon(w, r) {
+			return
+		}
+		json.NewEncoder(w).Encode([]orgMember{})
+	}))
+	defer server.Close()
+
+	p := New("test-token", "my-org").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, users)
+}
+
+func TestHasOrgReadScope(t *testing.T) {
+	assert.True(t, hasOrgReadScope("admin:org, repo"))
+	assert.True(t, hasOrgReadScope("read:org"))
+	assert.True(t, hasOrgReadScope("repo,write:org"))
+	assert.False(t, hasOrgReadScope("repo, user:email"))
+	assert.False(t, hasOrgReadScope(""))
+}
+
+// /orgs/{org}/events is capped by GitHub at 300 events / 30 days, so pagination
+// must stop at 3 pages even when the API keeps advertising a next link.
+func TestOrgActivityStopsAtEventCap(t *testing.T) {
+	eventCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/orgs/my-org/events" {
+			eventCalls++
+			w.Header().Set("Link", fmt.Sprintf(`<%s/orgs/my-org/events?page=99>; rel="next"`, "http://"+r.Host))
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"actor": map[string]any{"login": fmt.Sprintf("user%d", eventCalls)}, "created_at": "2026-03-01T12:00:00Z"},
+			})
+			return
+		}
+		if handleCommon(w, r) {
+			return
+		}
+		json.NewEncoder(w).Encode([]orgMember{})
+	}))
+	defer server.Close()
+
+	p := New("test-token", "my-org").WithBaseURL(server.URL)
+	_, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 3, eventCalls)
 }
 
 func TestRemoveUser(t *testing.T) {
 	var deleteCalled bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/graphql" {
-			noSAMLHandler(w, r)
-			return
-		}
-		if r.URL.Path == "/orgs/my-org/events" {
-			json.NewEncoder(w).Encode([]map[string]any{})
+		if handleCommon(w, r) {
 			return
 		}
 		switch {
+		case r.URL.Path == "/orgs/my-org/members" && r.Method == http.MethodGet && r.URL.Query().Get("role") == "admin":
+			json.NewEncoder(w).Encode([]orgMember{})
 		case r.URL.Path == "/orgs/my-org/members" && r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode([]orgMember{{Login: "alice", ID: 101}})
 		case strings.HasPrefix(r.URL.Path, "/users/"):
@@ -234,8 +448,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/graphql" {
-			noSAMLHandler(w, r)
+		if handleCommon(w, r) {
 			return
 		}
 		if r.URL.Path == "/orgs/my-org/members" {
@@ -252,6 +465,9 @@ func TestRemoveUserNotFound(t *testing.T) {
 
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handleCommon(w, r) {
+			return
+		}
 		w.WriteHeader(http.StatusUnauthorized)
 		w.Write([]byte(`{"message":"Bad credentials"}`))
 	}))

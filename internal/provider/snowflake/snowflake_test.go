@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -109,6 +110,51 @@ func TestListUsersPagination(t *testing.T) {
 
 	assert.Equal(t, "u1@co.com", users[0].Email)
 	assert.Equal(t, "u3@co.com", users[2].Email)
+}
+
+// A tenant that keeps advertising more results than it delivers must not spin
+// the pagination loop forever — and must fail rather than hand back a silently
+// truncated inventory.
+func TestListUsersStopsOnEmptyPage(t *testing.T) {
+	const maxRequests = 5
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount > maxRequests {
+			t.Errorf("ListUsers did not terminate: %d requests issued", callCount)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if callCount == 1 {
+			json.NewEncoder(w).Encode(scimListResponse{
+				Resources: []scimUser{
+					{ID: "1", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
+				},
+				TotalResults: 99,
+				ItemsPerPage: 1,
+				StartIndex:   1,
+			})
+			return
+		}
+		// Empty page while totalResults still claims there is more to come.
+		json.NewEncoder(w).Encode(scimListResponse{
+			Resources:    []scimUser{},
+			TotalResults: 99,
+			ItemsPerPage: 1,
+			StartIndex:   2,
+		})
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	p := New("test-token", "myaccount").WithBaseURL(server.URL)
+	users, err := p.ListUsers(ctx)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pagination stalled")
+	assert.Nil(t, users)
+	assert.Equal(t, 2, callCount)
 }
 
 func TestRemoveUser(t *testing.T) {

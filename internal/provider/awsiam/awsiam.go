@@ -2,18 +2,17 @@ package awsiam
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 // New creates a provider for AWS IAM Identity Center (SSO) SCIM endpoint.
@@ -22,7 +21,7 @@ func New(token, scimEndpoint string) *Provider {
 	return &Provider{
 		token:   token,
 		baseURL: scimEndpoint,
-		client:  &http.Client{},
+		client:  httpclient.New(),
 	}
 }
 
@@ -60,54 +59,19 @@ type scimUser struct {
 	Active      bool        `json:"active"`
 }
 
-type scimListResponse struct {
-	Schemas      []string   `json:"schemas"`
-	Resources    []scimUser `json:"Resources"`
-	TotalResults int        `json:"totalResults"`
-	ItemsPerPage int        `json:"itemsPerPage"`
-	StartIndex   int        `json:"startIndex"`
+func (p *Provider) decorate(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Accept", "application/scim+json")
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	var all []scimUser
-	startIndex := 1
-	count := 100
-
-	for {
-		url := fmt.Sprintf("%s/Users?startIndex=%d&count=%d", p.baseURL, startIndex, count)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+p.token)
-		req.Header.Set("Accept", "application/scim+json")
-
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("aws-iam: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("aws-iam: API error (status %d): %s", resp.StatusCode, body)
-		}
-
-		var result scimListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("aws-iam: decode response: %w", err)
-		}
-
-		all = append(all, result.Resources...)
-
-		if startIndex+len(result.Resources) > result.TotalResults {
-			break
-		}
-		startIndex += len(result.Resources)
+	all, err := httpclient.ListSCIM[scimUser](ctx, p.client, httpclient.SCIMPageOptions{
+		Provider: "aws-iam",
+		URL:      fmt.Sprintf("%s/Users", p.baseURL),
+		Decorate: p.decorate,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(all))
@@ -162,17 +126,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("aws-iam: delete user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "aws-iam", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

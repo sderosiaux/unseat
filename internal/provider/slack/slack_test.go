@@ -112,11 +112,107 @@ func TestListUsersPagination(t *testing.T) {
 	assert.Equal(t, "u3@co.com", users[2].Email)
 }
 
+// Slack may omit itemsPerPage; advancing by it would pin startIndex and hang.
+func TestListUsersPaginationNoItemsPerPage(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		// Safety net: a regressed loop must fail the assertion below, not spin forever.
+		if callCount > 5 {
+			json.NewEncoder(w).Encode(scimListResponse{TotalResults: 3})
+			return
+		}
+		switch r.URL.Query().Get("startIndex") {
+		case "1":
+			json.NewEncoder(w).Encode(scimListResponse{
+				Resources: []scimUser{
+					{ID: "U1", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
+					{ID: "U2", DisplayName: "User 2", Emails: []scimEmail{{Value: "u2@co.com", Primary: true}}, Active: true},
+				},
+				TotalResults: 3,
+			})
+		case "3":
+			json.NewEncoder(w).Encode(scimListResponse{
+				Resources: []scimUser{
+					{ID: "U3", DisplayName: "User 3", Emails: []scimEmail{{Value: "u3@co.com", Primary: true}}, Active: true},
+				},
+				TotalResults: 3,
+			})
+		default:
+			t.Errorf("unexpected startIndex %q", r.URL.Query().Get("startIndex"))
+			json.NewEncoder(w).Encode(scimListResponse{TotalResults: 3})
+		}
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 3)
+	assert.Equal(t, 2, callCount)
+	assert.Equal(t, "u3@co.com", users[2].Email)
+}
+
+// An empty page while totalResults still claims more must end the crawl — and
+// fail loudly. Returning the partial list would let a truncated inventory
+// replace the real one in the cache, making absent users look removed.
+func TestListUsersStopsOnEmptyPage(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			json.NewEncoder(w).Encode(scimListResponse{
+				Resources: []scimUser{
+					{ID: "U1", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
+				},
+				TotalResults: 99,
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(scimListResponse{Resources: []scimUser{}, TotalResults: 99})
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pagination stalled")
+	assert.Nil(t, users)
+	assert.Equal(t, 2, callCount)
+}
+
+func TestListUsersDisplayNameFallback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(scimListResponse{
+			Resources: []scimUser{
+				{ID: "U1", UserName: "alice", DisplayName: "Alice Smith", Name: scimName{GivenName: "Alice", FamilyName: "Smith"}, Emails: []scimEmail{{Value: "alice@co.com"}}, Active: true},
+				{ID: "U2", UserName: "bob", Name: scimName{GivenName: "Bob", FamilyName: "Jones"}, Emails: []scimEmail{{Value: "bob@co.com"}}, Active: true},
+				{ID: "U3", UserName: "carol", Name: scimName{GivenName: "Carol"}, Emails: []scimEmail{{Value: "carol@co.com"}}, Active: true},
+				{ID: "U4", UserName: "dave@co.com", Emails: []scimEmail{{Value: "dave@co.com"}}, Active: true},
+			},
+			TotalResults: 4,
+		})
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 4)
+
+	assert.Equal(t, "Alice Smith", users[0].DisplayName)
+	assert.Equal(t, "Bob Jones", users[1].DisplayName)
+	assert.Equal(t, "Carol", users[2].DisplayName)
+	assert.Equal(t, "dave@co.com", users[3].DisplayName)
+}
+
 func TestRemoveUser(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
+			assert.Equal(t, `email eq "alice@co.com"`, r.URL.Query().Get("filter"))
+			assert.Equal(t, "1", r.URL.Query().Get("count"))
 			json.NewEncoder(w).Encode(scimListResponse{
 				Resources: []scimUser{
 					{ID: "U123", DisplayName: "Alice", Emails: []scimEmail{{Value: "alice@co.com", Primary: true}}, Active: true},
@@ -169,6 +265,81 @@ func TestAPIError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "API error")
 	assert.Contains(t, err.Error(), "401")
+}
+
+func TestRemoveUserFallsBackToFullCrawlWhenFilterFails(t *testing.T) {
+	var gets, deletes int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deletes++
+			assert.Equal(t, "/scim/v2/Users/U456", r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		gets++
+		if r.URL.Query().Get("filter") != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			w.Write([]byte(`{"Errors":{"description":"invalid_filter","code":400}}`))
+			return
+		}
+		json.NewEncoder(w).Encode(scimListResponse{
+			Resources: []scimUser{
+				{ID: "U456", DisplayName: "Bob", Emails: []scimEmail{{Value: "bob@co.com", Primary: true}}, Active: true},
+			},
+			TotalResults: 1,
+		})
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	require.NoError(t, p.RemoveUser(context.Background(), "bob@co.com"))
+	assert.Equal(t, 2, gets)
+	assert.Equal(t, 1, deletes)
+}
+
+func TestRemoveUserSurfacesCrawlError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"Errors":{"description":"not_allowed_token_type","code":403}}`))
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	err := p.RemoveUser(context.Background(), "bob@co.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "403")
+	assert.Contains(t, err.Error(), "Business+")
+}
+
+func TestPlanGateErrorMessage(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			w.Write([]byte(`{"Errors":{"description":"nope"}}`))
+		}))
+
+		p := New("test-token").WithBaseURL(server.URL)
+		_, err := p.ListUsers(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Business+")
+		assert.Contains(t, err.Error(), "Enterprise Grid")
+		assert.Contains(t, err.Error(), "admin-scoped token")
+		server.Close()
+	}
+}
+
+func TestNonPlanGateErrorStaysRaw(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write([]byte(`{"Errors":{"description":"ratelimited"}}`))
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	_, err := p.ListUsers(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "429")
+	assert.NotContains(t, err.Error(), "Business+")
 }
 
 func TestAddUserNotSupported(t *testing.T) {

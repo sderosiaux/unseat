@@ -2,12 +2,12 @@ package notion
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+	"strings"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.notion.com"
@@ -15,11 +15,11 @@ const defaultBaseURL = "https://api.notion.com"
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token string) *Provider {
-	return &Provider{token: token, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the API base URL (useful for testing).
@@ -42,67 +42,65 @@ type scimEmail struct {
 }
 
 type scimName struct {
+	Formatted  string `json:"formatted"`
 	GivenName  string `json:"givenName"`
 	FamilyName string `json:"familyName"`
 }
 
-type scimUser struct {
-	ID          string      `json:"id"`
-	UserName    string      `json:"userName"`
-	DisplayName string      `json:"displayName"`
-	Name        scimName    `json:"name"`
-	Emails      []scimEmail `json:"emails"`
-	Active      bool        `json:"active"`
-	Title       string      `json:"title,omitempty"`
+// scimNotionExtension carries the workspace role, which Notion exposes through
+// its own schema extension rather than the SCIM core attributes.
+type scimNotionExtension struct {
+	Role string `json:"role"`
 }
 
-type scimListResponse struct {
-	Schemas      []string   `json:"schemas"`
-	Resources    []scimUser `json:"Resources"`
-	TotalResults int        `json:"totalResults"`
-	ItemsPerPage int        `json:"itemsPerPage"`
-	StartIndex   int        `json:"startIndex"`
+type scimUser struct {
+	ID              string               `json:"id"`
+	UserName        string               `json:"userName"`
+	DisplayName     string               `json:"displayName"`
+	Name            scimName             `json:"name"`
+	Emails          []scimEmail          `json:"emails"`
+	Active          bool                 `json:"active"`
+	Title           string               `json:"title,omitempty"`
+	NotionExtension *scimNotionExtension `json:"urn:ietf:params:scim:schemas:extension:notion:2.0:User,omitempty"`
+}
+
+// displayName follows Notion's documented preference order; name.formatted is
+// the field they recommend IdPs populate, but many only send the parts.
+func (u scimUser) displayName() string {
+	if u.DisplayName != "" {
+		return u.DisplayName
+	}
+	if u.Name.Formatted != "" {
+		return u.Name.Formatted
+	}
+	if joined := strings.TrimSpace(u.Name.GivenName + " " + u.Name.FamilyName); joined != "" {
+		return joined
+	}
+	return u.UserName
+}
+
+// role reports the Notion workspace role ("owner", "membership_admin",
+// "member", "restricted_member"), defaulting to member when the workspace does
+// not return the extension.
+func (u scimUser) role() string {
+	if u.NotionExtension != nil && u.NotionExtension.Role != "" {
+		return u.NotionExtension.Role
+	}
+	return "member"
+}
+
+func (p *Provider) authorize(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+p.token)
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	var all []scimUser
-	startIndex := 1
-	count := 100
-
-	for {
-		url := fmt.Sprintf("%s/scim/v2/Users?startIndex=%d&count=%d", p.baseURL, startIndex, count)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+p.token)
-
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("notion: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("notion: API error (status %d): %s", resp.StatusCode, body)
-		}
-
-		var result scimListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("notion: decode response: %w", err)
-		}
-
-		all = append(all, result.Resources...)
-
-		if startIndex+len(result.Resources) > result.TotalResults {
-			break
-		}
-		startIndex += len(result.Resources)
+	all, err := httpclient.ListSCIM[scimUser](ctx, p.client, httpclient.SCIMPageOptions{
+		Provider: "notion",
+		URL:      p.baseURL + "/scim/v2/Users",
+		Decorate: p.authorize,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(all))
@@ -120,8 +118,8 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		}
 		users = append(users, core.User{
 			Email:       email,
-			DisplayName: u.DisplayName,
-			Role:        "member",
+			DisplayName: u.displayName(),
+			Role:        u.role(),
 			Status:      status,
 			ProviderID:  u.ID,
 		})
@@ -155,19 +153,9 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+p.token)
+	p.authorize(req)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("notion: delete user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "notion", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

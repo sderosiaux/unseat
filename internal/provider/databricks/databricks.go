@@ -5,23 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token, workspace string) *Provider {
 	return &Provider{
 		token:   token,
 		baseURL: fmt.Sprintf("https://%s.cloud.databricks.com", workspace),
-		client:  &http.Client{},
+		client:  httpclient.New(),
 	}
 }
 
@@ -52,6 +52,8 @@ type scimUser struct {
 	Active      bool        `json:"active"`
 }
 
+// scimListResponse documents the wire shape of the SCIM list envelope; the walk
+// itself is delegated to httpclient.ListSCIM.
 type scimListResponse struct {
 	Resources    []scimUser `json:"Resources"`
 	TotalResults int        `json:"totalResults"`
@@ -60,45 +62,17 @@ type scimListResponse struct {
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	var all []scimUser
-	startIndex := 1
-	count := 100
-
-	for {
-		url := fmt.Sprintf("%s/api/2.0/preview/scim/v2/Users?startIndex=%d&count=%d", p.baseURL, startIndex, count)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+p.token)
-		req.Header.Set("Accept", "application/scim+json")
-
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("databricks: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("databricks: API error (status %d): %s", resp.StatusCode, body)
-		}
-
-		var result scimListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("databricks: decode response: %w", err)
-		}
-
-		all = append(all, result.Resources...)
-
-		if startIndex+len(result.Resources) > result.TotalResults {
-			break
-		}
-		startIndex += len(result.Resources)
+	all, err := httpclient.ListSCIM[scimUser](ctx, p.client, httpclient.SCIMPageOptions{
+		Provider: "databricks",
+		URL:      p.baseURL + "/api/2.0/preview/scim/v2/Users",
+		PageSize: 100,
+		Decorate: func(req *http.Request) {
+			req.Header.Set("Authorization", "Bearer "+p.token)
+			req.Header.Set("Accept", "application/scim+json")
+		},
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(all))
@@ -166,17 +140,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Content-Type", "application/scim+json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("databricks: deactivate user failed (status %d): %s", resp.StatusCode, respBody)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "databricks", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

@@ -74,12 +74,22 @@ func (s ClassifiedSeat) Reclaimable() bool {
 	return s.Class == SeatOrphan && !s.Protected
 }
 
+// resolveAlias maps a provider-side identifier to a canonical corporate email.
+//
+// The exact form is tried first, then the separator-insensitive one, so a
+// GitHub login of jane-doe reaches jane.doe@corp. An identifier that resolves
+// to nothing is returned as-is and classified unresolved: inventing a match
+// would attribute someone else's seat to a real person.
 func resolveAlias(aliasIndex map[string]string, email string) string {
 	key := strings.ToLower(strings.TrimSpace(email))
-	if aliasIndex != nil {
-		if canonical, ok := aliasIndex[key]; ok {
-			return canonical
-		}
+	if aliasIndex == nil {
+		return key
+	}
+	if canonical, ok := aliasIndex[key]; ok {
+		return canonical
+	}
+	if canonical, ok := aliasIndex[squashSeparators(key)]; ok {
+		return canonical
 	}
 	return key
 }

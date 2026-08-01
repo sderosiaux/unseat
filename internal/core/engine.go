@@ -88,13 +88,40 @@ func (a UserAction) Target() string {
 func BuildAliasIndex(explicitAliases map[string][]string, desiredEmails []string) map[string]string {
 	index := make(map[string]string)
 
-	// Implicit: local part of each desired email -> full email.
+	// Implicit: local part of each known email -> full email. This is what
+	// lets a provider that only exposes usernames — GitHub without SSO hands
+	// back bare logins — be matched to a person at all.
+	//
+	// Local parts that map to more than one identity are dropped rather than
+	// resolved to whichever came last. Guessing here would attribute someone
+	// else's seat to a real person, in a report that drives deprovisioning.
+	ambiguous := make(map[string]bool)
+	add := func(key, email string) {
+		if key == "" {
+			return
+		}
+		if existing, seen := index[key]; seen && existing != email {
+			ambiguous[key] = true
+			return
+		}
+		index[key] = email
+	}
+
 	for _, email := range desiredEmails {
 		lower := strings.ToLower(email)
-		if at := strings.IndexByte(lower, '@'); at > 0 {
-			localPart := lower[:at]
-			index[localPart] = lower
+		at := strings.IndexByte(lower, '@')
+		if at <= 0 {
+			continue
 		}
+		localPart := lower[:at]
+		add(localPart, lower)
+		// Separator-insensitive form too: a directory of first.last@ meets
+		// providers whose usernames are first-last or firstlast, and matching
+		// on the exact local part alone leaves those unattributable.
+		add(squashSeparators(localPart), lower)
+	}
+	for key := range ambiguous {
+		delete(index, key)
 	}
 
 	// Explicit: config-declared aliases override implicit ones.
@@ -108,15 +135,16 @@ func BuildAliasIndex(explicitAliases map[string][]string, desiredEmails []string
 	return index
 }
 
+// squashSeparators strips the characters people vary between a directory
+// address and a provider username: jane.doe, jane-doe and jane_doe all become
+// janedoe.
+func squashSeparators(s string) string {
+	return strings.NewReplacer(".", "", "-", "", "_", "").Replace(s)
+}
+
 // resolveEmail maps an email or username to its canonical form via the alias index.
 func (input ReconcileInput) resolveEmail(email string) string {
-	key := strings.ToLower(email)
-	if input.AliasIndex != nil {
-		if canonical, ok := input.AliasIndex[key]; ok {
-			return canonical
-		}
-	}
-	return key
+	return resolveAlias(input.AliasIndex, email)
 }
 
 // Reconcile computes the diff between desired (from group resolver) and actual (from SaaS provider).

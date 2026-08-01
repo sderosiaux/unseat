@@ -80,14 +80,19 @@ func classifySeats(ctx context.Context, cfg *config.Config) (*seatAudit, error) 
 		return nil, fmt.Errorf("list directory users: %w", err)
 	}
 	directory := make(map[string]core.DirectoryUser, len(directoryUsers))
+	// Every directory identity feeds the alias index, not just the members of
+	// mapped groups. A provider that exposes bare usernames — GitHub without
+	// SSO — can only be matched to a person through the local part, and
+	// scoping that to mapped groups meant an unmapped config resolved nobody.
+	knownEmails := make([]string, 0, len(directoryUsers))
 	for _, u := range directoryUsers {
 		key := strings.ToLower(u.Email)
-		directory[key] = core.DirectoryUser{Email: key, Suspended: u.Status == "suspended"}
+		directory[key] = core.DirectoryUser{Email: key, Suspended: u.Status == core.StatusSuspended}
+		knownEmails = append(knownEmails, key)
 	}
 
-	// Desired membership per provider, and the alias index over all of it.
+	// Desired membership per provider.
 	desiredByProvider := make(map[string]map[string]bool)
-	var allDesiredEmails []string
 	groupCache := make(map[string][]core.User)
 
 	for _, m := range cfg.Mappings {
@@ -98,9 +103,6 @@ func classifySeats(ctx context.Context, cfg *config.Config) (*seatAudit, error) 
 				return nil, fmt.Errorf("list members of %s: %w", m.Group, err)
 			}
 			groupCache[m.Group] = members
-			for _, u := range members {
-				allDesiredEmails = append(allDesiredEmails, u.Email)
-			}
 		}
 		for _, pm := range m.Providers {
 			if desiredByProvider[pm.Name] == nil {
@@ -112,7 +114,7 @@ func classifySeats(ctx context.Context, cfg *config.Config) (*seatAudit, error) 
 		}
 	}
 
-	aliasIndex := core.BuildAliasIndex(cfg.Aliases, allDesiredEmails)
+	aliasIndex := core.BuildAliasIndex(cfg.Aliases, knownEmails)
 
 	audit := &seatAudit{Failed: make(map[string]error)}
 
@@ -223,8 +225,61 @@ func runAuditSeats(cmd *cobra.Command, _ []string) error {
 	fmt.Println("external   = outside the corporate domain — needs a human decision")
 	fmt.Println("unresolved = username with no email and no alias — add an alias to judge it")
 
+	reportUnresolved(audit.Seats)
 	reportFailures(audit.Failed)
 	return nil
+}
+
+// reportUnresolved states what the audit could NOT judge.
+//
+// An unresolved seat is a hole in the audit, not a category of user: it is
+// billed, it grants access, and nothing here can say whose it is. Leaving that
+// as one number in a summary column lets the report read as complete when it
+// is not, so the identifiers are listed with a ready-to-paste alias block.
+func reportUnresolved(seats []core.ClassifiedSeat) {
+	byProvider := map[string][]string{}
+	for _, s := range seats {
+		if s.Class == core.SeatUnresolved {
+			byProvider[s.Provider] = append(byProvider[s.Provider], s.RawEmail)
+		}
+	}
+	if len(byProvider) == 0 {
+		return
+	}
+
+	providers := make([]string, 0, len(byProvider))
+	total := 0
+	for p, ids := range byProvider {
+		providers = append(providers, p)
+		total += len(ids)
+	}
+	sort.Strings(providers)
+
+	fmt.Printf("\nCOULD NOT ATTRIBUTE %d SEAT(S)\n", total)
+	fmt.Println("  These are billed and grant access, but nothing links them to a person.")
+	fmt.Println("  They are excluded from every verdict above — treat the audit as incomplete until they are resolved.")
+
+	for _, p := range providers {
+		ids := byProvider[p]
+		sort.Strings(ids)
+		fmt.Printf("\n  %s (%d):\n", p, len(ids))
+		for _, id := range ids {
+			fmt.Printf("    %s\n", id)
+		}
+	}
+
+	fmt.Println("\n  Two ways to close this:")
+	fmt.Println("    1. Enable SSO on the provider so it reports corporate identities itself.")
+	fmt.Println("    2. Declare aliases in your config:")
+	fmt.Println("\n  aliases:")
+	fmt.Println("    someone@yourdomain.com:")
+	for _, p := range providers {
+		for _, id := range byProvider[p] {
+			fmt.Printf("      - %s\n", id)
+			break
+		}
+		break
+	}
 }
 
 func runAuditOrphans(cmd *cobra.Command, _ []string) error {

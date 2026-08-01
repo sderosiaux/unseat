@@ -334,3 +334,40 @@ func TestReconcileAliasWithExceptions(t *testing.T) {
 	assert.Empty(t, plan.ToReview, "an excepted service account must not be re-reported")
 	assert.Equal(t, 2, plan.Unchanged)
 }
+
+// Providers that expose bare usernames can only be attributed through the
+// local part. Getting this wrong in either direction is costly: a miss leaves
+// a billed seat unattributable, a false match names the wrong person in a
+// report that drives deprovisioning.
+func TestBuildAliasIndexSeparatorInsensitive(t *testing.T) {
+	index := BuildAliasIndex(nil, []string{"jane.doe@co.com", "bob@co.com"})
+
+	for _, login := range []string{"jane.doe", "jane-doe", "jane_doe", "janedoe", "JANE-DOE"} {
+		assert.Equal(t, "jane.doe@co.com", resolveAlias(index, login), login)
+	}
+	assert.Equal(t, "bob@co.com", resolveAlias(index, "bob"))
+
+	// Nothing resembling an identity is invented for an unknown handle.
+	assert.Equal(t, "silly-mid-on", resolveAlias(index, "silly-mid-on"))
+}
+
+// Two people whose local parts collapse to the same key must both become
+// unresolvable rather than one silently absorbing the other's seats.
+func TestBuildAliasIndexDropsAmbiguousLocalParts(t *testing.T) {
+	index := BuildAliasIndex(nil, []string{"jane.doe@co.com", "jane-doe@co.com"})
+
+	// "janedoe" is claimed by two identities, so it resolves to neither.
+	assert.Equal(t, "janedoe", resolveAlias(index, "janedoe"))
+	// The exact local parts stay unambiguous and keep working.
+	assert.Equal(t, "jane.doe@co.com", resolveAlias(index, "jane.doe"))
+	assert.Equal(t, "jane-doe@co.com", resolveAlias(index, "jane-doe"))
+}
+
+// An explicit alias is a human decision and outranks any inference.
+func TestBuildAliasIndexExplicitBeatsImplicit(t *testing.T) {
+	index := BuildAliasIndex(
+		map[string][]string{"real.person@co.com": {"janedoe"}},
+		[]string{"jane.doe@co.com"},
+	)
+	assert.Equal(t, "real.person@co.com", resolveAlias(index, "janedoe"))
+}

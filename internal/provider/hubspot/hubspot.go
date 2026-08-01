@@ -101,7 +101,66 @@ func (p *Provider) doGet(ctx context.Context, path string, out any) error {
 	return p.client.DoJSON(ctx, "hubspot", req, out)
 }
 
+type owner struct {
+	Email    string `json:"email"`
+	Archived bool   `json:"archived"`
+}
+
+type ownersResponse struct {
+	Results []owner `json:"results"`
+	Paging  *paging `json:"paging,omitempty"`
+}
+
+// deactivatedEmails returns the identities HubSpot considers deactivated.
+//
+// /settings/v3/users lists deactivated accounts alongside live ones with
+// nothing to tell them apart, and ignores ?archived. The only signal is the
+// CRM owner record: a deactivated user keeps their user entry but their owner
+// record is archived. On a real portal that split 74 listed users into 28 live
+// and 46 deactivated.
+func (p *Provider) deactivatedEmails(ctx context.Context) (map[string]bool, error) {
+	deactivated := make(map[string]bool)
+	after := ""
+
+	for {
+		path := "/crm/v3/owners/?archived=true&limit=100"
+		if after != "" {
+			path += "&after=" + after
+		}
+
+		var resp ownersResponse
+		if err := p.doGet(ctx, path, &resp); err != nil {
+			return nil, err
+		}
+		for _, o := range resp.Results {
+			if o.Email != "" {
+				deactivated[strings.ToLower(o.Email)] = true
+			}
+		}
+		if resp.Paging == nil || resp.Paging.Next == nil || resp.Paging.Next.After == "" {
+			return deactivated, nil
+		}
+		after = resp.Paging.Next.After
+	}
+}
+
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
+	// Fetched first and treated as mandatory. Without it every deactivated
+	// account is reported as a live billable seat, which does not merely
+	// inflate a count: it makes departed staff look like they still hold
+	// access, and cross-provider offboarding correlation then accuses the
+	// wrong people. A missing number is recoverable; a confident wrong one is
+	// what gets acted on.
+	deactivated, err := p.deactivatedEmails(ctx)
+	if err != nil {
+		if httpclient.IsUnauthorized(err) {
+			return nil, fmt.Errorf("%w\n  Grant the `crm.objects.owners.read` scope to the private app: without it "+
+				"HubSpot gives no way to tell a deactivated account from a live one, and every seat would be "+
+				"reported as active", err)
+		}
+		return nil, err
+	}
+
 	var all []core.User
 	var after string
 
@@ -128,21 +187,18 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			if u.SuperAdmin {
 				role = "super_admin"
 			}
+			// A deactivated account keeps its user entry and its seat name;
+			// only the archived owner record reveals its state.
+			status := core.StatusActive
+			if deactivated[strings.ToLower(u.Email)] {
+				status = core.StatusSuspended
+			}
 			user := core.User{
 				Email:       u.Email,
 				DisplayName: u.displayName(),
 				Role:        role,
-				// /settings/v3/users returns ACTIVE users only — verified
-				// against a live portal that holds 74 here while its admin UI
-				// shows 46 further deactivated accounts, and where the
-				// `archived` query parameter is silently ignored.
-				//
-				// So everyone listed here is live and holding a seat. The
-				// deactivated ones are not under-reported as active; they are
-				// invisible, which is a different and honest gap: see the
-				// owners API note in Billing.
-				Status:     core.StatusActive,
-				ProviderID: u.ID,
+				Status:      status,
+				ProviderID:  u.ID,
 			}
 			if seat := u.seat(); seat != "" {
 				user.Metadata = map[string]string{"seat": seat}
@@ -159,16 +215,6 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	return all, nil
 }
 
-// Deactivated accounts are not reachable from /settings/v3/users: it returns
-// active users only and ignores the `archived` parameter. They live behind
-// GET /crm/v3/owners/?archived=true, which needs the `crm.objects.owners.read`
-// scope on top of `settings.users.read`.
-//
-// Until that scope is granted the connector reports the live seats correctly
-// and simply cannot see the deactivated ones — an absence, not a wrong number.
-// Implementing this is worth it: it closes the loop on offboarding, since a
-// person deactivated here and suspended elsewhere is finished business rather
-// than a gap.
 func (p *Provider) AddUser(_ context.Context, _, _ string) error {
 	return fmt.Errorf("hubspot: adding users not supported via API")
 }

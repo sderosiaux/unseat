@@ -2,10 +2,10 @@ package hubspot
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/sderosiaux/unseat/internal/core"
@@ -31,6 +31,13 @@ func TestListUsers(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+
+		// Deactivation state lives on the owner record, so ListUsers consults
+		// both endpoints. Nobody is archived here.
+		if strings.HasPrefix(r.URL.Path, "/crm/v3/owners") {
+			fmt.Fprint(w, `{"results":[]}`)
+			return
+		}
 		assert.Equal(t, "/settings/v3/users/", r.URL.Path)
 
 		// Raw JSON in the shape a live portal returns. Encoding our own struct
@@ -75,29 +82,19 @@ func TestListUsers(t *testing.T) {
 }
 
 func TestListUsersPagination(t *testing.T) {
-	callCount := 0
+	userCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		assert.Equal(t, http.MethodGet, r.Method)
-
-		if callCount == 1 {
-			assert.Empty(t, r.URL.Query().Get("after"))
-			json.NewEncoder(w).Encode(usersResponse{
-				Results: []hubspotUser{
-					{ID: "1", Email: "alice@co.com"},
-				},
-				Paging: &paging{
-					Next: &pagingNext{After: "100"},
-				},
-			})
-		} else {
-			assert.Equal(t, "100", r.URL.Query().Get("after"))
-			json.NewEncoder(w).Encode(usersResponse{
-				Results: []hubspotUser{
-					{ID: "2", Email: "bob@co.com"},
-				},
-			})
+		if strings.HasPrefix(r.URL.Path, "/crm/v3/owners") {
+			fmt.Fprint(w, `{"results":[]}`)
+			return
 		}
+		userCalls++
+		if r.URL.Query().Get("after") == "" {
+			fmt.Fprint(w, `{"results":[{"id":"1","email":"alice@co.com"}],"paging":{"next":{"after":"100"}}}`)
+			return
+		}
+		assert.Equal(t, "100", r.URL.Query().Get("after"))
+		fmt.Fprint(w, `{"results":[{"id":"2","email":"bob@co.com"}]}`)
 	}))
 	defer server.Close()
 
@@ -105,42 +102,38 @@ func TestListUsersPagination(t *testing.T) {
 	users, err := p.ListUsers(context.Background())
 	require.NoError(t, err)
 	require.Len(t, users, 2)
-	assert.Equal(t, 2, callCount)
+	assert.Equal(t, 2, userCalls)
 	assert.Equal(t, "alice@co.com", users[0].Email)
 	assert.Equal(t, "bob@co.com", users[1].Email)
 }
 
+// Routed by path rather than call order: ListUsers now consults the owners
+// endpoint too, and a counter-based mock silently mislabels which call is which.
 func TestRemoveUser(t *testing.T) {
-	callCount := 0
+	deleted := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
-		if callCount == 1 {
-			// ListUsers call
-			assert.Equal(t, http.MethodGet, r.Method)
-			json.NewEncoder(w).Encode(usersResponse{
-				Results: []hubspotUser{
-					{ID: "42", Email: "alice@co.com"},
-				},
-			})
-		} else {
-			// DELETE call
-			assert.Equal(t, http.MethodDelete, r.Method)
-			assert.Equal(t, "/settings/v3/users/42", r.URL.Path)
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/crm/v3/owners"):
+			fmt.Fprint(w, `{"results":[]}`)
+		case r.Method == http.MethodDelete:
 			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+			deleted = r.URL.Path
 			w.WriteHeader(http.StatusNoContent)
+		default:
+			fmt.Fprint(w, `{"results":[{"id":"42","email":"alice@co.com"}]}`)
 		}
 	}))
 	defer server.Close()
 
 	p := New("test-token").WithBaseURL(server.URL)
-	err := p.RemoveUser(context.Background(), "alice@co.com")
-	require.NoError(t, err)
-	assert.Equal(t, 2, callCount)
+	require.NoError(t, p.RemoveUser(context.Background(), "alice@co.com"))
+	assert.Equal(t, "/settings/v3/users/42", deleted)
 }
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(usersResponse{Results: []hubspotUser{}})
+		assert.NotEqual(t, http.MethodDelete, r.Method, "an unknown user must not trigger a deletion")
+		fmt.Fprint(w, `{"results":[]}`)
 	}))
 	defer server.Close()
 
@@ -175,4 +168,79 @@ func TestSetRoleNotSupported(t *testing.T) {
 	err := p.SetRole(context.Background(), "test@co.com", "admin")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not supported")
+}
+
+// /settings/v3/users lists deactivated accounts alongside live ones with
+// nothing to tell them apart. Only the archived CRM owner record reveals the
+// state, so ListUsers must consult it — reporting a deactivated account as a
+// live seat makes departed staff look like they still hold access.
+func TestListUsersMarksDeactivatedFromArchivedOwners(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/crm/v3/owners"):
+			assert.Equal(t, "true", r.URL.Query().Get("archived"))
+			fmt.Fprint(w, `{"results":[{"email":"Gone@Co.com","archived":true}]}`)
+		default:
+			fmt.Fprint(w, `{"results":[
+			  {"id":"1","email":"alice@co.com","seatNames":["core"]},
+			  {"id":"2","email":"gone@co.com","seatNames":["sales-enterprise"]}
+			]}`)
+		}
+	}))
+	defer server.Close()
+
+	users, err := New("tok").WithBaseURL(server.URL).ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 2)
+
+	assert.Equal(t, core.StatusActive, users[0].Status)
+	// Matched case-insensitively: the owners API echoes whatever casing was
+	// used at sign-up.
+	assert.Equal(t, core.StatusSuspended, users[1].Status)
+	// A deactivated account keeps its seat name, which is why the seat count
+	// alone cannot reveal the state.
+	assert.Equal(t, "sales-enterprise", users[1].Metadata["seat"])
+}
+
+func TestListUsersPaginatesArchivedOwners(t *testing.T) {
+	ownerCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/crm/v3/owners") {
+			ownerCalls++
+			if r.URL.Query().Get("after") == "" {
+				fmt.Fprint(w, `{"results":[{"email":"a@co.com"}],"paging":{"next":{"after":"P2"}}}`)
+				return
+			}
+			assert.Equal(t, "P2", r.URL.Query().Get("after"))
+			fmt.Fprint(w, `{"results":[{"email":"b@co.com"}]}`)
+			return
+		}
+		fmt.Fprint(w, `{"results":[{"id":"1","email":"a@co.com"},{"id":"2","email":"b@co.com"}]}`)
+	}))
+	defer server.Close()
+
+	users, err := New("tok").WithBaseURL(server.URL).ListUsers(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 2, ownerCalls, "a truncated owners walk would silently mark people active")
+	for _, u := range users {
+		assert.Equal(t, core.StatusSuspended, u.Status)
+	}
+}
+
+// Without the owners scope there is no way to tell a deactivated account from
+// a live one. Refusing is safer than returning every seat as active.
+func TestListUsersRequiresOwnersScope(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/crm/v3/owners") {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"category":"MISSING_SCOPES"}`)
+			return
+		}
+		fmt.Fprint(w, `{"results":[{"id":"1","email":"a@co.com"}]}`)
+	}))
+	defer server.Close()
+
+	_, err := New("tok").WithBaseURL(server.URL).ListUsers(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "crm.objects.owners.read")
 }

@@ -34,63 +34,65 @@ flowchart LR
 
 Kubernetes-style reconciliation: define which Google Groups map to which SaaS providers, and unseat keeps them in sync. Add someone to a group, they get provisioned. Remove them from Google Workspace, their SaaS seats get cleaned up (with configurable grace period and notifications).
 
-## Providers (55)
+## Providers
 
-| Category | Provider | API | Remove |
-|----------|----------|-----|:------:|
-| **Identity** | Google Directory | Admin SDK | yes |
-| | Okta | REST v1 | yes (deactivate) |
-| | Auth0 | Management API v2 | yes |
-| | Azure AD / Entra ID | Microsoft Graph | yes |
-| | AWS IAM Identity Center | SCIM v2 | yes |
-| | GCP IAM | Cloud Identity | yes |
-| **Engineering** | GitHub | REST v3 | yes |
-| | GitLab | REST v4 | yes (block) |
-| | Atlassian (Jira/Confluence) | SCIM v2 | yes |
-| | Linear | GraphQL | yes (suspend) |
-| | Notion | SCIM v2 | yes |
-| | Shortcut | REST v3 | yes |
-| **Project Management** | Asana | REST | yes |
-| | Monday.com | GraphQL | yes (deactivate) |
-| | ClickUp | REST v2 | yes |
-| | Trello | REST | yes |
-| **Infrastructure** | Vercel | REST v3 | yes |
-| | Netlify | REST | yes |
-| **Observability** | Datadog | REST v2 | yes |
-| | PagerDuty | REST v2 | yes |
-| | Grafana | REST | yes |
-| | New Relic | REST v2 | yes |
-| | Sentry | REST | yes |
-| **CRM / Support** | Salesforce | REST / SOQL | yes (deactivate) |
-| | HubSpot | Settings v3 | yes |
-| | Intercom | REST v2 | yes (set away) |
-| | Zendesk | REST v2 | yes |
-| | Freshdesk | REST v2 | yes |
-| **Communication** | Slack | SCIM v2 | yes (deactivate) |
-| | Microsoft Teams | Graph API | yes |
-| | Zoom | REST v2 | yes |
-| | Discord | REST v10 | yes (kick) |
-| | Loom | REST | yes |
-| **Storage** | Dropbox | Business API | yes |
-| | Box | REST v2 | yes |
-| **Security** | 1Password | SCIM v2 | yes (deactivate) |
-| | LastPass | Enterprise API | yes |
-| | Snyk | REST v1 | yes |
-| **Design** | Figma | SCIM v2 | yes (deactivate) |
-| | Canva | SCIM v2 | yes |
-| | Adobe Creative Cloud | UMAPI | yes |
-| **Legal** | DocuSign | Admin API | yes |
-| **AI** | Anthropic (Claude) | Admin API | yes |
-| | Claude Code | Admin API | yes (filtered) |
-| **Finance** | Brex | REST v2 | yes (disable) |
-| | Stripe | SCIM v2 | yes |
-| **HR** | Rippling | SCIM v2 | yes (deactivate) |
-| | BambooHR | REST | yes (terminate) |
-| | Deel | REST v2 | yes (terminate) |
-| **Data** | Airtable | Enterprise API | yes |
-| | Snowflake | SCIM v2 | yes (deactivate) |
-| | Databricks | SCIM v2 | yes (deactivate) |
-| **Other** | Miro | REST v2 | yes |
+53 connectors are implemented. Implementing a connector from vendor documentation is not the same as knowing it works: **4 of the 53 have had `ListUsers` confirmed against a live tenant** (Google Directory, Linear, GitHub, HubSpot). Two connectors that looked exactly as solid as the rest — parsing a documented field, tests green — turned out to send a request the real API silently ignored, because the tests round-tripped our own struct instead of a real response. The other 49 are written from documentation only and unverified: treat them as a starting point to validate against your own tenant, not as a guarantee. `unseat providers supported` prints the status of every connector; see `internal/auth/providers.go`.
+
+| Status | Category | Provider | API | Remove |
+|:------:|----------|----------|-----|:------:|
+| verified | **Identity** | Google Directory | Admin SDK | yes |
+| unverified | | Okta | REST v1 | yes (deactivate) |
+| unverified | | Auth0 | Management API v2 | yes |
+| unverified | | Azure AD / Entra ID | Microsoft Graph | yes |
+| unverified | | AWS IAM Identity Center | SCIM v2 | yes |
+| unverified | | GCP IAM | Cloud Identity | yes |
+| verified | **Engineering** | GitHub | REST v3 | yes |
+| unverified | | GitLab | REST v4 | yes (block) |
+| unverified | | Atlassian (Jira/Confluence) | SCIM v2 | yes |
+| verified | | Linear | GraphQL | yes (suspend) |
+| unverified | | Notion | SCIM v2 | yes |
+| unverified | | Shortcut | REST v3 | yes |
+| unverified | **Project Management** | Asana | REST | yes |
+| unverified | | Monday.com | GraphQL | yes (deactivate) |
+| unverified | | ClickUp | REST v2 | yes |
+| unverified | | Trello | REST | yes |
+| unverified | **Infrastructure** | Vercel | REST v3 | yes |
+| unverified | | Netlify | REST | yes |
+| unverified | **Observability** | Datadog | REST v2 | yes |
+| unverified | | PagerDuty | REST v2 | yes |
+| unverified | | Grafana | REST | yes |
+| unverified | | New Relic | REST v2 | yes |
+| unverified | | Sentry | REST | yes |
+| unverified | **CRM / Support** | Salesforce | REST / SOQL | yes (deactivate) |
+| verified | | HubSpot | Settings v3 | yes |
+| unverified | | Intercom | REST v2 | yes (set away) |
+| unverified | | Zendesk | REST v2 | yes |
+| unverified | | Freshdesk | REST v2 | yes |
+| unverified | **Communication** | Slack | SCIM v2 | yes (deactivate) |
+| unverified | | Microsoft Teams | Graph API | yes |
+| unverified | | Zoom | REST v2 | yes |
+| unverified | | Discord | REST v10 | yes (kick) |
+| unverified | | Loom | REST | yes |
+| unverified | **Storage** | Dropbox | Business API | yes |
+| unverified | | Box | REST v2 | yes |
+| unverified | **Security** | 1Password | SCIM v2 | yes (deactivate) |
+| unverified | | LastPass | Enterprise API | yes |
+| unverified | | Snyk | REST v1 | yes |
+| unverified | **Design** | Figma | SCIM v2 | yes (deactivate) |
+| unverified | | Canva | SCIM v2 | yes |
+| unverified | | Adobe Creative Cloud | UMAPI | yes |
+| unverified | **Legal** | DocuSign | Admin API | yes |
+| unverified | **AI** | Anthropic (Claude) | Admin API | yes |
+| unverified | | Claude Code | Admin API | yes (filtered) |
+| unverified | **Finance** | Brex | REST v2 | yes (disable) |
+| unverified | | Stripe | SCIM v2 | yes |
+| unverified | **HR** | Rippling | SCIM v2 | yes (deactivate) |
+| unverified | | BambooHR | REST | yes (terminate) |
+| unverified | | Deel | REST v2 | yes (terminate) |
+| unverified | **Data** | Airtable | Enterprise API | yes |
+| unverified | | Snowflake | SCIM v2 | yes (deactivate) |
+| unverified | | Databricks | SCIM v2 | yes (deactivate) |
+| unverified | **Other** | Miro | REST v2 | yes |
 
 Adding a provider = implement the `Provider` interface + register in factory.
 

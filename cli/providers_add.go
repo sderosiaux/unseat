@@ -127,22 +127,27 @@ func runProvidersListKnown(cmd *cobra.Command, args []string) error {
 
 	if jsonOutput {
 		type providerInfo struct {
-			Name       string `json:"name"`
-			AuthMethod string `json:"auth_method"`
+			Name         string `json:"name"`
+			AuthMethod   string `json:"auth_method"`
+			Verification string `json:"verification"`
 		}
 		var infos []providerInfo
 		for _, name := range providers {
 			p := auth.KnownProviders[name]
-			infos = append(infos, providerInfo{Name: name, AuthMethod: p.AuthMethod})
+			infos = append(infos, providerInfo{Name: name, AuthMethod: p.AuthMethod, Verification: p.Verification.String()})
 		}
 		return printJSON(infos)
 	}
 
+	fmt.Println("verified: ListUsers confirmed against a live account.  " +
+		"unverified: written from vendor documentation and may not match the live API.")
+	fmt.Println()
+
 	rows := make([][]string, len(providers))
 	for i, name := range providers {
 		p := auth.KnownProviders[name]
-		rows[i] = []string{name, p.AuthMethod, p.Instructions}
+		rows[i] = []string{name, p.Verification.String(), p.AuthMethod, p.Instructions}
 	}
-	printTable([]string{"PROVIDER", "AUTH METHOD", "INSTRUCTIONS"}, rows)
+	printTable([]string{"PROVIDER", "STATUS", "AUTH METHOD", "INSTRUCTIONS"}, rows)
 	return nil
 }

@@ -2,6 +2,29 @@ package auth
 
 import "sort"
 
+// Verification records whether a connector's behavior has been confirmed
+// against a live tenant, or only written from vendor documentation. Two
+// connectors shipped from documentation alone had a field the API never
+// actually sent — tests didn't catch it because they round-tripped our own
+// struct. This flag exists so that distinction is never silently lost.
+type Verification int
+
+const (
+	// Unverified means the connector was written from vendor docs and has
+	// never been run against a real account. This is the default — do not
+	// flip it without an actual ListUsers call against a live tenant.
+	Unverified Verification = iota
+	// Verified means ListUsers has been confirmed against a live account.
+	Verified
+)
+
+func (v Verification) String() string {
+	if v == Verified {
+		return "verified"
+	}
+	return "unverified"
+}
+
 // ProviderAuth defines the authentication configuration for a SaaS provider.
 type ProviderAuth struct {
 	Name         string   // Provider identifier
@@ -11,6 +34,10 @@ type ProviderAuth struct {
 	Scopes       []string // OAuth2 scopes
 	ClientID     string   // Built-in client ID (can be overridden via env/flag)
 	Instructions string   // Help text shown to the user
+	// Verification: Verified only for connectors confirmed against a live
+	// tenant. Defaults to Unverified — leave it that way unless you've
+	// actually run ListUsers against a real account.
+	Verification Verification
 }
 
 // KnownProviders maps provider names to their auth configurations.
@@ -36,6 +63,7 @@ var KnownProviders = map[string]ProviderAuth{
 			"identity_source.admin_email to the admin being impersonated. That is enough for scan, audit and " +
 			"sync plan. Only to let unseat suspend accounts, set identity_source.allow_write and re-authorize " +
 			"with admin.directory.user and admin.directory.group instead.",
+		Verification: Verified,
 	},
 
 	// --- Original providers ---
@@ -43,6 +71,7 @@ var KnownProviders = map[string]ProviderAuth{
 		Name:         "linear",
 		AuthMethod:   "api_key",
 		Instructions: "Create an API key at https://linear.app/settings/api",
+		Verification: Verified,
 	},
 	"figma": {
 		Name:         "figma",
@@ -59,6 +88,7 @@ var KnownProviders = map[string]ProviderAuth{
 			"`settings.users.read` (live users) and `crm.objects.owners.read` (deactivated ones — " +
 			"/settings/v3/users returns active users only and ignores ?archived), then copy the pat- " +
 			"access token. Without the exact scope the endpoint answers 403.",
+		Verification: Verified,
 	},
 	"miro": {
 		Name:         "miro",
@@ -91,6 +121,7 @@ var KnownProviders = map[string]ProviderAuth{
 		Name:         "github",
 		AuthMethod:   "api_key",
 		Instructions: "Create a PAT (classic) with admin:org scope at https://github.com/settings/tokens. Requires extra.org.",
+		Verification: Verified,
 	},
 	"gitlab": {
 		Name:         "gitlab",

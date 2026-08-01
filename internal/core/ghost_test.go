@@ -98,7 +98,7 @@ func TestFindGhostIdentities_MatchesOnLocalPartWhenNoUsableName(t *testing.T) {
 	// No display name at all — the provider fell back to the raw address —
 	// so the match has to come from the local part of the personal address.
 	seats := []ClassifiedSeat{
-		externalSeat("github", "camiller@personal.com", ""),
+		externalSeat("github", "camilled@personal.com", ""),
 	}
 	directory := []User{
 		{Email: "camille@corp.io", DisplayName: "Camille Duflot", Status: StatusActive},
@@ -193,7 +193,7 @@ func TestFindGhostIdentitiesMatchesOnProviderLogin(t *testing.T) {
 		Class:    SeatExternal,
 		User: User{
 			Email:    "randomcontractor99@personal.com",
-			Metadata: map[string]string{"login": "camiller"},
+			Metadata: map[string]string{"login": "camilled"},
 		},
 	}}
 
@@ -215,10 +215,10 @@ func TestFindGhostIdentitiesLoginNotReachedWhenLocalPartAlreadyMatched(t *testin
 	}
 	seats := []ClassifiedSeat{{
 		Provider: "github",
-		RawEmail: "camiller@personal.com",
+		RawEmail: "camilled@personal.com",
 		Class:    SeatExternal,
 		User: User{
-			Email:    "camiller@personal.com",
+			Email:    "camilled@personal.com",
 			Metadata: map[string]string{"login": "unrelatedlogin"},
 		},
 	}}

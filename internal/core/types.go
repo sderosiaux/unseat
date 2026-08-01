@@ -72,6 +72,12 @@ type Capabilities struct {
 	// "this person never logged in" — conflating the two made every user of
 	// every non-instrumented provider look inactive.
 	ReportsActivity bool `json:"reports_activity"`
+	// ReportsCredentialUsage is the same declaration for ListCredentials and
+	// Credential.LastUsedAt, and is just as easy to get wrong: an installed
+	// app's updated_at moves when its permissions change, never when it acts.
+	// Set this only for an API that answers "when did this token last do
+	// something", not "when was this record last touched".
+	ReportsCredentialUsage bool `json:"reports_credential_usage"`
 }
 
 type EventType string

@@ -34,3 +34,19 @@ type BillingProvider interface {
 	Provider
 	Billing(ctx context.Context) (*core.Billing, error)
 }
+
+// CredentialProvider is implemented by connectors whose API exposes the
+// non-human access the org has granted: installed apps, integrations,
+// webhooks, tokens.
+//
+// It is separate from Provider because these are not seats and must not be
+// counted as such — they cost nothing per month and cannot be deprovisioned by
+// suspending a person. They are also, for the same reason, the access that
+// offboarding structurally cannot reach.
+//
+// The connector reports; it does not judge. Whether a credential is orphaned
+// is a question about the directory, which the connector cannot see.
+type CredentialProvider interface {
+	Provider
+	ListCredentials(ctx context.Context) ([]core.Credential, error)
+}

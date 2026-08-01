@@ -75,6 +75,42 @@ both still fail when `SeatUnmapped` is routed to `ToRemove`.
 With no directory available, nothing is removable and every seat falls to
 `ToReview`. Degrade toward reporting, never toward deleting.
 
+### Non-Human Access Is The Blind Spot Seats Cannot See
+
+Seats are attached to people, so deprovisioning a person reaches them. Apps,
+integrations, webhooks and tokens are not, so it never does. An integration
+authorised under a departed engineer's OAuth grant keeps running on it; a
+GitHub App installed in 2021 keeps its permissions forever. Nothing in the seat
+model mentions either, which is exactly why they accumulate.
+
+`core.Credential` models them and `core.ClassifyCredentials` judges them
+against the same directory seat classification uses. Connectors implement the
+optional `provider.CredentialProvider` and **report only** — whether something
+is orphaned is a question about the directory, which a connector cannot see.
+
+Two rules the classification encodes, both deliberate:
+
+- **Dormant outranks orphaned.** A switched-off credential is settled first
+  whoever created it: it cannot act, so the recommendation is to uninstall it,
+  not to find it a new owner.
+- **Reach is orthogonal to class.** An app installed by a current employee can
+  still hold write access to every repository. Folding that into the class
+  would force a choice between two facts that are both true, so
+  `Overreaching` is a separate field.
+
+`Capabilities.ReportsCredentialUsage` is the credential-side twin of
+`ReportsActivity` and fails the same way. An installation's `updated_at` moves
+when its permissions change, never when the app acts — reading it as usage
+marks a dormant app "recently used" the day someone edits its scopes. No
+connector sets the flag today, so nothing may be called unused.
+
+What the APIs will not give, and must therefore not be claimed: GitHub names
+nobody in the installations payload, so installers come from the audit log —
+Enterprise-only, and bounded by retention, which attributed 3 of 31 apps on a
+live org. The rest stay `unowned`, which is "GitHub will not say", not "clean".
+Without SAML SSO and the fine-grained PAT approval policy, GitHub also reports
+nothing at all about members' personal access tokens.
+
 ### Activity Data Is Opt-In Per Provider
 
 `core.Capabilities.ReportsActivity` declares that `ListUsers` populates
@@ -110,6 +146,8 @@ type Provider interface {
 ```
 
 `IdentityProvider` extends `Provider` with `ListGroups()` and `ListGroupMembers()` (only Google Directory).
+`CredentialProvider` extends it with `ListCredentials()` for connectors whose API
+exposes non-human access (github, linear).
 
 ### Billing Comes From The API First
 
@@ -196,6 +234,9 @@ work from stored credentials alone, before any YAML exists. An explicitly passed
 `sync plan` never mutates. `sync apply` shows the plan, confirms, then executes.
 `policies.dry_run` is a lock that makes `apply` refuse — not a mode that makes it
 silently no-op, which is what the old `sync run` did.
+
+`audit credentials` is the non-human counterpart to `audit seats`: it lists and
+classifies installed apps, integrations and webhooks, and never revokes.
 
 `scan` is the read-only entry point: provider API keys only, no identity source,
 no mappings, no writes. It is what a new user should run first.

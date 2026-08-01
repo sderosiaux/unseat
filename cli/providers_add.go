@@ -64,7 +64,16 @@ func runProvidersAdd(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		fmt.Printf("  %s connected successfully.\n", name)
+		// This only stores a credential locally — it never calls the provider,
+		// so "connected successfully" claimed a check that never happened.
+		// This is also the moment a real production credential gets wired in,
+		// so an unverified connector's status belongs here, not buried in
+		// `providers supported`.
+		fmt.Printf("  %s: credential stored. Run `unseat providers test %s` to confirm it actually works.\n", name, name)
+		if providerAuth.Verification != auth.Verified {
+			fmt.Printf("  %s is unverified: its connector was written from vendor documentation and has never "+
+				"been confirmed against a live account.\n", name)
+		}
 	}
 
 	return nil

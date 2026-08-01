@@ -123,6 +123,13 @@ var KnownProviders = map[string]ProviderAuth{
 		Instructions: "Create a PAT (classic) with admin:org scope at https://github.com/settings/tokens. Requires extra.org.",
 		Verification: Verified,
 	},
+	"github-copilot": {
+		Name:       "github-copilot",
+		AuthMethod: "api_key",
+		Instructions: "Create a PAT (classic) with the `manage_billing:copilot` scope at " +
+			"https://github.com/settings/tokens. Requires an org on Copilot Business or Enterprise, and extra.org.",
+		Verification: Verified,
+	},
 	"gitlab": {
 		Name:         "gitlab",
 		AuthMethod:   "api_key",

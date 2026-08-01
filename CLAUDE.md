@@ -78,7 +78,9 @@ With no directory available, nothing is removable and every seat falls to
 ### Activity Data Is Opt-In Per Provider
 
 `core.Capabilities.ReportsActivity` declares that `ListUsers` populates
-`LastActivityAt` from a genuine usage signal. Only ~12 of 53 providers can.
+`LastActivityAt` from a genuine usage signal. Only about a dozen of the
+connectors set it — grep `ReportsActivity: true` under `internal/provider/`
+rather than trusting a restated count.
 
 For a provider with the flag, a nil `LastActivityAt` means "never seen active"
 — the strongest inactivity signal. For every other provider it means "unknown".
@@ -214,7 +216,7 @@ internal/credentials/         File-based credential store
 api/                          Chi REST server + MCP server
 ```
 
-## Providers (55 total, see README for full list)
+## Providers (see `internal/auth.KnownProviders` for the current count and full list; README has a formatted table)
 
 | Provider | Package | API Type | Notes |
 |----------|---------|----------|-------|

@@ -36,7 +36,7 @@ Kubernetes-style reconciliation: define which Google Groups map to which SaaS pr
 
 ## Providers
 
-53 connectors are implemented. Implementing a connector from vendor documentation is not the same as knowing it works: **4 of the 53 have had `ListUsers` confirmed against a live tenant** (Google Directory, Linear, GitHub, HubSpot). Two connectors that looked exactly as solid as the rest — parsing a documented field, tests green — turned out to send a request the real API silently ignored, because the tests round-tripped our own struct instead of a real response. The other 49 are written from documentation only and unverified: treat them as a starting point to validate against your own tenant, not as a guarantee. `unseat providers supported` prints the status of every connector; see `internal/auth/providers.go`.
+54 connectors are implemented. Implementing a connector from vendor documentation is not the same as knowing it works: **5 of the 54 have had `ListUsers` confirmed against a live tenant** (Google Directory, Linear, GitHub, GitHub Copilot, HubSpot). Two connectors that looked exactly as solid as the rest — parsing a documented field, tests green — turned out to send a request the real API silently ignored, because the tests round-tripped our own struct instead of a real response. The other 49 are written from documentation only and unverified: treat them as a starting point to validate against your own tenant, not as a guarantee. `unseat providers supported` prints the status of every connector; see `internal/auth/providers.go`.
 
 | Status | Category | Provider | API | Remove |
 |:------:|----------|----------|-----|:------:|
@@ -47,6 +47,7 @@ Kubernetes-style reconciliation: define which Google Groups map to which SaaS pr
 | unverified | | AWS IAM Identity Center | SCIM v2 | yes |
 | unverified | | GCP IAM | Cloud Identity | yes |
 | verified | **Engineering** | GitHub | REST v3 | yes |
+| verified | | GitHub Copilot | REST v3 | no (read-only by design) |
 | unverified | | GitLab | REST v4 | yes (block) |
 | unverified | | Atlassian (Jira/Confluence) | SCIM v2 | yes |
 | verified | | Linear | GraphQL | yes (suspend) |
@@ -257,11 +258,13 @@ becomes active again.
 ## REST API
 
 ```
-GET /api/v1/providers              All providers + sync status
-GET /api/v1/providers/{name}/users Cached users for a provider
-GET /api/v1/orphans                Pending removals
-GET /api/v1/history/events         Event timeline
-GET /api/v1/mappings               Group-to-provider mappings
+GET /api/v1/providers                 All providers + sync status
+GET /api/v1/providers/{name}/users    Cached users for a provider
+GET /api/v1/providers/{name}/inactive Inactive users for a provider, if it exposes activity data [?days]
+GET /api/v1/inactive                  Inactive users across every provider that exposes activity data [?days]
+GET /api/v1/pending-removals          Seats inside their grace period, awaiting removal — not the same as orphans
+GET /api/v1/history/events            Event timeline [?limit]
+GET /api/v1/mappings                  Group-to-provider mappings
 ```
 
 ```bash
@@ -276,7 +279,7 @@ For LLM agent integration (Claude, etc.) via [Model Context Protocol](https://mo
 unseat mcp
 ```
 
-Tools: `list_providers`, `provider_users`, `list_orphans`, `list_events`, `get_mappings`
+Tools: `list_providers`, `provider_users`, `list_pending_removals`, `list_inactive_users`, `list_events`, `get_mappings`
 
 Guardrails: dry_run by default for destructive actions, audit trail for agent vs human vs cron triggers.
 

@@ -38,7 +38,7 @@ func TestListUsers(t *testing.T) {
 		fmt.Fprint(w, `{"total_seats":3,"seats":[
 		  {"created_at":"2025-05-12T06:00:49-04:00","last_activity_at":"2026-07-31T14:26:52-04:00",
 		   "last_activity_editor":"JetBrains-IU/262","plan_type":"business",
-		   "assignee":{"login":"trobert","type":"User"}},
+		   "assignee":{"login":"dlefevre","type":"User"}},
 		  {"created_at":"2025-06-01T09:00:00Z","last_activity_at":null,"plan_type":"business",
 		   "assignee":{"login":"neveractive","type":"User"}},
 		  {"created_at":"2025-06-01T09:00:00Z","last_activity_at":"2026-07-01T09:00:00Z",
@@ -54,7 +54,7 @@ func TestListUsers(t *testing.T) {
 
 	// The login stays bare: core classifies an identifier with no "@" as
 	// unresolved, which is honest until an alias maps it to a person.
-	assert.Equal(t, "trobert", users[0].Email)
+	assert.Equal(t, "dlefevre", users[0].Email)
 	assert.Equal(t, "business", users[0].Role)
 	assert.Equal(t, core.StatusActive, users[0].Status)
 	require.NotNil(t, users[0].LastActivityAt)

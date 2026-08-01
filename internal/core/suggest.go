@@ -102,7 +102,7 @@ func AttributeUnresolved(unresolved []ClassifiedSeat, directory []User, domain s
 			}
 		}
 
-		// The handle itself is usually the name: georginawalker,
+		// The handle itself is usually the name: harrietlowe,
 		// adaokafor-dev, willbenton-acme. Treating a missing name field
 		// as "nothing to infer" ignored the identifier sitting in plain sight.
 		if match, basis, ok := matchHandle(seat.RawEmail, keys, noise); ok {
@@ -193,12 +193,12 @@ func (k directoryKey) matchesHandle(h string) (basis string, ok bool) {
 	case k.local != "" && h == k.local:
 		return "spells the directory address", true
 	case len(h) >= minPrefix && strings.HasPrefix(k.full, h):
-		// priyaven -> priyavenkatesan
+		// priyaven -> priyavenidore
 		return "abbreviates the directory name", true
 	}
 
 	// Surname in full plus the given name, or the start of it: willbenton for
-	// William Benton, rajiyer for Rajesh Iyer.
+	// William Benton, benbramble for Benjamin Bramble.
 	if len(k.tokens) >= 2 {
 		given, surname := k.tokens[0], k.tokens[len(k.tokens)-1]
 		if len(surname) >= minSurname && strings.Contains(h, surname) {

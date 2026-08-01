@@ -6,3 +6,7 @@ unseat.yaml
 .env
 gcp-credentials.json
 *-credentials.json
+unseat.db-shm
+unseat.db-wal
+*.db-shm
+*.db-wal

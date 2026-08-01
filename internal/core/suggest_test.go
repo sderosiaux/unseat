@@ -39,10 +39,10 @@ func TestAttributeUnresolvedMatchesByName(t *testing.T) {
 // real name. Normalising both sides before comparing them discarded exactly
 // the seats that were matchable.
 func TestAttributeUnresolvedKeepsNamesResemblingTheirHandle(t *testing.T) {
-	dir := []User{{Email: "cschubert@co.com", DisplayName: "Christoph Schubert"}}
+	dir := []User{{Email: "mkellner@co.com", DisplayName: "Matthias Kellner"}}
 
 	rep := AttributeUnresolved([]ClassifiedSeat{
-		seat("github", "christophschubert", "Christoph Schubert"),
+		seat("github", "matthiaskellner", "Matthias Kellner"),
 	}, dir, "co.com")
 
 	require.Len(t, rep.Matched, 1)
@@ -67,11 +67,11 @@ func TestAttributeUnresolvedAnonymousWhenNameIsTheHandle(t *testing.T) {
 // nobody finished. It is reported, never folded into a verdict.
 func TestAttributeUnresolvedNamedButUnknown(t *testing.T) {
 	rep := AttributeUnresolved([]ClassifiedSeat{
-		seat("github", "silly-mid-on", "Ben Bramble"),
+		seat("github", "silly-mid-on", "Tom Bramble"),
 	}, []User{{Email: "a@co.com", DisplayName: "Someone Else"}}, "co.com")
 
 	require.Len(t, rep.NamedButUnknown, 1)
-	assert.Equal(t, "Ben Bramble", rep.NamedButUnknown[0].User.DisplayName)
+	assert.Equal(t, "Tom Bramble", rep.NamedButUnknown[0].User.DisplayName)
 	assert.Empty(t, rep.Matched)
 }
 
@@ -91,13 +91,14 @@ func TestAttributeUnresolvedRefusesAmbiguousNames(t *testing.T) {
 
 func TestNameKey(t *testing.T) {
 	assert.Equal(t, "ameliebrossard", nameKey("Amélie Brossard"))
-	assert.Equal(t, "jeanlouisboudart", nameKey("Jean-Louis Boudart"))
+	assert.Equal(t, "jeanpierremarchand", nameKey("Jean-Pierre Marchand"))
 	assert.Equal(t, "niamhodwyer", nameKey("Niamh O'Dwyer"))
 	assert.Equal(t, "", nameKey("   "))
 }
 
 // Handles are abbreviations of names, not names. Requiring equality attributed
-// none of these, and each pattern here came from a real directory.
+// none of these. Every pattern here was observed in a real directory; the
+// names are synthetic.
 func TestAttributeUnresolvedReadsAbbreviatedHandles(t *testing.T) {
 	dir := []User{
 		{Email: "pvenkatesan@co.com", DisplayName: "Priya Venkatesan"},

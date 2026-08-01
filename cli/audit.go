@@ -199,7 +199,7 @@ func runAuditSeats(cmd *cobra.Command, _ []string) error {
 	}
 
 	if jsonOutput {
-		return printJSON(map[string]any{"summary": audit.Summary, "seats": audit.Seats})
+		return printJSON(map[string]any{"summary": audit.Summary, "seats": audit.Seats, "directory": audit.Directory})
 	}
 
 	if len(audit.Summary) == 0 {
@@ -228,7 +228,7 @@ func runAuditSeats(cmd *cobra.Command, _ []string) error {
 	fmt.Println("external   = outside the corporate domain — needs a human decision")
 	fmt.Println("unresolved = username with no email and no alias — add an alias to judge it")
 
-	reportUnresolved(audit.Seats, audit.Directory)
+	reportUnresolved(audit.Seats, audit.Directory, cfg.CorporateDomain())
 	reportFailures(audit.Failed)
 	return nil
 }
@@ -239,7 +239,7 @@ func runAuditSeats(cmd *cobra.Command, _ []string) error {
 // billed, it grants access, and nothing here can say whose it is. Leaving that
 // as one number in a summary column lets the report read as complete when it
 // is not, so the identifiers are listed with a ready-to-paste alias block.
-func reportUnresolved(seats []core.ClassifiedSeat, directory []core.User) {
+func reportUnresolved(seats []core.ClassifiedSeat, directory []core.User, domain string) {
 	byProvider := map[string][]string{}
 	for _, s := range seats {
 		if s.Class == core.SeatUnresolved {
@@ -277,7 +277,7 @@ func reportUnresolved(seats []core.ClassifiedSeat, directory []core.User) {
 			unresolved = append(unresolved, s)
 		}
 	}
-	rep := core.AttributeUnresolved(unresolved, directory)
+	rep := core.AttributeUnresolved(unresolved, directory, domain)
 
 	if len(rep.Matched) > 0 {
 		fmt.Printf("\n  %d match a directory identity by name. Review, then paste into your config:\n\n", len(rep.Matched))

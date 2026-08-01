@@ -14,6 +14,10 @@ identity_source:
   credentials_file: ./credentials.json
   # Domain-wide delegation impersonates this admin.
   admin_email: admin@mycompany.com
+  # Read-only unless set. The readonly scopes cover scan, audit and sync plan;
+  # only suspending Workspace accounts needs write. Delegation authorizes an
+  # exact scope list, so flipping this means re-authorizing in the console.
+  # allow_write: true
 
 # Pricing turns seat counts into money. Two ways to state it, per provider:
 #

@@ -13,12 +13,32 @@ import (
 	"google.golang.org/api/option"
 )
 
-// delegatedScopes are the scopes requested when impersonating an admin through
-// domain-wide delegation. They must be write scopes: the provider suspends
-// users and toggles admin status, and the readonly variants 403 on every write.
-var delegatedScopes = []string{
+// readOnlyScopes are what unseat asks for by default.
+//
+// Everything that reads — scan, audit, sync plan — needs nothing more, and
+// domain-wide delegation is granted once in the admin console against an exact
+// scope list. Demanding write access to answer "who works here" is both
+// over-privileged and a needless approval step for a tool whose whole entry
+// path is read-only.
+var readOnlyScopes = []string{
+	admin.AdminDirectoryUserReadonlyScope,
+	admin.AdminDirectoryGroupReadonlyScope,
+	admin.AdminDirectoryGroupMemberReadonlyScope,
+}
+
+// writeScopes additionally allow suspending accounts and changing admin status.
+// They are requested only when the operator has explicitly opted in, mirroring
+// dry_run: the ability to write is never acquired by default.
+var writeScopes = []string{
 	admin.AdminDirectoryUserScope,
 	admin.AdminDirectoryGroupScope,
+}
+
+func scopesFor(allowWrite bool) []string {
+	if allowWrite {
+		return writeScopes
+	}
+	return readOnlyScopes
 }
 
 type Provider struct {
@@ -42,7 +62,7 @@ func New(ctx context.Context, credentialsFile, domain string, opts ...Option) (*
 		if readErr != nil {
 			return nil, fmt.Errorf("read credentials: %w", readErr)
 		}
-		conf, jwtErr := google.JWTConfigFromJSON(data, delegatedScopes...)
+		conf, jwtErr := google.JWTConfigFromJSON(data, scopesFor(o.allowWrite)...)
 		if jwtErr != nil {
 			return nil, fmt.Errorf("parse credentials: %w", jwtErr)
 		}
@@ -62,12 +82,24 @@ func New(ctx context.Context, credentialsFile, domain string, opts ...Option) (*
 type options struct {
 	adminEmail string
 	hardDelete bool
+	allowWrite bool
 }
 
 type Option func(*options)
 
 func WithAdminEmail(email string) Option {
 	return func(o *options) { o.adminEmail = email }
+}
+
+// WithWriteAccess requests the read-write directory scopes instead of the
+// read-only ones.
+//
+// Domain-wide delegation pre-authorizes an exact scope list, so this is not a
+// runtime toggle: asking for scopes the console has not granted fails the JWT
+// exchange outright, taking reads down with it. Left off, unseat can report on
+// the directory but never modify it.
+func WithWriteAccess(enabled bool) Option {
+	return func(o *options) { o.allowWrite = enabled }
 }
 
 // WithHardDelete makes RemoveUser permanently delete the Workspace account

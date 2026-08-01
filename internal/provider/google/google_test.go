@@ -67,14 +67,39 @@ func TestProviderCapabilities(t *testing.T) {
 	assert.True(t, caps.ReportsActivity)
 }
 
-func TestDelegatedScopesAreWritable(t *testing.T) {
+// Read-only by default: reading the directory is what scan, audit and sync
+// plan need, and domain-wide delegation is authorized once against an exact
+// scope list. Asking for write access to answer "who works here" would make
+// every operator grant deprovisioning rights before seeing a single number.
+func TestScopesAreReadOnlyByDefault(t *testing.T) {
+	scopes := scopesFor(false)
+	require.NotEmpty(t, scopes)
+	for _, s := range scopes {
+		assert.Contains(t, s, ".readonly", "the default must not be able to modify the directory")
+	}
+	// Group membership needs its own readonly scope; without it nested-group
+	// expansion 403s and every indirect member looks like a non-member.
+	assert.Contains(t, scopes, "https://www.googleapis.com/auth/admin.directory.group.member.readonly")
+}
+
+// Suspend and makeAdmin 403 on the readonly variants, so opting in must swap
+// the whole list rather than append.
+func TestWriteScopesRequestedOnlyWhenOptedIn(t *testing.T) {
+	scopes := scopesFor(true)
 	assert.Equal(t, []string{
 		"https://www.googleapis.com/auth/admin.directory.user",
 		"https://www.googleapis.com/auth/admin.directory.group",
-	}, delegatedScopes)
-	for _, s := range delegatedScopes {
-		assert.NotContains(t, s, ".readonly", "write scopes required — suspend/makeAdmin 403 on readonly")
+	}, scopes)
+	for _, s := range scopes {
+		assert.NotContains(t, s, ".readonly")
 	}
+}
+
+func TestWithWriteAccessOption(t *testing.T) {
+	var o options
+	assert.False(t, o.allowWrite, "write access is never acquired by default")
+	WithWriteAccess(true)(&o)
+	assert.True(t, o.allowWrite)
 }
 
 func TestListUsers(t *testing.T) {

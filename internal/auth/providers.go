@@ -21,18 +21,21 @@ var KnownProviders = map[string]ProviderAuth{
 		AuthMethod: "oauth2",
 		AuthURL:    "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:   "https://oauth2.googleapis.com/token",
-		// Write scopes, not the .readonly pair: the provider suspends users and
-		// toggles admin status. Domain-wide delegation pre-authorizes an exact
-		// scope list, so a mismatch here fails the JWT exchange outright —
-		// reads included, not just writes.
+		// Read-only by default. Domain-wide delegation authorizes an exact
+		// scope list once, so requesting write access up front would force
+		// every operator to grant deprovisioning rights before seeing a
+		// single number.
 		Scopes: []string{
-			"https://www.googleapis.com/auth/admin.directory.user",
-			"https://www.googleapis.com/auth/admin.directory.group",
+			"https://www.googleapis.com/auth/admin.directory.user.readonly",
+			"https://www.googleapis.com/auth/admin.directory.group.readonly",
+			"https://www.googleapis.com/auth/admin.directory.group.member.readonly",
 		},
-		Instructions: "Google Cloud service account with domain-wide delegation. In the Workspace admin console " +
-			"(Security > Access and data control > API controls > Domain-wide delegation), authorize the service " +
-			"account's client ID for BOTH scopes above. The .readonly variants are not sufficient — unseat suspends " +
-			"accounts. Set identity_source.admin_email to the admin being impersonated.",
+		Instructions: "Google Cloud service account with domain-wide delegation, then in the Workspace admin " +
+			"console (Security > Access and data control > API controls > Domain-wide delegation) authorize its " +
+			"client ID for the three readonly scopes above — comma-separated, exact match. Set " +
+			"identity_source.admin_email to the admin being impersonated. That is enough for scan, audit and " +
+			"sync plan. Only to let unseat suspend accounts, set identity_source.allow_write and re-authorize " +
+			"with admin.directory.user and admin.directory.group instead.",
 	},
 
 	// --- Original providers ---

@@ -71,6 +71,9 @@ func BuildRegistry(ctx context.Context, cfg *config.Config) (*Registry, Identity
 		if cfg.IdentitySource.AdminEmail != "" {
 			gopts = append(gopts, googleprovider.WithAdminEmail(cfg.IdentitySource.AdminEmail))
 		}
+		if cfg.IdentitySource.AllowWrite {
+			gopts = append(gopts, googleprovider.WithWriteAccess(true))
+		}
 		gp, err := googleprovider.New(ctx, cfg.IdentitySource.CredentialsFile, cfg.IdentitySource.Domain, gopts...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("init google directory: %w", err)

@@ -46,6 +46,13 @@ type IdentitySource struct {
 	Domain          string `yaml:"domain"`
 	CredentialsFile string `yaml:"credentials_file"`
 	AdminEmail      string `yaml:"admin_email"`
+	// AllowWrite requests read-write directory scopes instead of read-only.
+	//
+	// Off by default: reading the directory is what scan, audit and sync plan
+	// need, and domain-wide delegation is authorized once against an exact
+	// scope list. Turn it on only when unseat should be able to suspend
+	// Workspace accounts, and re-authorize the delegation to match.
+	AllowWrite bool `yaml:"allow_write,omitempty"`
 }
 
 type ProviderConfig struct {

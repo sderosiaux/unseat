@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
@@ -25,6 +28,19 @@ type Provider struct {
 	baseURL    string
 	graphqlURL string
 	client     *httpclient.Client
+
+	// auditLogAvailable reflects whether the most recent ListUsers call was able
+	// to read the org audit log (Enterprise-only). Capabilities() is otherwise a
+	// pure function of construction args, but ReportsActivity can only be known
+	// after a real request answers; it must also track the LATEST call, not just
+	// latch true forever on first success — a token can lose read:audit_log or an
+	// org can drop off Enterprise between runs, and Capabilities() reporting a
+	// stale "true" would make core treat every subsequently-missing timestamp as
+	// "confirmed never active" instead of "unknown", which is the exact bug this
+	// field exists to prevent. Accessed with atomics since Capabilities() and
+	// ListUsers() have no ordering guarantee across callers (e.g. REST API vs.
+	// sync daemon sharing a registry).
+	auditLogAvailable atomic.Bool
 }
 
 func New(token, org string) *Provider {
@@ -43,16 +59,15 @@ func (p *Provider) Name() string { return "github" }
 func (p *Provider) Capabilities() core.Capabilities {
 	return core.Capabilities{
 		CanRemove: true,
-		// Deliberately false even though ListUsers does populate LastActivityAt.
-		//
-		// core reads ReportsActivity as "a nil LastActivityAt means this person
-		// has never been active". The only activity source available to a normal
-		// org token is /orgs/{org}/events, which carries PUBLIC events only,
-		// capped at 300 events over 30 days — so in any real org the majority of
-		// members legitimately have no event, and claiming activity reporting
-		// would flag them all as inactive and bill the "waste" to them.
-		// A timestamp we do set is trustworthy; its absence proves nothing.
-		ReportsActivity: false,
+		// True only once a ListUsers call has actually read the org audit log —
+		// see auditLogAvailable. Until then (or if the org isn't Enterprise, or
+		// the token lacks read:audit_log), this stays false: the only fallback
+		// activity source, /orgs/{org}/events, carries PUBLIC events only, capped
+		// at 300 events over 30 days, so most members legitimately have no event
+		// there and claiming activity reporting off it would flag them all as
+		// inactive. A timestamp we do set is trustworthy; its absence on the
+		// fallback path proves nothing.
+		ReportsActivity: p.auditLogAvailable.Load(),
 	}
 }
 
@@ -87,7 +102,19 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	// Maps login -> corporate email (nameId).
 	samlMap := p.fetchSAMLIdentities(ctx)
 
-	activityMap := p.fetchOrgActivity(ctx)
+	// Audit log first: it is org-wide (private + public) and, unlike the public
+	// events feed, an absent login really does mean no activity. Only fall back
+	// to the public feed — and only report it as such — when the audit log is
+	// unreachable (non-Enterprise org, or token missing read:audit_log).
+	logins := make([]string, 0, len(members))
+	for _, m := range members {
+		logins = append(logins, m.Login)
+	}
+	activityMap, auditOK := p.fetchOrgAuditLog(ctx, logins, time.Now())
+	p.auditLogAvailable.Store(auditOK)
+	if !auditOK {
+		activityMap = p.fetchOrgActivity(ctx)
+	}
 
 	// Resolve an email per member: SAML nameId first, public profile second.
 	//
@@ -263,6 +290,175 @@ func (p *Provider) fetchMemberPage(ctx context.Context, url string) (members []o
 	}
 
 	return members, hasNextPage(resp.Header.Get("Link")), nil
+}
+
+// auditLogLookbackWindow bounds how far back each actor query reaches, via the
+// "created:>=" search qualifier. 90 days exceeds any dormant-seat policy grace
+// period in real use, so nothing older could change a "recently active" verdict.
+const auditLogLookbackWindow = 90 * 24 * time.Hour
+
+// auditLogConcurrency bounds parallel actor queries. One request per member is
+// exact but serial it is slow on a large org; a small pool keeps wall-clock
+// reasonable without provoking the endpoint's own rate limit, which the shared
+// client already backs off from.
+const auditLogConcurrency = 6
+
+type auditLogEntry struct {
+	Actor string `json:"actor"`
+	// Two spellings, both milliseconds since epoch. Web events carry
+	// created_at; Git events — the ones include=all adds — carry only
+	// @timestamp and send created_at as null. Reading created_at alone decoded
+	// those to zero, i.e. 1970, which then read as "last active fifty years
+	// ago" and reported active engineers as idle seats.
+	//
+	// Milliseconds, not seconds: every other timestamp this connector touches
+	// is RFC3339, and parsing these as seconds lands them in the year 58547.
+	CreatedAt int64 `json:"created_at"`
+	Timestamp int64 `json:"@timestamp"`
+}
+
+// occurredAt returns the entry's time, whichever spelling carried it.
+func (e auditLogEntry) occurredAt() (time.Time, bool) {
+	ms := e.CreatedAt
+	if ms <= 0 {
+		ms = e.Timestamp
+	}
+	if ms <= 0 {
+		return time.Time{}, false
+	}
+	return time.UnixMilli(ms).UTC(), true
+}
+
+// fetchOrgAuditLog returns each member's most recent audit-log timestamp by
+// querying the log ONE ACTOR AT A TIME.
+//
+// A single bulk walk looks cheaper and is not. Measured on a live org: ten
+// pages — a thousand entries, the whole budget — spanned five days and
+// contained ten distinct actors, of which six were members; the rest were
+// github-actions[bot], a self-hosted runner bot and a null actor. Six members
+// out of thirty-nine resolved, for ten requests. CI noise scales with the
+// repository count while the page budget does not, so on a larger org the walk
+// converges on resolving nobody at a fixed cost, and every member still needs
+// an individual query afterwards.
+//
+// Asking per actor costs one request each and answers exactly: this member's
+// own most recent event within the window, whatever the bots are doing.
+//
+// ok is false whenever the log could not be read (403/404 from a non-Enterprise
+// org or a token without read:audit_log, any other error status, or a transport
+// failure). A partial read is reported as a failure, not merged: the members
+// never reached would otherwise be indistinguishable from genuinely idle ones.
+func (p *Provider) fetchOrgAuditLog(ctx context.Context, logins []string, now time.Time) (map[string]time.Time, bool) {
+	// No member queried means no request made, and no request made means no
+	// evidence the log is readable at all. Returning ok here would let an org
+	// with an empty member list claim activity coverage it never demonstrated.
+	if len(logins) == 0 {
+		return nil, false
+	}
+
+	since := now.Add(-auditLogLookbackWindow).UTC().Format("2006-01-02")
+
+	var (
+		mu       sync.Mutex
+		activity = make(map[string]time.Time, len(logins))
+		failed   bool
+		wg       sync.WaitGroup
+	)
+	sem := make(chan struct{}, auditLogConcurrency)
+
+	for _, login := range logins {
+		wg.Add(1)
+		go func(login string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			mu.Lock()
+			alreadyFailed := failed
+			mu.Unlock()
+			if alreadyFailed {
+				return
+			}
+
+			// include=all, not the default. The endpoint defaults to
+			// include=web, which omits Git operations entirely — someone who
+			// pushes but opens no pull request and touches no setting would be
+			// invisible, and a nil timestamp from a connector claiming activity
+			// reporting reads downstream as "never active", with money on it.
+			phrase := url.QueryEscape("actor:" + login + " created:>=" + since)
+			u := fmt.Sprintf("%s/orgs/%s/audit-log?phrase=%s&include=all&per_page=1&order=desc",
+				p.baseURL, p.org, phrase)
+
+			entries, _, status, err := p.fetchAuditLogPage(ctx, u)
+			if err != nil || status != http.StatusOK {
+				mu.Lock()
+				failed = true
+				mu.Unlock()
+				return
+			}
+
+			if len(entries) == 0 {
+				// A real answer, with one documented limit: GitHub retains Git
+				// events for 7 days only, so somebody whose sole activity was a
+				// push 30 days ago, with no pull request and no repo or org
+				// action since, reads as idle. Verified against a live org that
+				// every login flagged this way also had zero pull requests and
+				// zero issues over the same window.
+				return
+			}
+
+			t, dated := entries[0].occurredAt()
+			if !dated {
+				// An entry with no usable timestamp is not evidence of idleness;
+				// treating it as one is how this went wrong the first time.
+				return
+			}
+
+			mu.Lock()
+			activity[strings.ToLower(login)] = t
+			mu.Unlock()
+		}(login)
+	}
+	wg.Wait()
+
+	if failed {
+		return nil, false
+	}
+	return activity, true
+}
+
+func (p *Provider) fetchAuditLogPage(ctx context.Context, pageURL string) (entries []auditLogEntry, nextURL string, statusCode int, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	// Raw Do, not DoJSON: a 403/404 here is an expected "not Enterprise" answer,
+	// not an error to surface — the caller distinguishes it by status code.
+	resp, err := p.client.Do(ctx, req)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", resp.StatusCode, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", resp.StatusCode, fmt.Errorf("github: read response: %w", err)
+	}
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return nil, "", resp.StatusCode, fmt.Errorf("github: decode response: %w", err)
+	}
+
+	// Audit-log pagination is cursor-based (after=<opaque>), not page=N like the
+	// members/events endpoints, so the Link header's rel="next" URL must be
+	// followed verbatim rather than reconstructed.
+	return entries, nextPageURL(resp.Header.Get("Link")), resp.StatusCode, nil
 }
 
 // fetchOrgActivity builds a best-effort map of login -> most recent activity from
@@ -468,6 +664,32 @@ func hasNextPage(link string) bool {
 		}
 	}
 	return false
+}
+
+// nextPageURL extracts the rel="next" target from a Link header, or "" if
+// there is none. Unlike hasNextPage's boolean, this is needed verbatim for
+// cursor-paginated endpoints (the audit log) where the next request cannot be
+// reconstructed from a page number.
+func nextPageURL(link string) string {
+	if link == "" {
+		return ""
+	}
+	for _, part := range splitLinks(link) {
+		var target string
+		isNext := false
+		for _, param := range splitLinks2(part) {
+			if param == `rel="next"` {
+				isNext = true
+			}
+			if strings.HasPrefix(param, "<") && strings.HasSuffix(param, ">") {
+				target = strings.TrimSuffix(strings.TrimPrefix(param, "<"), ">")
+			}
+		}
+		if isNext {
+			return target
+		}
+	}
+	return ""
 }
 
 func splitLinks(s string) []string {

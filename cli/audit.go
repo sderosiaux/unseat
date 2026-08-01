@@ -60,6 +60,9 @@ type seatAudit struct {
 	Seats   []core.ClassifiedSeat
 	Summary []core.ClassSummary
 	Failed  map[string]error
+	// Directory is kept so unattributed seats can be matched back against it
+	// by name rather than sent to the operator as a bare list of handles.
+	Directory []core.User
 }
 
 // classifySeats fetches live provider state and the directory, then classifies
@@ -116,7 +119,7 @@ func classifySeats(ctx context.Context, cfg *config.Config) (*seatAudit, error) 
 
 	aliasIndex := core.BuildAliasIndex(cfg.Aliases, knownEmails)
 
-	audit := &seatAudit{Failed: make(map[string]error)}
+	audit := &seatAudit{Failed: make(map[string]error), Directory: directoryUsers}
 
 	for _, name := range sortedProviderNames(cfg) {
 		if auditProvider != "" && name != auditProvider {
@@ -225,7 +228,7 @@ func runAuditSeats(cmd *cobra.Command, _ []string) error {
 	fmt.Println("external   = outside the corporate domain — needs a human decision")
 	fmt.Println("unresolved = username with no email and no alias — add an alias to judge it")
 
-	reportUnresolved(audit.Seats)
+	reportUnresolved(audit.Seats, audit.Directory)
 	reportFailures(audit.Failed)
 	return nil
 }
@@ -236,7 +239,7 @@ func runAuditSeats(cmd *cobra.Command, _ []string) error {
 // billed, it grants access, and nothing here can say whose it is. Leaving that
 // as one number in a summary column lets the report read as complete when it
 // is not, so the identifiers are listed with a ready-to-paste alias block.
-func reportUnresolved(seats []core.ClassifiedSeat) {
+func reportUnresolved(seats []core.ClassifiedSeat, directory []core.User) {
 	byProvider := map[string][]string{}
 	for _, s := range seats {
 		if s.Class == core.SeatUnresolved {
@@ -268,17 +271,49 @@ func reportUnresolved(seats []core.ClassifiedSeat) {
 		}
 	}
 
-	fmt.Println("\n  Two ways to close this:")
-	fmt.Println("    1. Enable SSO on the provider so it reports corporate identities itself.")
-	fmt.Println("    2. Declare aliases in your config:")
-	fmt.Println("\n  aliases:")
-	fmt.Println("    someone@yourdomain.com:")
-	for _, p := range providers {
-		for _, id := range byProvider[p] {
-			fmt.Printf("      - %s\n", id)
-			break
+	var unresolved []core.ClassifiedSeat
+	for _, s := range seats {
+		if s.Class == core.SeatUnresolved {
+			unresolved = append(unresolved, s)
 		}
-		break
+	}
+	rep := core.AttributeUnresolved(unresolved, directory)
+
+	if len(rep.Matched) > 0 {
+		fmt.Printf("\n  %d match a directory identity by name. Review, then paste into your config:\n\n", len(rep.Matched))
+		fmt.Println("  aliases:")
+		for i := 0; i < len(rep.Matched); {
+			email := rep.Matched[i].Email
+			fmt.Printf("    %s:\n", email)
+			for ; i < len(rep.Matched) && rep.Matched[i].Email == email; i++ {
+				fmt.Printf("      - %-24s # %s (%s)\n",
+					rep.Matched[i].Identifier, rep.Matched[i].DisplayName, rep.Matched[i].Provider)
+			}
+		}
+		fmt.Println("\n  Proposals, not conclusions — attribution decides whose access gets revoked.")
+	}
+
+	// The most interesting bucket: a real person's name that matches nobody in
+	// the directory. Usually someone who left while keeping the seat — but a
+	// name can simply be spelled differently, so it is surfaced for a human
+	// rather than folded into the orphan count.
+	if len(rep.NamedButUnknown) > 0 {
+		fmt.Printf("\n  %d carry a name that matches NOBODY in the directory:\n", len(rep.NamedButUnknown))
+		for _, s := range rep.NamedButUnknown {
+			fmt.Printf("    %-24s %-28s (%s)\n", s.RawEmail, s.User.DisplayName, s.Provider)
+		}
+		fmt.Println("\n  Most likely people who left and kept the seat. Confirm each one: an alias if the")
+		fmt.Println("  name is merely spelled differently, otherwise a departure nobody finished.")
+	}
+
+	if len(rep.Anonymous) > 0 {
+		fmt.Printf("\n  %d expose no name at all — only a handle, so nothing can be inferred:\n", len(rep.Anonymous))
+		var ids []string
+		for _, s := range rep.Anonymous {
+			ids = append(ids, s.RawEmail)
+		}
+		fmt.Printf("    %s\n", strings.Join(ids, ", "))
+		fmt.Println("\n  Only SSO closes these: the provider itself has to report a corporate identity.")
 	}
 }
 

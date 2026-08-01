@@ -96,30 +96,44 @@ Adding a provider = implement the `Provider` interface + register in factory.
 
 ## Quick Start
 
+Start read-only. No YAML, no Google Workspace connection, nothing written to any provider.
+
 ```bash
-# Build
 make build
 
-# Configure (copy and edit)
-cp unseat.example.yaml unseat.yaml
+# Connect a provider (OAuth2 browser flow, or an API key prompt)
+unseat providers add linear slack
 
-# Connect providers (opens browser for OAuth2, prompts for API keys)
-unseat providers add linear slack anthropic
-unseat providers add figma --client-id $FIGMA_CLIENT_ID --client-secret $FIGMA_CLIENT_SECRET
-
-# See what you have
-unseat providers list
-unseat providers users linear
-
-# Preview what would happen
-unseat sync dry-run
-
-# Run reconciliation
-unseat sync run --yes
-
-# Or run as daemon
-unseat sync watch --interval 5m
+# What is wrong with your seats, right now
+unseat scan
 ```
+
+`scan` reports deactivated-but-billed accounts, identities outside your domain,
+privileged-account sprawl, and — for providers whose API exposes it — unused
+seats. Add `cost_per_seat` to your config and the same report comes back in
+euros.
+
+Reconciliation is the second step, once the read-only picture is worth acting on:
+
+```bash
+cp unseat.example.yaml unseat.yaml   # map Google Groups to providers
+
+unseat audit seats                   # classify every seat against the directory
+unseat sync plan                     # what reconciliation would change
+unseat sync apply                    # execute, after showing the plan and confirming
+unseat sync watch --interval 5m      # daemon
+```
+
+### Credentials
+
+Three sources, in order of precedence:
+
+1. `api_key` written in `unseat.yaml`
+2. `${ENV_VAR}` references in that file, expanded from the environment and from `.env`
+3. the credential store filled by `unseat providers add`, at `~/.config/unseat/credentials.json`
+
+An undefined `${VAR}` is a hard error — a literal `${LINEAR_API_KEY}` sent as a
+bearer token only ever surfaces as an unexplained 401.
 
 ## Configuration
 
@@ -190,25 +204,53 @@ flowchart TD
 
 ```
 unseat
+├── scan                     Read-only seat audit — no directory, no mappings needed
 ├── audit
-│   ├── orphans              List seats with no matching GWS user
-│   └── drift                Diff desired vs actual
+│   ├── seats                Classify every seat: managed / unmapped / orphan / external
+│   ├── orphans              Seats with no active directory identity
+│   ├── inactive [--days]    Unused seats, on providers that expose activity
+│   └── drift                Desired vs actual, without applying anything
 ├── sync
-│   ├── dry-run              Preview actions without executing
-│   ├── run [--yes]          One-shot reconciliation
+│   ├── plan                 Show what would change — never mutates
+│   ├── apply [--yes]        Execute, after showing the plan and confirming
 │   └── watch [--interval]   Daemon mode
 ├── providers
-│   ├── list                 Configured providers + sync status
+│   ├── list                 Configured providers, credential and mapping status
 │   ├── users <name>         Cached users for a provider
+│   ├── test <name...>       Verify connectivity against the real API
 │   ├── add <name...>        OAuth2 browser flow or API key
 │   └── supported            All known providers
 ├── history
 │   └── events [--limit]     Event timeline
-├── serve [--port]           REST API server
+├── serve [--port] [--host]  REST API + dashboard (loopback by default, no auth)
 └── mcp                      MCP server (stdio) for LLM agents
 ```
 
-All commands support `--json` for machine consumption. Exit codes: 0=ok, 1=error, 2=drift detected.
+All commands support `--json`. Global flags: `--config`, `--db`, `--env-file`.
+
+## What Gets Removed, and What Does Not
+
+Group mappings declare who *should* have access. They do not decide removal.
+Removal follows the directory, because "absent from a mapped group" and "no
+longer employed" are different facts with very different consequences.
+
+| Class | Meaning | Action |
+|---|---|---|
+| `managed` | active employee, in a mapped group | none |
+| `unmapped` | active employee, no mapped group grants this provider | **reported, never removed** — fix the mapping |
+| `orphan` | absent from the directory, or suspended in it | reclaimable |
+| `external` | identity outside the corporate domain | reported, human decision |
+| `unresolved` | provider username with no email and no alias | reported, add an alias |
+
+Only `orphan` is ever removed automatically. An employee your mappings do not
+yet cover is never touched, however incomplete the config is — that property is
+what makes it safe to turn `dry_run` off.
+
+`sync plan` never mutates anything. `sync apply` shows the plan, asks for
+confirmation, and refuses outright while `policies.dry_run` is true.
+With a grace period configured, a departed identity's countdown starts at first
+detection, is not reset by later syncs, and is cancelled if the identity
+becomes active again.
 
 ## REST API
 

@@ -9,10 +9,42 @@ unseat — Identity Lifecycle Management tool. Go binary that cross-references G
 Kubernetes-style reconciliation loop:
 1. **Desired state**: Google Workspace groups → YAML mappings → which users should have access to which SaaS
 2. **Actual state**: Each provider's `ListUsers()` API call
-3. **Diff**: `core.Reconcile()` computes to_add / to_remove
-4. **Execute**: Provider `AddUser()` / `RemoveUser()` with grace period, exceptions, notifications
+3. **Directory state**: `identity.ListUsers()` — every corporate identity and whether it is suspended
+4. **Classify**: `core.ClassifySeats()` labels each seat managed / unmapped / orphan / external / unresolved
+5. **Diff**: `core.Reconcile()` turns that into to_add / to_remove / to_review
+6. **Execute**: Provider `AddUser()` / `RemoveUser()` with grace period, exceptions, notifications
 
 4 interfaces: CLI (cobra), REST API (chi), MCP server (stdio), Sync Engine (cron daemon).
+
+### Removal Is Driven By The Directory, Not By Mappings
+
+This is the load-bearing invariant. `ToRemove` contains **only** seats whose
+identity is absent from or suspended in the directory. An active employee who
+is not in any mapped group is `SeatUnmapped` and goes to `ToReview` — never to
+`ToRemove`, however incomplete the mappings are.
+
+Breaking this turns an incomplete config into a mass-deprovisioning event. It is
+covered by `TestReconcileNeverRemovesActiveEmployee` and
+`TestReconcilerNeverRemovesActiveEmployee`; if you change classification, verify
+both still fail when `SeatUnmapped` is routed to `ToRemove`.
+
+With no directory available, nothing is removable and every seat falls to
+`ToReview`. Degrade toward reporting, never toward deleting.
+
+### Activity Data Is Opt-In Per Provider
+
+`core.Capabilities.ReportsActivity` declares that `ListUsers` populates
+`LastActivityAt` from a genuine usage signal. Only ~12 of 53 providers can.
+
+For a provider with the flag, a nil `LastActivityAt` means "never seen active"
+— the strongest inactivity signal. For every other provider it means "unknown".
+Conflating them made every user of every uninstrumented provider look inactive.
+`store.GetInactiveUsers` therefore takes an explicit provider list, and callers
+must surface the non-reporting providers separately.
+
+Do not set the flag off a field that merely looks temporal: `box` fills
+`LastActivityAt` from `modified_at` (an admin edit) and is deliberately flagged
+`false`. The rule is: does this timestamp move when the *person* uses the tool?
 
 ## Key Patterns
 
@@ -75,11 +107,34 @@ Uses functional options: `NewReconciler(store, cfg, reg, identity, WithNotifier(
 
 YAML at `unseat.yaml`. Key sections:
 - `identity_source` — Google Directory connection
-- `providers` — map of provider name → `{api_key, base_url, extra}`
+- `providers` — map of provider name → `{api_key, base_url, extra, cost_per_seat}`
+- `currency` — labels every `cost_per_seat`; no conversion is performed
 - `mappings` — Google Group → provider+role assignments
 - `policies` — grace_period, dry_run, notify_on_remove, exceptions
 
 `config.GroupsForProvider(name)` and `config.IsException(email, provider)` are the main query methods.
+
+`${VAR}` references are expanded from the environment (and from `.env`) by
+`config.Load`. An undefined variable is a hard error — passing the literal
+through produced unexplained 401s.
+
+**Never call `config.Load` from a CLI command.** Use `cli.loadConfig()`: it also
+loads `.env` and merges the credential store from `providers add`. Skipping it is
+how stored credentials ended up written but never read. Likewise use
+`cli.openStore()` rather than hardcoding the database path.
+
+The config file is optional at the default path: `scan` and `providers` must
+work from stored credentials alone, before any YAML exists. An explicitly passed
+`--config` that is missing is still an error.
+
+### Commands
+
+`sync plan` never mutates. `sync apply` shows the plan, confirms, then executes.
+`policies.dry_run` is a lock that makes `apply` refuse — not a mode that makes it
+silently no-op, which is what the old `sync run` did.
+
+`scan` is the read-only entry point: provider API keys only, no identity source,
+no mappings, no writes. It is what a new user should run first.
 
 ## File Layout
 

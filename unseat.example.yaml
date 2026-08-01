@@ -1,29 +1,55 @@
 # unseat.example.yaml
+#
+# You do not need this file to get started. `unseat providers add <name>`
+# followed by `unseat scan` works with API keys alone — no YAML, no Google
+# Workspace connection. Write this file when you want reconciliation.
+#
+# ${VAR} references are expanded from the environment (and from .env) when the
+# config is read. An undefined variable is a hard error rather than a literal
+# token sent to the provider.
+
 identity_source:
   provider: google-directory
   domain: mycompany.com
   credentials_file: ./credentials.json
+  # Domain-wide delegation impersonates this admin.
+  admin_email: admin@mycompany.com
+
+# cost_per_seat turns seat counts into money. Leave it out and unseat still
+# reports counts, just never euros. All amounts must share one currency —
+# unseat does no conversion.
+currency: EUR
 
 providers:
   linear:
     api_key: "${LINEAR_API_KEY}"
+    cost_per_seat: 8
   figma:
     api_key: "${FIGMA_SCIM_TOKEN}"
+    cost_per_seat: 12
     extra:
       tenant_id: "${FIGMA_TENANT_ID}"
   hubspot:
     api_key: "${HUBSPOT_ACCESS_TOKEN}"
+    cost_per_seat: 90
   miro:
     api_key: "${MIRO_ACCESS_TOKEN}"
+    cost_per_seat: 8
     extra:
       org_id: "${MIRO_ORG_ID}"
   slack:
     api_key: "${SLACK_SCIM_TOKEN}"
+    cost_per_seat: 7
   anthropic:
     api_key: "${ANTHROPIC_ADMIN_KEY}"
   claude-code:
     api_key: "${ANTHROPIC_ADMIN_KEY}"
 
+# Mappings declare who SHOULD have access. They drive provisioning and the
+# managed/unmapped split — they do not drive removal. Removal follows the
+# directory: only an identity that is gone or suspended in Google Workspace
+# ever gets its seat reclaimed. An employee missing from these mappings is
+# reported for review, never removed.
 mappings:
   - group: design-team@mycompany.com
     providers:
@@ -58,7 +84,8 @@ mappings:
 # Aliases map provider usernames/personal emails to corporate emails.
 # Implicit aliases are automatic: the local part of each identity email
 # (e.g. "jsmith" from "jsmith@mycompany.com") is matched automatically.
-# Only declare explicit aliases for non-obvious mappings.
+# Declare explicit aliases for the rest — an unresolved username cannot be
+# classified, so it is reported for review instead of acted on.
 aliases:
   jsmith@mycompany.com:
     - jsmith-personal@gmail.com
@@ -67,12 +94,26 @@ aliases:
     - mariadev
 
 policies:
+  # How long a departed identity keeps its seat before it is reclaimed.
+  # The countdown starts at first detection and is NOT reset by later syncs.
+  # If the identity becomes active again, the countdown is cancelled.
   grace_period: 72h
+
+  # A safety lock, not a mode selector. While true, `sync apply` refuses to
+  # run rather than silently doing nothing. `sync plan` never mutates anything
+  # regardless of this setting.
   dry_run: true
+
   notify_on_remove: true
   notify_channels:
     - slack:#it-ops
     - email:admin@mycompany.com
+
+  # Excepted seats are never removed and never re-reported for review.
   exceptions:
     - email: cto@mycompany.com
       providers: ["*"]
+    # Service accounts have no directory identity, so declare them here or
+    # they show up as unresolved on every run.
+    - email: ci-bot
+      providers: ["github"]

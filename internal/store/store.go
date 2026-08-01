@@ -18,9 +18,10 @@ type Store interface {
 	GetPendingRemovals(ctx context.Context, provider string) ([]PendingRemoval, error)
 	CancelPendingRemoval(ctx context.Context, provider, email string) error
 	GetExpiredRemovals(ctx context.Context, provider string) ([]PendingRemoval, error)
-	UpdateSyncState(ctx context.Context, provider string, userCount int) error
+	UpdateSyncState(ctx context.Context, provider string, userCount int, reportsActivity bool) error
 	GetSyncState(ctx context.Context, provider string) (*SyncState, error)
 	ListSyncStates(ctx context.Context) ([]SyncState, error)
+	ActivityReportingProviders(ctx context.Context) (reporting, silent []string, err error)
 	Close() error
 }
 

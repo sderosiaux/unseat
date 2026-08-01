@@ -229,8 +229,35 @@ func runAuditSeats(cmd *cobra.Command, _ []string) error {
 	fmt.Println("unresolved = username with no email and no alias — add an alias to judge it")
 
 	reportUnresolved(audit.Seats, audit.Directory, cfg.CorporateDomain())
+	reportGhosts(audit.Seats, audit.Directory)
 	reportFailures(audit.Failed)
 	return nil
+}
+
+// reportGhosts states which SeatExternal seats are not actually external:
+// they belong to a current employee, just under an identity the directory
+// does not control. Deactivating the Workspace account will not touch them —
+// that is exactly why they need to be called out by name rather than folded
+// into the ordinary external count.
+func reportGhosts(seats []core.ClassifiedSeat, directory []core.User) {
+	ghosts := core.FindGhostIdentities(seats, directory)
+	if len(ghosts) == 0 {
+		return
+	}
+
+	fmt.Printf("\nPOSSIBLE GHOST IDENTITIES: %d SEAT(S) TO CHECK\n", len(ghosts))
+	fmt.Println("  Each LOOKS LIKE an active employee reaching this provider under an address or")
+	fmt.Println("  handle outside the directory. Suspending their Workspace account will NOT revoke")
+	fmt.Println("  this seat — it has to be removed at the provider directly.")
+	fmt.Println()
+	for _, g := range ghosts {
+		fmt.Printf("  %-12s %-32s looks like %-28s (%s)\n", g.Provider, g.Identifier, g.Email, g.Basis)
+	}
+	// The same fuzzy matcher backs the alias proposals sixty lines below, which
+	// are labelled proposals. Identical evidence must not be stated with two
+	// different confidences in one report — and here a wrong match accuses the
+	// wrong colleague inside the section about access nobody revoked.
+	fmt.Println("\n  Matched by name, so confirm each one before acting.")
 }
 
 // reportUnresolved states what the audit could NOT judge.
@@ -389,30 +416,31 @@ func runAuditOrphans(cmd *cobra.Command, _ []string) error {
 }
 
 func runAuditInactive(cmd *cobra.Command, _ []string) error {
-	cfg, err := loadConfig()
+	// No config needed: what can report activity is read from what was
+	// observed, not from a provider reconstructed from config.
+	db, err := openStore()
 	if err != nil {
 		return err
 	}
+	defer db.Close()
 
-	reporting, err := provider.ActivityReportingProviders(cfg)
+	// Read from what was observed, not recomputed. A provider constructed here
+	// has made no request, and GitHub only learns whether it can report activity
+	// by calling the org audit log — so recomputing made `scan` and this command
+	// contradict each other about the same provider in the same session.
+	reporting, silent, err := db.ActivityReportingProviders(cmd.Context())
 	if err != nil {
 		return err
 	}
-	silent, err := provider.NonActivityReportingProviders(cfg)
-	if err != nil {
-		return err
+	if len(reporting) == 0 && len(silent) == 0 {
+		fmt.Println("Nothing has been scanned yet — run `unseat scan` first, it is read-only.")
+		return nil
 	}
 
 	if auditProvider != "" {
 		reporting = filterTo(reporting, auditProvider)
 		silent = filterTo(silent, auditProvider)
 	}
-
-	db, err := openStore()
-	if err != nil {
-		return err
-	}
-	defer db.Close()
 
 	since := time.Now().AddDate(0, 0, -inactiveDays)
 	users, err := db.GetInactiveUsers(cmd.Context(), since, reporting)

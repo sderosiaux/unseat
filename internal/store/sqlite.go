@@ -132,8 +132,14 @@ func (s *SQLite) GetInactiveUsers(ctx context.Context, since time.Time, provider
 	}
 	args = append(args, since.UTC())
 
+	// Deactivated seats are excluded. They are trivially unused, so counting
+	// them as inactivity double-reports the same seat — once here and once as
+	// a suspended account — and buries the live, billed, idle seats that are
+	// the only actionable ones. core.Scan makes the same exclusion for the
+	// same reason.
 	query := `SELECT provider, email, display_name, last_activity_at, status FROM provider_users
 		 WHERE provider IN (` + strings.Join(placeholders, ",") + `)
+		   AND status <> 'suspended'
 		   AND (last_activity_at IS NULL OR last_activity_at < ?)
 		 ORDER BY last_activity_at ASC, provider, email`
 
@@ -279,12 +285,49 @@ func (s *SQLite) GetExpiredRemovals(ctx context.Context, provider string) ([]Pen
 
 // --- Sync State ---
 
-func (s *SQLite) UpdateSyncState(ctx context.Context, provider string, userCount int) error {
+// UpdateSyncState records what was read and whether the provider that produced
+// it reports activity.
+//
+// The capability is stored, not recomputed. GitHub only learns it by calling
+// the org audit log, so a freshly constructed provider answers false — which
+// made `scan` and `audit inactive` contradict each other about the same
+// provider in the same session.
+func (s *SQLite) UpdateSyncState(ctx context.Context, provider string, userCount int, reportsActivity bool) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sync_state (provider, last_synced_at, user_count, status) VALUES (?, ?, ?, 'ok')
-		 ON CONFLICT(provider) DO UPDATE SET last_synced_at = excluded.last_synced_at, user_count = excluded.user_count, status = excluded.status`,
-		provider, time.Now().UTC(), userCount)
+		`INSERT INTO sync_state (provider, last_synced_at, user_count, status, reports_activity)
+		 VALUES (?, ?, ?, 'ok', ?)
+		 ON CONFLICT(provider) DO UPDATE SET last_synced_at = excluded.last_synced_at,
+		   user_count = excluded.user_count, status = excluded.status,
+		   reports_activity = excluded.reports_activity`,
+		provider, time.Now().UTC(), userCount, reportsActivity)
 	return err
+}
+
+// ActivityReportingProviders returns the providers whose last read demonstrably
+// reported activity, split from those that did not.
+//
+// Answered from what was actually observed rather than from a capability
+// recomputed on a provider that has made no request.
+func (s *SQLite) ActivityReportingProviders(ctx context.Context) (reporting, silent []string, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT provider, reports_activity FROM sync_state ORDER BY provider`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var name string
+		var reports bool
+		if err := rows.Scan(&name, &reports); err != nil {
+			return nil, nil, err
+		}
+		if reports {
+			reporting = append(reporting, name)
+		} else {
+			silent = append(silent, name)
+		}
+	}
+	return reporting, silent, rows.Err()
 }
 
 func (s *SQLite) GetSyncState(ctx context.Context, provider string) (*SyncState, error) {

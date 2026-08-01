@@ -217,7 +217,7 @@ func TestSyncState(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	require.NoError(t, s.UpdateSyncState(ctx, "linear", 42))
+	require.NoError(t, s.UpdateSyncState(ctx, "linear", 42, true))
 
 	state, err := s.GetSyncState(ctx, "linear")
 	require.NoError(t, err)
@@ -227,4 +227,29 @@ func TestSyncState(t *testing.T) {
 	states, err := s.ListSyncStates(ctx)
 	require.NoError(t, err)
 	assert.Len(t, states, 1)
+}
+
+// A deactivated seat is trivially unused. Reporting it as inactivity
+// double-counts the same seat and buries the live, billed, idle ones that are
+// the only actionable result.
+func TestGetInactiveUsersExcludesSuspended(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	old := time.Now().AddDate(0, 0, -200).UTC().Truncate(time.Second)
+	require.NoError(t, s.UpsertProviderUsers(ctx, "linear", []core.User{
+		{Email: "idle@co.com", Status: core.StatusActive, LastActivityAt: &old},
+		{Email: "gone@co.com", Status: core.StatusSuspended, LastActivityAt: &old},
+		{Email: "never@co.com", Status: core.StatusActive},
+	}))
+
+	inactive, err := s.GetInactiveUsers(ctx, time.Now().AddDate(0, 0, -60), []string{"linear"})
+	require.NoError(t, err)
+
+	emails := make([]string, len(inactive))
+	for i, u := range inactive {
+		emails[i] = u.Email
+	}
+	assert.ElementsMatch(t, []string{"never@co.com", "idle@co.com"}, emails)
+	assert.NotContains(t, emails, "gone@co.com")
 }

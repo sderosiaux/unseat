@@ -43,7 +43,11 @@ type scanResult struct {
 	// users is retained so seats can be correlated across providers, which is
 	// the one question no single provider can answer.
 	users []core.User
-	err   error
+	// reportsActivity is the capability AS OBSERVED on the live provider. It
+	// cannot be recomputed later: GitHub only learns it by calling the audit
+	// log, so a freshly constructed provider answers false.
+	reportsActivity bool
+	err             error
 }
 
 func runScan(cmd *cobra.Command, _ []string) error {
@@ -95,8 +99,48 @@ func runScan(cmd *cobra.Command, _ []string) error {
 		})
 	}
 
+	cacheScan(cmd.Context(), targets, results)
 	printScanReport(cfg, targets, results)
 	return nil
+}
+
+// cacheScan stores the seat inventory scan just read.
+//
+// Nothing else populated it. provider_users was only ever written by the
+// reconciler, so on a read-only, audit-only deployment the table stays empty —
+// and every store-backed view (audit inactive, the MCP tools, the REST API and
+// the dashboard) answered "nothing found" from an empty cache. A tool that
+// reports a clean result it never computed is the failure mode this codebase
+// exists to avoid.
+//
+// This writes to the LOCAL SQLite file only. No provider is touched.
+//
+// It is best-effort by design: scan's value is that it needs no state, and an
+// unwritable cache must degrade the stale views, never the scan itself.
+func cacheScan(ctx context.Context, targets []string, results map[string]scanResult) {
+	db, err := openStore()
+	if err != nil {
+		slog.Debug("scan cache unavailable", "error", err)
+		return
+	}
+	defer db.Close()
+
+	for _, name := range targets {
+		r := results[name]
+		// A provider that failed keeps whatever was cached before rather than
+		// being wiped: UpsertProviderUsers deletes before inserting, so caching
+		// an empty result would turn a fetch error into a confident "no seats".
+		if r.err != nil || len(r.users) == 0 {
+			continue
+		}
+		if err := db.UpsertProviderUsers(ctx, name, r.users); err != nil {
+			slog.Debug("cache provider users failed", "provider", name, "error", err)
+			continue
+		}
+		if err := db.UpdateSyncState(ctx, name, len(r.users), r.reportsActivity); err != nil {
+			slog.Debug("update sync state failed", "provider", name, "error", err)
+		}
+	}
 }
 
 // scanAll queries every target provider concurrently. Providers are independent
@@ -155,7 +199,7 @@ func scanAll(ctx context.Context, cfg *config.Config, reg *provider.Registry, ta
 				}
 			}
 
-			set(scanResult{users: users, scan: core.Scan(core.ScanInput{
+			set(scanResult{users: users, reportsActivity: caps.ReportsActivity, scan: core.Scan(core.ScanInput{
 				Provider:          name,
 				Users:             users,
 				Domain:            domain,

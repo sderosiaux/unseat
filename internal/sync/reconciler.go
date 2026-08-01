@@ -127,7 +127,7 @@ func (r *Reconciler) reconcileProvider(ctx context.Context, name string, aliasIn
 	if err := r.store.UpsertProviderUsers(ctx, name, actualUsers); err != nil {
 		slog.Error("failed to cache users", "provider", name, "error", err)
 	}
-	r.store.UpdateSyncState(ctx, name, len(actualUsers))
+	r.store.UpdateSyncState(ctx, name, len(actualUsers), p.Capabilities().ReportsActivity)
 
 	// Build group mappings for this provider.
 	groupMappings := r.config.GroupsForProvider(name)

@@ -26,6 +26,14 @@ func TestProviderCapabilities(t *testing.T) {
 	assert.False(t, caps.CanAdd)
 	assert.False(t, caps.CanSuspend)
 	assert.False(t, caps.CanSetRole)
+	// The actual shipped defect was this flag claiming true while
+	// LastActivityAt was never populated: scan.go treats a nil
+	// LastActivityAt as "never active" only when ReportsActivity is true, so
+	// the wrong flag — not the dead struct field — is what flagged an entire
+	// portal as inactive. A reintroduced lastActiveTime field that the API
+	// never sends leaves LastActivityAt nil regardless, so only this
+	// assertion, not one on LastActivityAt, catches the regression.
+	assert.False(t, caps.ReportsActivity)
 }
 
 func TestListUsers(t *testing.T) {
@@ -248,12 +256,23 @@ func TestListUsersRequiresOwnersScope(t *testing.T) {
 
 // TestListUsersGoldenShape replays the real /settings/v3/users/ and
 // /crm/v3/owners response shapes (internal/provider/golden) instead of a
-// mock built from hubspotUser/owner. This is the test that would have caught
-// the shipped defect: a struct field (lastActiveTime) that our code parsed
-// but the live API never actually sent.
+// mock built from hubspotUser/owner. It documents that the real payload
+// carries no activity field and guards against the golden fixture itself
+// drifting to include one that was never verified against a live portal.
+//
+// It does NOT catch the shipped defect (a lastActiveTime field our code
+// parsed but the API never sent): with that field reintroduced, unmarshalling
+// this fixture still leaves LastActivityAt nil, so the assertions below would
+// stay green either way. TestProviderCapabilities' ReportsActivity assertion
+// is what actually catches that regression, because the real damage was the
+// capability flag claiming activity data existed, not the dead field itself.
 func TestListUsersGoldenShape(t *testing.T) {
 	usersBody := golden.Load(t, "hubspot-users.json")
 	ownersBody := golden.Load(t, "hubspot-archived-owners.json")
+	// Fixture-drift guard: if this ever starts containing lastActiveTime, the
+	// fixture stopped reflecting the live portal and needs re-verifying
+	// against vendor docs before anything below can be trusted.
+	assert.NotContains(t, string(usersBody), "lastActiveTime")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasPrefix(r.URL.Path, "/crm/v3/owners") {
@@ -274,7 +293,6 @@ func TestListUsersGoldenShape(t *testing.T) {
 	assert.Equal(t, "member", users[0].Role)
 	assert.Equal(t, core.StatusActive, users[0].Status)
 	assert.Equal(t, "core", users[0].Metadata["seat"])
-	assert.Nil(t, users[0].LastActivityAt, "the real payload carries no activity field at all")
 
 	assert.Equal(t, "Bob Brown", users[1].DisplayName)
 	assert.Equal(t, "sales-enterprise", users[1].Metadata["seat"])
@@ -286,4 +304,8 @@ func TestListUsersGoldenShape(t *testing.T) {
 
 	assert.Equal(t, "super_admin", users[3].Role)
 	assert.Equal(t, core.StatusActive, users[3].Status)
+
+	for _, u := range users {
+		assert.Nil(t, u.LastActivityAt, "the real payload carries no activity field at all")
+	}
 }

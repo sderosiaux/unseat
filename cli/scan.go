@@ -146,6 +146,7 @@ func scanAll(ctx context.Context, cfg *config.Config, reg *provider.Registry, ta
 				SuspendedBilling:  billing,
 				InactiveThreshold: threshold,
 				CostPerSeat:       cfg.Providers[name].CostPerSeat,
+				MonthlySpend:      cfg.Providers[name].MonthlySpend,
 				Now:               now,
 			})})
 		}(name)
@@ -179,11 +180,19 @@ func printScanReport(cfg *config.Config, targets []string, results map[string]sc
 			unpriced = append(unpriced, name)
 		}
 
+		// The rate is always shown, and marked when it was derived, so it can
+		// be checked against the invoice it came from.
+		perSeat := money(s.CostPerSeat, s.CostPerSeat)
+		if s.RateDerived {
+			perSeat += "*"
+		}
+
 		rows = append(rows, []string{
 			name,
 			fmt.Sprintf("%d", s.Active),
 			fmt.Sprintf("%d", s.Suspended),
 			fmt.Sprintf("%d", s.Admins),
+			perSeat,
 			money(s.MonthlyCost, s.CostPerSeat),
 			money(s.MonthlyWaste, s.CostPerSeat),
 			money(s.SuspendedExposure, s.CostPerSeat),
@@ -191,7 +200,10 @@ func printScanReport(cfg *config.Config, targets []string, results map[string]sc
 	}
 
 	if len(rows) > 0 {
-		printTable([]string{"PROVIDER", "ACTIVE", "SUSPENDED", "ADMINS", "MONTHLY COST", "WASTED", "SUSPENDED €"}, rows)
+		printTable([]string{"PROVIDER", "ACTIVE", "SUSPENDED", "ADMINS", "PER SEAT", "MONTHLY COST", "WASTED", "SUSPENDED €"}, rows)
+		if derivedAny(targets, results) {
+			fmt.Println("\n* rate derived from monthly_spend / active seats — check it against your invoice")
+		}
 	}
 
 	for _, name := range targets {
@@ -249,6 +261,15 @@ func printScanReport(cfg *config.Config, targets []string, results map[string]sc
 			fmt.Println(f)
 		}
 	}
+}
+
+func derivedAny(targets []string, results map[string]scanResult) bool {
+	for _, name := range targets {
+		if r := results[name]; r.err == nil && r.scan.RateDerived {
+			return true
+		}
+	}
+	return false
 }
 
 // money renders an amount, or a dash when the provider has no configured price

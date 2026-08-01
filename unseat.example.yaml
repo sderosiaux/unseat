@@ -15,15 +15,23 @@ identity_source:
   # Domain-wide delegation impersonates this admin.
   admin_email: admin@mycompany.com
 
-# cost_per_seat turns seat counts into money. Leave it out and unseat still
-# reports counts, just never euros. All amounts must share one currency —
-# unseat does no conversion.
+# Pricing turns seat counts into money. Two ways to state it, per provider:
+#
+#   monthly_spend  what the invoice says. unseat divides it by ACTIVE seats to
+#                  get the effective rate, so negotiated discounts are included
+#                  and the rate stays correct as headcount moves. Prefer this:
+#                  public list prices are wrong for anyone on a negotiated or
+#                  Enterprise contract.
+#   cost_per_seat  the unit price, when you already know it. Wins if both are set.
+#
+# Leave both out and unseat still reports counts, just never euros. All amounts
+# must share one currency — unseat does no conversion.
 currency: EUR
 
 providers:
   linear:
     api_key: "${LINEAR_API_KEY}"
-    cost_per_seat: 8
+    monthly_spend: 592
     # Whether deactivated seats keep being charged. Each connector already
     # declares what its vendor does; set this only when your contract differs.
     # Linear releases suspended seats at the next cycle, so they cost nothing

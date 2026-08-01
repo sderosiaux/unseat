@@ -67,6 +67,9 @@ type ScanInput struct {
 	InactiveThreshold time.Duration
 	// CostPerSeat is the monthly price of a seat; zero leaves money unreported.
 	CostPerSeat float64
+	// MonthlySpend is the real invoice total for this provider. When
+	// CostPerSeat is unset, the rate is derived from it.
+	MonthlySpend float64
 	// SuspendedBilling mirrors Capabilities.SuspendedBilling, optionally
 	// overridden per provider in config for a non-standard contract.
 	SuspendedBilling SuspendedBilling
@@ -97,6 +100,10 @@ type ProviderScan struct {
 	// bill until deletion — so counting them here would overstate spend for
 	// half the connectors.
 	MonthlyCost float64 `json:"monthly_cost"`
+	// RateDerived reports that CostPerSeat was computed from MonthlySpend
+	// rather than stated. The rate is always shown so it can be checked
+	// against the invoice it came from.
+	RateDerived bool `json:"rate_derived"`
 	// MonthlyWaste is spend that is certainly wasted: active, billed seats
 	// with no recorded usage.
 	MonthlyWaste float64 `json:"monthly_waste"`
@@ -134,9 +141,8 @@ func Scan(in ScanInput) ProviderScan {
 	domain := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(in.Domain), "@"))
 
 	scan := ProviderScan{
-		Provider:    in.Provider,
-		Total:       len(in.Users),
-		CostPerSeat: in.CostPerSeat,
+		Provider: in.Provider,
+		Total:    len(in.Users),
 	}
 
 	var suspended, external, admins, inactive []string
@@ -176,16 +182,31 @@ func Scan(in ScanInput) ProviderScan {
 		}
 	}
 
-	scan.MonthlyCost = float64(scan.Active) * in.CostPerSeat
+	// Resolve the rate. A stated price wins; otherwise it is derived from the
+	// invoice total divided by ACTIVE seats.
+	//
+	// Active is the right denominator because it is well defined whatever the
+	// vendor bills: it answers "what does one person with access cost me",
+	// which is the question every downstream number depends on. Dividing by
+	// total seats would quietly deflate the rate on a tenant like Linear,
+	// where 131 of 168 seats are deactivated.
+	rate := in.CostPerSeat
+	if rate == 0 && in.MonthlySpend > 0 && scan.Active > 0 {
+		rate = in.MonthlySpend / float64(scan.Active)
+		scan.RateDerived = true
+	}
+	scan.CostPerSeat = rate
+
+	scan.MonthlyCost = float64(scan.Active) * rate
 
 	// A released seat costs nothing, so it must not be priced — otherwise the
 	// biggest number in the report is money that was never spent.
 	if in.SuspendedBilling != SuspendedBillingReleased {
-		scan.SuspendedExposure = float64(scan.Suspended) * in.CostPerSeat
+		scan.SuspendedExposure = float64(scan.Suspended) * rate
 	}
 
 	if len(suspended) > 0 {
-		scan.Findings = append(scan.Findings, suspendedFinding(in.SuspendedBilling, suspended, in.CostPerSeat))
+		scan.Findings = append(scan.Findings, suspendedFinding(in.SuspendedBilling, suspended, rate))
 	}
 
 	if len(inactive) > 0 {
@@ -196,7 +217,7 @@ func Scan(in ScanInput) ProviderScan {
 			Count:        len(inactive),
 			Subjects:     capSubjects(inactive),
 			Message:      "no recorded activity in the last " + strconv.Itoa(days) + " days",
-			MonthlyWaste: float64(len(inactive)) * in.CostPerSeat,
+			MonthlyWaste: float64(len(inactive)) * rate,
 		})
 	}
 
@@ -239,7 +260,7 @@ func Scan(in ScanInput) ProviderScan {
 	for _, e := range inactive {
 		reclaimable[e] = true
 	}
-	scan.MonthlyWaste = float64(len(reclaimable)) * in.CostPerSeat
+	scan.MonthlyWaste = float64(len(reclaimable)) * rate
 
 	sortFindings(scan.Findings)
 	return scan

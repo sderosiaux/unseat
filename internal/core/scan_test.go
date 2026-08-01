@@ -321,3 +321,60 @@ func TestScanEmptyProvider(t *testing.T) {
 	assert.Zero(t, s.MonthlyWaste)
 	assert.Nil(t, findingOf(t, s, FindingAdminSprawl), "no seats cannot be sprawl")
 }
+
+// The rate can be stated or derived from the invoice. Deriving keeps it
+// correct as headcount moves, and the derivation is flagged so it can be
+// checked against the invoice it came from.
+func TestScanDerivesRateFromMonthlySpend(t *testing.T) {
+	users := []User{
+		{Email: "a@co.com", Status: StatusActive},
+		{Email: "b@co.com", Status: StatusActive},
+		// Deactivated seats must not dilute the rate: on a real tenant most
+		// seats can be suspended, which would deflate it toward zero.
+		{Email: "gone@co.com", Status: StatusSuspended},
+		{Email: "left@co.com", Status: StatusSuspended},
+	}
+
+	t.Run("derived from active seats only", func(t *testing.T) {
+		s := Scan(ScanInput{
+			Provider: "linear", Users: users, Domain: "co.com",
+			MonthlySpend: 32, SuspendedBilling: SuspendedBillingReleased, Now: scanNow,
+		})
+		assert.True(t, s.RateDerived)
+		assert.InDelta(t, 16.0, s.CostPerSeat, 0.001, "32 / 2 active, not / 4 total")
+		assert.InDelta(t, 32.0, s.MonthlyCost, 0.001)
+	})
+
+	t.Run("a stated price wins over the invoice", func(t *testing.T) {
+		s := Scan(ScanInput{
+			Provider: "linear", Users: users, Domain: "co.com",
+			CostPerSeat: 10, MonthlySpend: 32, Now: scanNow,
+		})
+		assert.False(t, s.RateDerived)
+		assert.InDelta(t, 10.0, s.CostPerSeat, 0.001)
+	})
+
+	t.Run("no active seats cannot yield a rate", func(t *testing.T) {
+		s := Scan(ScanInput{
+			Provider: "linear",
+			Users:    []User{{Email: "gone@co.com", Status: StatusSuspended}},
+			Domain:   "co.com", MonthlySpend: 500, Now: scanNow,
+		})
+		assert.False(t, s.RateDerived, "dividing by zero must not invent a rate")
+		assert.Zero(t, s.CostPerSeat)
+	})
+
+	t.Run("derived rate prices waste", func(t *testing.T) {
+		s := Scan(ScanInput{
+			Provider: "linear",
+			Users: []User{
+				{Email: "a@co.com", Status: StatusActive, LastActivityAt: daysAgo(2)},
+				{Email: "idle@co.com", Status: StatusActive, LastActivityAt: daysAgo(300)},
+			},
+			Domain: "co.com", MonthlySpend: 32,
+			ReportsActivity: true, InactiveThreshold: 60 * 24 * time.Hour, Now: scanNow,
+		})
+		assert.InDelta(t, 16.0, s.CostPerSeat, 0.001)
+		assert.InDelta(t, 16.0, s.MonthlyWaste, 0.001, "one idle seat at the derived rate")
+	})
+}

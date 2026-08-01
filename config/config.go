@@ -38,9 +38,14 @@ type ProviderConfig struct {
 	APIKey    string            `yaml:"api_key"`
 	BaseURL   string            `yaml:"base_url,omitempty"`
 	ExtraArgs map[string]string `yaml:"extra,omitempty"`
-	// CostPerSeat is the monthly list price of one seat, in Currency.
+	// CostPerSeat is the monthly price of one seat, in Currency.
 	// Zero means unpriced: counts are still reported, money is not.
 	CostPerSeat float64 `yaml:"cost_per_seat,omitempty"`
+	// MonthlySpend is what this provider actually costs per month, taken from
+	// an invoice. unseat divides it by the active seat count to get the
+	// effective rate, so negotiated discounts are included and the rate stays
+	// correct as headcount moves. CostPerSeat wins when both are set.
+	MonthlySpend float64 `yaml:"monthly_spend,omitempty"`
 	// BillsSuspendedSeats overrides the connector's own knowledge of whether
 	// deactivated seats keep being charged. Nil means "use what the connector
 	// declares"; set it when your contract differs from the vendor's default.

@@ -1,0 +1,262 @@
+package core
+
+import (
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// FindingKind identifies a category of seat problem detectable from a single
+// provider's user list, with no identity source and no group mappings.
+//
+// This is deliberately the cheapest possible analysis: it is what unseat can
+// tell you before you have configured anything beyond an API key.
+type FindingKind string
+
+const (
+	// FindingSuspendedBilled: the account is deactivated in the SaaS but still
+	// occupies a seat. Many vendors bill until the user is fully removed.
+	FindingSuspendedBilled FindingKind = "suspended_but_billed"
+	// FindingExternal: the identity is outside the corporate domain.
+	FindingExternal FindingKind = "external_identity"
+	// FindingAdminSprawl: an unusually large share of privileged accounts.
+	FindingAdminSprawl FindingKind = "admin_sprawl"
+	// FindingInactive: no activity within the threshold, on a provider whose
+	// API actually reports activity.
+	FindingInactive FindingKind = "inactive"
+	// FindingNoActivityData: the provider cannot answer the usage question at all.
+	FindingNoActivityData FindingKind = "no_activity_data"
+)
+
+// Severity ranks findings for display order.
+type Severity string
+
+const (
+	SeverityHigh Severity = "high"
+	SeverityMed  Severity = "medium"
+	SeverityInfo Severity = "info"
+)
+
+// Finding is one actionable observation about a provider's seats.
+type Finding struct {
+	Kind     FindingKind `json:"kind"`
+	Severity Severity    `json:"severity"`
+	Count    int         `json:"count"`
+	// Subjects lists the affected identities, capped for display.
+	Subjects []string `json:"subjects,omitempty"`
+	Message  string   `json:"message"`
+	// MonthlyWaste is Count * cost_per_seat, zero when the provider is unpriced
+	// or when the finding does not represent a reclaimable seat.
+	MonthlyWaste float64 `json:"monthly_waste"`
+}
+
+// ScanInput describes one provider's seats to analyse.
+type ScanInput struct {
+	Provider string
+	Users    []User
+	// Domain is the corporate domain. Empty disables the external-identity check.
+	Domain string
+	// ReportsActivity mirrors Capabilities.ReportsActivity. When false, a nil
+	// LastActivityAt is unknown, not inactive.
+	ReportsActivity bool
+	// InactiveThreshold is how long without activity counts as inactive.
+	InactiveThreshold time.Duration
+	// CostPerSeat is the monthly price of a seat; zero leaves money unreported.
+	CostPerSeat float64
+	// Now is the reference time, injected for deterministic tests.
+	Now time.Time
+	// AdminRatioThreshold is the share of privileged accounts above which
+	// admin sprawl is flagged. Zero falls back to defaultAdminRatio.
+	AdminRatioThreshold float64
+}
+
+const defaultAdminRatio = 0.25
+
+// maxSubjects caps how many identities a finding carries, so a scan of a large
+// tenant stays readable and the JSON stays a summary rather than a dump.
+const maxSubjects = 20
+
+// ProviderScan is the analysis of one provider.
+type ProviderScan struct {
+	Provider    string    `json:"provider"`
+	Total       int       `json:"total_seats"`
+	Active      int       `json:"active"`
+	Suspended   int       `json:"suspended"`
+	Admins      int       `json:"admins"`
+	Findings    []Finding `json:"findings"`
+	CostPerSeat float64   `json:"cost_per_seat"`
+	// MonthlyCost prices ACTIVE seats only. Vendors disagree on deactivated
+	// seats — Linear drops them at the next billing cycle, HubSpot and others
+	// bill until deletion — so counting them here would overstate spend for
+	// half the connectors.
+	MonthlyCost float64 `json:"monthly_cost"`
+	// MonthlyWaste is spend that is certainly wasted: active, billed seats
+	// with no recorded usage.
+	MonthlyWaste float64 `json:"monthly_waste"`
+	// SuspendedExposure prices deactivated seats. Whether it is real money
+	// depends on the contract, so it is reported apart from MonthlyWaste
+	// rather than summed into a number that would be wrong either way.
+	SuspendedExposure float64 `json:"suspended_exposure"`
+}
+
+// adminRoleTokens are substrings that mark a role as privileged.
+//
+// Role naming is provider-specific and unbounded ("admin", "owner",
+// "org:admin", "Administrator", "workspace_owner"...), so this is a heuristic.
+// It over-reports rather than under-reports: a false admin is a prompt to look,
+// a missed admin is a blind spot.
+var adminRoleTokens = []string{"admin", "owner", "superuser", "super_user", "root"}
+
+// IsPrivilegedRole reports whether a provider role string looks privileged.
+func IsPrivilegedRole(role string) bool {
+	r := strings.ToLower(role)
+	for _, token := range adminRoleTokens {
+		if strings.Contains(r, token) {
+			return true
+		}
+	}
+	return false
+}
+
+// Scan analyses one provider's seats and returns findings ordered by severity.
+func Scan(in ScanInput) ProviderScan {
+	now := in.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	domain := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(in.Domain), "@"))
+
+	scan := ProviderScan{
+		Provider:    in.Provider,
+		Total:       len(in.Users),
+		CostPerSeat: in.CostPerSeat,
+	}
+
+	var suspended, external, admins, inactive []string
+
+	for _, u := range in.Users {
+		email := strings.ToLower(strings.TrimSpace(u.Email))
+		label := email
+		if label == "" {
+			label = u.DisplayName
+		}
+
+		if u.Status == StatusSuspended {
+			scan.Suspended++
+			suspended = append(suspended, label)
+		} else {
+			scan.Active++
+		}
+
+		if IsPrivilegedRole(u.Role) {
+			scan.Admins++
+			admins = append(admins, label)
+		}
+
+		if domain != "" && strings.Contains(email, "@") && !strings.HasSuffix(email, "@"+domain) {
+			external = append(external, label)
+		}
+
+		// Inactivity only means something for a seat that is still live: a
+		// deactivated account is obviously unused, and reporting it twice
+		// inflates both the count and the money.
+		if in.ReportsActivity && in.InactiveThreshold > 0 && u.Status != StatusSuspended {
+			// A nil LastActivityAt on an instrumented provider means the API
+			// has never seen this user active — the strongest signal there is.
+			if u.LastActivityAt == nil || now.Sub(*u.LastActivityAt) > in.InactiveThreshold {
+				inactive = append(inactive, label)
+			}
+		}
+	}
+
+	scan.MonthlyCost = float64(scan.Active) * in.CostPerSeat
+	scan.SuspendedExposure = float64(scan.Suspended) * in.CostPerSeat
+
+	if len(suspended) > 0 {
+		scan.Findings = append(scan.Findings, Finding{
+			Kind:     FindingSuspendedBilled,
+			Severity: SeverityMed,
+			Count:    len(suspended),
+			Subjects: capSubjects(suspended),
+			Message: "deactivated accounts still holding a seat — many vendors bill these until the user is fully deleted, " +
+				"but not all (Linear drops them at the next cycle). Check your contract before counting the saving",
+			MonthlyWaste: 0,
+		})
+	}
+
+	if len(inactive) > 0 {
+		days := int(in.InactiveThreshold.Hours() / 24)
+		scan.Findings = append(scan.Findings, Finding{
+			Kind:         FindingInactive,
+			Severity:     SeverityHigh,
+			Count:        len(inactive),
+			Subjects:     capSubjects(inactive),
+			Message:      "no recorded activity in the last " + strconv.Itoa(days) + " days",
+			MonthlyWaste: float64(len(inactive)) * in.CostPerSeat,
+		})
+	}
+
+	if len(external) > 0 {
+		scan.Findings = append(scan.Findings, Finding{
+			Kind:     FindingExternal,
+			Severity: SeverityMed,
+			Count:    len(external),
+			Subjects: capSubjects(external),
+			Message:  "identities outside " + domain + " — guests, contractors or personal accounts",
+		})
+	}
+
+	ratio := in.AdminRatioThreshold
+	if ratio <= 0 {
+		ratio = defaultAdminRatio
+	}
+	if scan.Total > 0 && float64(scan.Admins)/float64(scan.Total) > ratio && scan.Admins > 1 {
+		scan.Findings = append(scan.Findings, Finding{
+			Kind:     FindingAdminSprawl,
+			Severity: SeverityMed,
+			Count:    scan.Admins,
+			Subjects: capSubjects(admins),
+			Message:  "privileged accounts exceed " + strconv.Itoa(int(ratio*100)) + "% of all seats (role names are matched heuristically — verify before acting)",
+		})
+	}
+
+	if !in.ReportsActivity {
+		scan.Findings = append(scan.Findings, Finding{
+			Kind:     FindingNoActivityData,
+			Severity: SeverityInfo,
+			Message:  "this provider's API exposes no activity data — unused seats cannot be detected here",
+		})
+	}
+
+	// Waste counts only live, billed seats with no usage. Deactivated seats
+	// are priced into SuspendedExposure instead, because whether they cost
+	// anything is a contract question this tool cannot answer.
+	reclaimable := make(map[string]bool, len(inactive))
+	for _, e := range inactive {
+		reclaimable[e] = true
+	}
+	scan.MonthlyWaste = float64(len(reclaimable)) * in.CostPerSeat
+
+	sortFindings(scan.Findings)
+	return scan
+}
+
+func capSubjects(s []string) []string {
+	sort.Strings(s)
+	if len(s) > maxSubjects {
+		return s[:maxSubjects]
+	}
+	return s
+}
+
+var severityRank = map[Severity]int{SeverityHigh: 0, SeverityMed: 1, SeverityInfo: 2}
+
+func sortFindings(f []Finding) {
+	sort.SliceStable(f, func(i, j int) bool {
+		if severityRank[f[i].Severity] != severityRank[f[j].Severity] {
+			return severityRank[f[i].Severity] < severityRank[f[j].Severity]
+		}
+		return f[i].Count > f[j].Count
+	})
+}

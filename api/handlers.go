@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -8,7 +9,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/sderosiaux/unseat/internal/provider"
 	"github.com/sderosiaux/unseat/internal/store"
 )
 
@@ -101,7 +101,7 @@ func (s *Server) handleAllInactiveUsers(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	since := time.Now().AddDate(0, 0, -days)
-	reporting, silent, err := s.activityProviders()
+	reporting, silent, err := s.activityProviders(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -119,19 +119,16 @@ func (s *Server) handleAllInactiveUsers(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// activityProviders splits configured providers into those whose API reports
-// activity and those that cannot answer the question at all. Callers must
+// activityProviders splits scanned providers into those whose API reported
+// activity and those that could not answer the question at all. Callers must
 // surface the second list: an empty result otherwise reads as "all active".
-func (s *Server) activityProviders() (reporting, silent []string, err error) {
-	reporting, err = provider.ActivityReportingProviders(s.config)
-	if err != nil {
-		return nil, nil, err
-	}
-	silent, err = provider.NonActivityReportingProviders(s.config)
-	if err != nil {
-		return nil, nil, err
-	}
-	return reporting, silent, nil
+//
+// Read from what was observed, not recomputed from config. Most connectors
+// know their capability statically, but GitHub only learns it by calling the
+// org audit log — so a provider rebuilt from config alone answers false, and
+// this endpoint contradicted the scan that produced the very rows it serves.
+func (s *Server) activityProviders(ctx context.Context) (reporting, silent []string, err error) {
+	return s.store.ActivityReportingProviders(ctx)
 }
 
 func (s *Server) handleInactiveUsers(w http.ResponseWriter, r *http.Request) {
@@ -143,7 +140,7 @@ func (s *Server) handleInactiveUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	name := chi.URLParam(r, "name")
 
-	reporting, _, err := s.activityProviders()
+	reporting, _, err := s.activityProviders(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

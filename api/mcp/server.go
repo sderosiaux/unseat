@@ -7,7 +7,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sderosiaux/unseat/config"
 	"github.com/sderosiaux/unseat/internal/core"
-	"github.com/sderosiaux/unseat/internal/provider"
 	"github.com/sderosiaux/unseat/internal/store"
 )
 
@@ -192,11 +191,11 @@ func (s *MCPServer) handleListInactive(ctx context.Context, _ *mcp.CallToolReque
 		days = 30
 	}
 
-	reporting, err := provider.ActivityReportingProviders(s.config)
-	if err != nil {
-		return nil, listInactiveOutput{}, err
-	}
-	silent, err := provider.NonActivityReportingProviders(s.config)
+	// From what was observed, not recomputed: GitHub only learns whether it can
+	// report activity by calling the org audit log, so a provider rebuilt from
+	// config answers false and this tool would contradict the scan that filled
+	// the cache it reads.
+	reporting, silent, err := s.store.ActivityReportingProviders(ctx)
 	if err != nil {
 		return nil, listInactiveOutput{}, err
 	}

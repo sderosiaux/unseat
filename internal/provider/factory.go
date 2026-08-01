@@ -30,6 +30,7 @@ import (
 	"github.com/sderosiaux/unseat/internal/provider/freshdesk"
 	"github.com/sderosiaux/unseat/internal/provider/gcpiam"
 	githubprovider "github.com/sderosiaux/unseat/internal/provider/github"
+	"github.com/sderosiaux/unseat/internal/provider/githubcopilot"
 	"github.com/sderosiaux/unseat/internal/provider/gitlab"
 	googleprovider "github.com/sderosiaux/unseat/internal/provider/google"
 	"github.com/sderosiaux/unseat/internal/provider/grafana"
@@ -163,6 +164,8 @@ func buildProvider(name string, pcfg config.ProviderConfig) (Provider, error) {
 	// --- Engineering ---
 	case "github":
 		return optBase(githubprovider.New(pcfg.APIKey, pcfg.ExtraArgs["org"]), pcfg.BaseURL), nil
+	case "github-copilot":
+		return optBase(githubcopilot.New(pcfg.APIKey, pcfg.ExtraArgs["org"]), pcfg.BaseURL), nil
 	case "gitlab":
 		return optBase(gitlab.New(pcfg.APIKey), pcfg.BaseURL), nil
 	case "atlassian":

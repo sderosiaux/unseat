@@ -40,7 +40,10 @@ func init() {
 
 type scanResult struct {
 	scan core.ProviderScan
-	err  error
+	// users is retained so seats can be correlated across providers, which is
+	// the one question no single provider can answer.
+	users []core.User
+	err   error
 }
 
 func runScan(cmd *cobra.Command, _ []string) error {
@@ -152,7 +155,7 @@ func scanAll(ctx context.Context, cfg *config.Config, reg *provider.Registry, ta
 				}
 			}
 
-			set(scanResult{scan: core.Scan(core.ScanInput{
+			set(scanResult{users: users, scan: core.Scan(core.ScanInput{
 				Provider:          name,
 				Users:             users,
 				Domain:            domain,
@@ -258,6 +261,8 @@ func printScanReport(cfg *config.Config, targets []string, results map[string]sc
 		}
 	}
 
+	printOffboardingGaps(targets, results)
+
 	fmt.Printf("\n%d seats across %d provider(s).\n", totalSeats, len(rows))
 	if totalCost > 0 {
 		fmt.Printf("Active spend: %.2f %s/month.\n", totalCost, currency)
@@ -285,6 +290,44 @@ func printScanReport(cfg *config.Config, targets []string, results map[string]sc
 		}
 	}
 }
+
+// printOffboardingGaps reports identities one provider has deactivated while
+// others still grant access. It needs at least two providers to say anything,
+// and it is the one question no single vendor can answer.
+func printOffboardingGaps(targets []string, results map[string]scanResult) {
+	seats := core.SeatsByProvider{}
+	for _, name := range targets {
+		if r := results[name]; r.err == nil {
+			seats[name] = r.users
+		}
+	}
+	if len(seats) < 2 {
+		return
+	}
+
+	gaps := core.FindOffboardingGaps(seats)
+	if len(gaps) == 0 {
+		return
+	}
+
+	fmt.Printf("\nINCOMPLETE OFFBOARDING (%d)\n", len(gaps))
+	fmt.Println("  Deactivated somewhere, still holding a live seat elsewhere.")
+
+	shown := gaps
+	if len(shown) > maxGapsShown {
+		shown = shown[:maxGapsShown]
+	}
+	for _, g := range shown {
+		fmt.Printf("  !! %-38s off in %-18s still active in %s\n",
+			g.Email, strings.Join(g.DeactivatedIn, ","), strings.Join(g.StillActiveIn, ","))
+	}
+	if len(gaps) > len(shown) {
+		fmt.Printf("     (+%d more — use --json for the full list)\n", len(gaps)-len(shown))
+	}
+}
+
+// maxGapsShown keeps the terminal report readable; --json carries everything.
+const maxGapsShown = 25
 
 // rateMarkers annotate each rate with how it was established. Principle 3:
 // never state a number more precisely than it is known.

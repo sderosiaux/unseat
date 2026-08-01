@@ -3,11 +3,12 @@ package hubspot
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
+	"github.com/sderosiaux/unseat/internal/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,32 +33,45 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/settings/v3/users/", r.URL.Path)
 
-		json.NewEncoder(w).Encode(usersResponse{
-			Results: []hubspotUser{
-				{ID: "1", Email: "alice@co.com", RoleID: "admin-role", SuperAdmin: true, PrimaryTeamID: "team1", LastActiveTime: "2025-03-01T11:00:00Z"},
-				{ID: "2", Email: "bob@co.com", RoleID: "member-role", SuperAdmin: false, PrimaryTeamID: "team2"},
-			},
-		})
+		// Raw JSON in the shape a live portal returns. Encoding our own struct
+		// would round-trip whatever we declared and hide a field that the API
+		// does not actually send — which is how a non-existent lastActiveTime
+		// came to flag an entire portal as inactive.
+		fmt.Fprint(w, `{"results":[
+		  {"id":"1","email":"alice@co.com","firstName":"Alice","lastName":"Smith",
+		   "roleIds":[],"seatNames":["sales-enterprise"],"superAdmin":true},
+		  {"id":"2","email":"bob@co.com","roleIds":[],"seatNames":["core"],"superAdmin":false},
+		  {"id":"3","email":"carol@co.com","firstName":"Carol","roleIds":[],"seatNames":[],"superAdmin":false}
+		]}`)
 	}))
 	defer server.Close()
 
 	p := New("test-token").WithBaseURL(server.URL)
 	users, err := p.ListUsers(context.Background())
 	require.NoError(t, err)
-	require.Len(t, users, 2)
+	require.Len(t, users, 3)
 
 	assert.Equal(t, "alice@co.com", users[0].Email)
-	assert.Equal(t, "alice@co.com", users[0].DisplayName)
+	assert.Equal(t, "Alice Smith", users[0].DisplayName)
 	assert.Equal(t, "super_admin", users[0].Role)
-	assert.Equal(t, "active", users[0].Status)
+	assert.Equal(t, core.StatusActive, users[0].Status)
 	assert.Equal(t, "1", users[0].ProviderID)
-	require.NotNil(t, users[0].LastActivityAt)
-	assert.Equal(t, time.Date(2025, 3, 1, 11, 0, 0, 0, time.UTC), *users[0].LastActivityAt)
+	// Seat type is what HubSpot bills on, and the types differ by an order of
+	// magnitude in price.
+	assert.Equal(t, "sales-enterprise", users[0].Metadata["seat"])
 
-	assert.Equal(t, "bob@co.com", users[1].Email)
+	// No name in the payload: fall back to the email rather than showing blank.
+	assert.Equal(t, "bob@co.com", users[1].DisplayName)
 	assert.Equal(t, "member", users[1].Role)
-	assert.Equal(t, "2", users[1].ProviderID)
-	assert.Nil(t, users[1].LastActivityAt)
+	assert.Equal(t, "core", users[1].Metadata["seat"])
+
+	assert.Equal(t, "Carol", users[2].DisplayName)
+	assert.Empty(t, users[2].Metadata["seat"])
+
+	// The endpoint carries no activity data at all, so none may be invented.
+	for _, u := range users {
+		assert.Nil(t, u.LastActivityAt)
+	}
 }
 
 func TestListUsersPagination(t *testing.T) {

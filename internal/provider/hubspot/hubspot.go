@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
+	"strings"
 
 	"github.com/sderosiaux/unseat/internal/core"
 	"github.com/sderosiaux/unseat/internal/provider/httpclient"
@@ -35,18 +35,46 @@ func (p *Provider) Capabilities() core.Capabilities {
 		CanRemove:  true,
 		CanSuspend: false,
 		CanSetRole: false,
-		// Users carry lastActiveTime.
-		ReportsActivity: true,
+		// Deliberately false. The struct used to declare a lastActiveTime
+		// field and the code parsed it, but /settings/v3/users returns no such
+		// field — verified against a live portal, where the entire payload is
+		// id, email, firstName, lastName, roleIds, seatNames, superAdmin.
+		// Claiming activity reporting turned every nil into "never active" and
+		// flagged an entire portal as inactive at high severity.
+		ReportsActivity: false,
 	}
 }
 
 type hubspotUser struct {
-	ID             string `json:"id"`
-	Email          string `json:"email"`
-	RoleID         string `json:"roleId"`
-	SuperAdmin     bool   `json:"superAdmin"`
-	PrimaryTeamID  string `json:"primaryTeamId"`
-	LastActiveTime string `json:"lastActiveTime,omitempty"`
+	ID            string   `json:"id"`
+	Email         string   `json:"email"`
+	FirstName     string   `json:"firstName"`
+	LastName      string   `json:"lastName"`
+	RoleIDs       []string `json:"roleIds"`
+	SuperAdmin    bool     `json:"superAdmin"`
+	PrimaryTeamID string   `json:"primaryTeamId"`
+	// SeatNames is what HubSpot actually bills for: "core", "sales-enterprise",
+	// "service-enterprise", "view-only". Seat types differ in price by an order
+	// of magnitude, so the mix matters more than the head count.
+	SeatNames []string `json:"seatNames"`
+}
+
+// displayName prefers the real name; the API always returns an email but not
+// always a name.
+func (u hubspotUser) displayName() string {
+	name := strings.TrimSpace(u.FirstName + " " + u.LastName)
+	if name == "" {
+		return u.Email
+	}
+	return name
+}
+
+// seat returns the billable seat type, which is the field that carries cost.
+func (u hubspotUser) seat() string {
+	if len(u.SeatNames) == 0 {
+		return ""
+	}
+	return strings.Join(u.SeatNames, "+")
 }
 
 type pagingNext struct {
@@ -102,15 +130,16 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			}
 			user := core.User{
 				Email:       u.Email,
-				DisplayName: u.Email,
+				DisplayName: u.displayName(),
 				Role:        role,
-				Status:      "active",
-				ProviderID:  u.ID,
+				// Every user this endpoint returns holds a seat. HubSpot has
+				// no deactivated-but-listed state: removing someone removes
+				// them from this list, so being here means being billed.
+				Status:     core.StatusActive,
+				ProviderID: u.ID,
 			}
-			if u.LastActiveTime != "" {
-				if t, err := time.Parse(time.RFC3339, u.LastActiveTime); err == nil {
-					user.LastActivityAt = &t
-				}
+			if seat := u.seat(); seat != "" {
+				user.Metadata = map[string]string{"seat": seat}
 			}
 			all = append(all, user)
 		}

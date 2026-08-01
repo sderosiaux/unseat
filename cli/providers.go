@@ -3,8 +3,10 @@ package cli
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/sderosiaux/unseat/internal/auth"
 	"github.com/sderosiaux/unseat/internal/provider"
 	"github.com/sderosiaux/unseat/internal/store"
 	"github.com/spf13/cobra"
@@ -123,6 +125,25 @@ func runProvidersList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// missingCredentialHelp explains why a provider is unusable and what to do,
+// distinguishing a typo from a provider that simply has no credential yet.
+func missingCredentialHelp(name string) string {
+	known, ok := auth.KnownProviders[name]
+	if !ok {
+		return fmt.Sprintf("unknown provider %q — run `unseat providers supported` to list valid names", name)
+	}
+
+	envHint := strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(name)) + "_API_KEY"
+	how := fmt.Sprintf("no credential — run `unseat providers add %s`, "+
+		"or set providers.%s.api_key in %s (e.g. \"${%s}\" with %s exported or in .env)",
+		name, name, configFile, envHint, envHint)
+
+	if known.Instructions != "" {
+		how += "\n" + strings.Repeat(" ", 24) + known.Instructions
+	}
+	return how
+}
+
 func yesNo(b bool) string {
 	if b {
 		return "yes"
@@ -179,7 +200,15 @@ func runProvidersTest(cmd *cobra.Command, args []string) error {
 	for _, name := range args {
 		p, err := reg.Get(name)
 		if err != nil {
-			fmt.Printf("%-15s  ERROR  %s\n", name, err)
+			// "not registered" is true but useless: a provider is absent from
+			// the registry precisely when it has no credential, which is the
+			// normal state on first run. Say what to do instead.
+			diag := missingCredentialHelp(name)
+			if jsonOutput {
+				results = append(results, map[string]any{"provider": name, "status": "not_configured", "error": diag})
+			} else {
+				fmt.Printf("%-15s  SKIP   %s\n", name, diag)
+			}
 			continue
 		}
 

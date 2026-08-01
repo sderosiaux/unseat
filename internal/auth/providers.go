@@ -60,9 +60,14 @@ var KnownProviders = map[string]ProviderAuth{
 		Instructions: "Create a token at https://miro.com/app/settings/user-profile/apps. Requires org_id.",
 	},
 	"slack": {
-		Name:         "slack",
-		AuthMethod:   "api_key",
-		Instructions: "Create a SCIM token at https://my.slack.com/admin/settings#scim (Business+ or Enterprise Grid).",
+		Name:       "slack",
+		AuthMethod: "api_key",
+		// There is no SCIM-token page in the Slack admin UI: the token comes
+		// from installing an app carrying the `admin` scope.
+		Instructions: "Create an app at https://api.slack.com/apps, add the `admin` OAuth scope, install it, " +
+			"and use the xoxp- user token. On Enterprise Grid it must be installed on the ORG, not a workspace, " +
+			"by an Org Owner. Requires Business+ or Enterprise. The token cannot act on accounts with more " +
+			"privileges than the installing account.",
 	},
 	"anthropic": {
 		Name:         "anthropic",
@@ -92,9 +97,10 @@ var KnownProviders = map[string]ProviderAuth{
 		Instructions: "Create a SCIM API token in Atlassian admin. Requires extra.directory_id.",
 	},
 	"notion": {
-		Name:         "notion",
-		AuthMethod:   "api_key",
-		Instructions: "Create a SCIM token in Notion Settings > Security & Identity > SCIM provisioning (Enterprise plan).",
+		Name:       "notion",
+		AuthMethod: "api_key",
+		Instructions: "Enterprise plan, as an org owner: workspace switcher > Manage organization > General > " +
+			"SCIM provisioning. One token per workspace.",
 	},
 	"shortcut": {
 		Name:         "shortcut",

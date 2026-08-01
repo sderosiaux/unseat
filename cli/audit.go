@@ -245,6 +245,20 @@ func runAuditOrphans(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
+	// An orphan whose seat the provider already deactivated is finished
+	// business; one still live is money and standing access. Listing both
+	// under one heading buries the handful that need doing under the hundreds
+	// that do not, so the live ones come first.
+	stillLive := func(s core.ClassifiedSeat) bool {
+		return s.User.Status != core.StatusSuspended && !s.Protected
+	}
+	sort.SliceStable(orphans, func(i, j int) bool {
+		if stillLive(orphans[i]) != stillLive(orphans[j]) {
+			return stillLive(orphans[i])
+		}
+		return orphans[i].Provider < orphans[j].Provider
+	})
+
 	if jsonOutput {
 		return printJSON(orphans)
 	}
@@ -255,16 +269,30 @@ func runAuditOrphans(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	live := 0
 	rows := make([][]string, len(orphans))
 	for i, o := range orphans {
-		protected := ""
-		if o.Protected {
-			protected = "protected"
+		seat := "deactivated"
+		if o.User.Status != core.StatusSuspended {
+			seat = "LIVE"
 		}
-		rows[i] = []string{o.Provider, o.Email, o.User.DisplayName, o.Reason, protected}
+		note := ""
+		if o.Protected {
+			note = "protected"
+			seat = "exempt"
+		} else if seat == "LIVE" {
+			live++
+		}
+		rows[i] = []string{o.Provider, o.Email, o.User.DisplayName, seat, o.Reason, note}
 	}
-	printTable([]string{"PROVIDER", "EMAIL", "NAME", "REASON", "POLICY"}, rows)
-	fmt.Printf("\n%d orphaned seat(s). Preview the cleanup with `unseat sync plan`.\n", len(orphans))
+	printTable([]string{"PROVIDER", "EMAIL", "NAME", "SEAT", "REASON", "POLICY"}, rows)
+
+	fmt.Printf("\n%d orphaned seat(s), of which %d still live.\n", len(orphans), live)
+	if live == 0 {
+		fmt.Println("Nothing to reclaim: every orphan has already been deactivated by its provider.")
+	} else {
+		fmt.Println("Only the LIVE ones cost money and still grant access. Preview with `unseat sync plan`.")
+	}
 
 	reportFailures(audit.Failed)
 	return nil

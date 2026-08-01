@@ -188,13 +188,26 @@ func runProvidersTest(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Build a registry with only the requested providers (skip identity source).
-	reg, _, err := provider.BuildRegistryWithIdentity(cfg, nil)
+	// The identity source is a provider too, and the one most likely to be
+	// misconfigured — domain-wide delegation fails in ways that only show up on
+	// a real call. Skipping it made the single most fragile connection the one
+	// thing `providers test` could not check.
+	//
+	// Its initialisation is allowed to fail: a broken directory must not stop
+	// the other providers from being tested. The error is kept and reported
+	// against the provider it belongs to.
+	ctx := cmd.Context()
+
+	reg, _, err := provider.BuildRegistry(ctx, cfg)
+	var identityErr error
 	if err != nil {
-		return err
+		identityErr = err
+		reg, _, err = provider.BuildRegistryWithIdentity(cfg, nil)
+		if err != nil {
+			return err
+		}
 	}
 
-	ctx := cmd.Context()
 	var results []map[string]any
 
 	for _, name := range args {
@@ -204,6 +217,11 @@ func runProvidersTest(cmd *cobra.Command, args []string) error {
 			// the registry precisely when it has no credential, which is the
 			// normal state on first run. Say what to do instead.
 			diag := missingCredentialHelp(name)
+			// Unless it is the identity source, which failed to initialise for
+			// a reason we captured — that is far more useful than "no credential".
+			if identityErr != nil && name == cfg.IdentitySource.Provider {
+				diag = identityErr.Error()
+			}
 			if jsonOutput {
 				results = append(results, map[string]any{"provider": name, "status": "not_configured", "error": diag})
 			} else {

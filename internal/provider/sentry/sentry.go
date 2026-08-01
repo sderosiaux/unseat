@@ -8,19 +8,23 @@ import (
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://sentry.io"
+
+// maxErrorBody caps how much of a failed response is echoed into the error.
+const maxErrorBody = 2 << 10
 
 type Provider struct {
 	token   string
 	orgSlug string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token, orgSlug string) *Provider {
-	return &Provider{token: token, orgSlug: orgSlug, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, orgSlug: orgSlug, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 func (p *Provider) WithBaseURL(url string) *Provider {
@@ -48,13 +52,46 @@ type sentryUser struct {
 	Pending bool `json:"pending"`
 }
 
-func (p *Provider) doGet(ctx context.Context, url string) (*http.Response, error) {
+// fetchMemberPage returns one page of members plus the cursor for the next one.
+//
+// This is the one call that cannot go through DoJSON: Sentry paginates with a
+// Link response header, and DoJSON hands back only the decoded body. Going
+// through Do still buys the shared timeout, retries and Retry-After handling,
+// and the non-2xx path reports the same *httpclient.APIError as everywhere else.
+func (p *Provider) fetchMemberPage(ctx context.Context, url string) ([]sentryUser, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
-	return p.client.Do(req)
+
+	resp, err := p.client.Do(ctx, req)
+	if err != nil {
+		return nil, "", fmt.Errorf("sentry: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		return nil, "", &httpclient.APIError{
+			Provider:   "sentry",
+			StatusCode: resp.StatusCode,
+			Body:       string(body),
+			URL:        url,
+		}
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("sentry: read response: %w", err)
+	}
+
+	var members []sentryUser
+	if err := json.Unmarshal(body, &members); err != nil {
+		return nil, "", fmt.Errorf("sentry: decode response: %w", err)
+	}
+
+	return members, parseLinkCursor(resp.Header.Get("Link")), nil
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
@@ -67,23 +104,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			url += "?cursor=" + cursor
 		}
 
-		resp, err := p.doGet(ctx, url)
+		members, nextCursor, err := p.fetchMemberPage(ctx, url)
 		if err != nil {
 			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("sentry: read response: %w", err)
-		}
-		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("sentry: API error %d: %s", resp.StatusCode, body)
-		}
-
-		var members []sentryUser
-		if err := json.Unmarshal(body, &members); err != nil {
-			return nil, fmt.Errorf("sentry: decode response: %w", err)
 		}
 
 		for _, m := range members {
@@ -113,7 +136,6 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			})
 		}
 
-		nextCursor := parseLinkCursor(resp.Header.Get("Link"))
 		if nextCursor == "" {
 			break
 		}
@@ -219,20 +241,9 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("sentry: delete member failed %d: %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "sentry", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {
 	return fmt.Errorf("sentry: setting roles not supported via API")
 }
-

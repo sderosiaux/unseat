@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.dropboxapi.com"
@@ -16,11 +16,11 @@ const defaultBaseURL = "https://api.dropboxapi.com"
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token string) *Provider {
-	return &Provider{token: token, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 func (p *Provider) WithBaseURL(url string) *Provider {
@@ -84,58 +84,37 @@ type dropboxUserSelector struct {
 	Email string `json:"email"`
 }
 
-func (p *Provider) doPost(ctx context.Context, path string, body any) ([]byte, error) {
+// doPost issues a Dropbox RPC-style POST and decodes the JSON reply into out.
+// Pass a nil out when the reply body is irrelevant.
+func (p *Provider) doPost(ctx context.Context, path string, body, out any) error {
 	b, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("dropbox: marshal request: %w", err)
+		return fmt.Errorf("dropbox: marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+path, bytes.NewReader(b))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("dropbox: read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("dropbox: API error (status %d): %s", resp.StatusCode, respBody)
-	}
-
-	return respBody, nil
+	return p.client.DoJSON(ctx, "dropbox", req, out)
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	body, err := p.doPost(ctx, "/2/team/members/list_v2", dropboxListRequest{Limit: 100})
-	if err != nil {
-		return nil, err
-	}
-
 	var result dropboxListResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("dropbox: decode response: %w", err)
+	if err := p.doPost(ctx, "/2/team/members/list_v2", dropboxListRequest{Limit: 100}, &result); err != nil {
+		return nil, err
 	}
 
 	all := result.Members
 
 	for result.HasMore {
-		body, err = p.doPost(ctx, "/2/team/members/list/continue_v2", dropboxContinueRequest{Cursor: result.Cursor})
-		if err != nil {
-			return nil, err
-		}
+		cursor := result.Cursor
 		result = dropboxListResponse{}
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("dropbox: decode continue response: %w", err)
+		if err := p.doPost(ctx, "/2/team/members/list/continue_v2", dropboxContinueRequest{Cursor: cursor}, &result); err != nil {
+			return nil, err
 		}
 		all = append(all, result.Members...)
 	}
@@ -173,8 +152,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 		},
 	}
 
-	_, err := p.doPost(ctx, "/2/team/members/remove", reqBody)
-	return err
+	return p.doPost(ctx, "/2/team/members/remove", reqBody, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

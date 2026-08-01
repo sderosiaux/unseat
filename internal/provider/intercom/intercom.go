@@ -2,13 +2,12 @@ package intercom
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.intercom.io"
@@ -16,11 +15,11 @@ const defaultBaseURL = "https://api.intercom.io"
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token string) *Provider {
-	return &Provider{token: token, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 func (p *Provider) WithBaseURL(url string) *Provider {
@@ -33,6 +32,8 @@ func (p *Provider) Name() string { return "intercom" }
 func (p *Provider) Capabilities() core.Capabilities {
 	return core.Capabilities{
 		CanRemove: true, // set away
+		// Admins carry last_request_at.
+		ReportsActivity: true,
 	}
 }
 
@@ -58,23 +59,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("intercom: read response: %w", err)
-	}
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("intercom: API error %d: %s", resp.StatusCode, body)
-	}
-
 	var result adminsResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("intercom: decode response: %w", err)
+	if err := p.client.DoJSON(ctx, "intercom", req, &result); err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(result.Admins))
@@ -132,20 +119,9 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("intercom: set away failed %d: %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "intercom", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {
 	return fmt.Errorf("intercom: setting roles not supported via API")
 }
-

@@ -2,13 +2,12 @@ package asana
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://app.asana.com"
@@ -17,7 +16,7 @@ type Provider struct {
 	token       string
 	workspaceID string
 	baseURL     string
-	client      *http.Client
+	client      *httpclient.Client
 }
 
 func New(token, workspaceID string) *Provider {
@@ -25,7 +24,7 @@ func New(token, workspaceID string) *Provider {
 		token:       token,
 		workspaceID: workspaceID,
 		baseURL:     defaultBaseURL,
-		client:      &http.Client{},
+		client:      httpclient.New(),
 	}
 }
 
@@ -76,24 +75,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		}
 		req.Header.Set("Authorization", "Bearer "+p.token)
 
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("asana: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("asana: API error (status %d): %s", resp.StatusCode, body)
-		}
-
 		var result listUsersResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("asana: decode response: %w", err)
+		if err := p.client.DoJSON(ctx, "asana", req, &result); err != nil {
+			return nil, err
 		}
 
 		for _, u := range result.Data {
@@ -145,17 +129,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("asana: remove user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "asana", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

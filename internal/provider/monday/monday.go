@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.monday.com/v2"
@@ -16,11 +16,11 @@ const defaultBaseURL = "https://api.monday.com/v2"
 type Provider struct {
 	apiKey  string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(apiKey string) *Provider {
-	return &Provider{apiKey: apiKey, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{apiKey: apiKey, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the API base URL (useful for testing).
@@ -76,24 +76,9 @@ func (p *Provider) doGraphQL(ctx context.Context, query string, result any) erro
 	req.Header.Set("Authorization", p.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("monday: read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("monday: API error (status %d): %s", resp.StatusCode, body)
-	}
-
 	var gqlResp gqlResponse
-	if err := json.Unmarshal(body, &gqlResp); err != nil {
-		return fmt.Errorf("monday: decode response: %w", err)
+	if err := p.client.DoJSON(ctx, "monday", req, &gqlResp); err != nil {
+		return err
 	}
 
 	if len(gqlResp.Errors) > 0 {

@@ -2,13 +2,12 @@ package msteams
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const (
@@ -20,14 +19,14 @@ const (
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token string) *Provider {
 	return &Provider{
 		token:   token,
 		baseURL: defaultBaseURL,
-		client:  &http.Client{},
+		client:  httpclient.New(),
 	}
 }
 
@@ -78,24 +77,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("ConsistencyLevel", "eventual")
 
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("microsoft-teams: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("microsoft-teams: API error (status %d): %s", resp.StatusCode, body)
-		}
-
 		var result graphListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("microsoft-teams: decode response: %w", err)
+		if err := p.client.DoJSON(ctx, "microsoft-teams", req, &result); err != nil {
+			return nil, err
 		}
 
 		all = append(all, result.Value...)
@@ -151,17 +135,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("microsoft-teams: delete user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "microsoft-teams", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

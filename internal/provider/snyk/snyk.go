@@ -2,12 +2,11 @@ package snyk
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.snyk.io"
@@ -16,7 +15,7 @@ type Provider struct {
 	token   string
 	orgID   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token, orgID string) *Provider {
@@ -24,7 +23,7 @@ func New(token, orgID string) *Provider {
 		token:   token,
 		orgID:   orgID,
 		baseURL: defaultBaseURL,
-		client:  &http.Client{},
+		client:  httpclient.New(),
 	}
 }
 
@@ -61,24 +60,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	req.Header.Set("Authorization", "token "+p.token)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("snyk: read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("snyk: API error (status %d): %s", resp.StatusCode, body)
-	}
-
 	var members []snykMember
-	if err := json.Unmarshal(body, &members); err != nil {
-		return nil, fmt.Errorf("snyk: decode response: %w", err)
+	if err := p.client.DoJSON(ctx, "snyk", req, &members); err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(members))
@@ -122,17 +106,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "token "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("snyk: remove user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "snyk", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

@@ -2,12 +2,11 @@ package anthropic
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.anthropic.com"
@@ -15,11 +14,11 @@ const defaultBaseURL = "https://api.anthropic.com"
 type Provider struct {
 	apiKey  string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(apiKey string) *Provider {
-	return &Provider{apiKey: apiKey, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{apiKey: apiKey, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the API base URL (useful for testing).
@@ -52,39 +51,25 @@ type listUsersResponse struct {
 	LastID  string    `json:"last_id"`
 }
 
+// apiError is the Admin API's error envelope. The shared client echoes the raw
+// body back in its *httpclient.APIError, so this type is only the documented
+// shape of what lands there.
 type apiError struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
 }
 
-func (p *Provider) doRequest(ctx context.Context, method, path string) ([]byte, error) {
+// doRequest issues an Admin API call and decodes the JSON body into out.
+// Pass a nil out to discard the response.
+func (p *Provider) doRequest(ctx context.Context, method, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, method, p.baseURL+path, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req.Header.Set("x-api-key", p.apiKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("anthropic: read response: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		var apiErr apiError
-		if json.Unmarshal(body, &apiErr) == nil && apiErr.Message != "" {
-			return nil, fmt.Errorf("anthropic: API error: %s", apiErr.Message)
-		}
-		return nil, fmt.Errorf("anthropic: HTTP %d", resp.StatusCode)
-	}
-
-	return body, nil
+	return p.client.DoJSON(ctx, "anthropic", req, out)
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
@@ -97,14 +82,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			path += "&after_id=" + afterID
 		}
 
-		body, err := p.doRequest(ctx, http.MethodGet, path)
-		if err != nil {
-			return nil, err
-		}
-
 		var resp listUsersResponse
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("anthropic: decode response: %w", err)
+		if err := p.doRequest(ctx, http.MethodGet, path, &resp); err != nil {
+			return nil, err
 		}
 
 		for _, u := range resp.Data {
@@ -147,8 +127,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 		return fmt.Errorf("anthropic: user %s not found", email)
 	}
 
-	_, err = p.doRequest(ctx, http.MethodDelete, "/v1/organizations/users/"+userID)
-	return err
+	return p.doRequest(ctx, http.MethodDelete, "/v1/organizations/users/"+userID, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

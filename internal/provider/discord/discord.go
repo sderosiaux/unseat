@@ -2,12 +2,11 @@ package discord
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://discord.com"
@@ -16,11 +15,11 @@ type Provider struct {
 	token   string
 	guildID string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token, guildID string) *Provider {
-	return &Provider{token: token, guildID: guildID, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, guildID: guildID, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 func (p *Provider) WithBaseURL(url string) *Provider {
@@ -66,24 +65,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		}
 		req.Header.Set("Authorization", "Bot "+p.token)
 
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("discord: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("discord: API error (status %d): %s", resp.StatusCode, body)
-		}
-
 		var members []discordMember
-		if err := json.Unmarshal(body, &members); err != nil {
-			return nil, fmt.Errorf("discord: decode response: %w", err)
+		if err := p.client.DoJSON(ctx, "discord", req, &members); err != nil {
+			return nil, err
 		}
 
 		all = append(all, members...)
@@ -148,17 +132,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "Bot "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("discord: kick member failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "discord", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

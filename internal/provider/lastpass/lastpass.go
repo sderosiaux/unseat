@@ -5,27 +5,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://lastpass.com"
 
 type Provider struct {
-	cid             string
+	cid              string
 	provisioningHash string
-	baseURL         string
-	client          *http.Client
+	baseURL          string
+	client           *httpclient.Client
 }
 
 func New(cid, provisioningHash string) *Provider {
 	return &Provider{
-		cid:             cid,
+		cid:              cid,
 		provisioningHash: provisioningHash,
-		baseURL:         defaultBaseURL,
-		client:          &http.Client{},
+		baseURL:          defaultBaseURL,
+		client:           httpclient.New(),
 	}
 }
 
@@ -54,11 +54,11 @@ type apiRequest struct {
 }
 
 type userData struct {
-	UserName  string `json:"username"`
-	FullName  string `json:"fullname"`
-	Admin     bool   `json:"admin"`
-	Disabled  bool   `json:"disabled"`
-	Invited   bool   `json:"invited"`
+	UserName string `json:"username"`
+	FullName string `json:"fullname"`
+	Admin    bool   `json:"admin"`
+	Disabled bool   `json:"disabled"`
+	Invited  bool   `json:"invited"`
 }
 
 type getUserDataResponse struct {
@@ -66,7 +66,9 @@ type getUserDataResponse struct {
 	Total int                 `json:"total"`
 }
 
-func (p *Provider) doRequest(ctx context.Context, cmd string, data any) ([]byte, error) {
+// doRequest posts an Enterprise API command and decodes the JSON reply into out.
+// Pass nil for out to discard the body.
+func (p *Provider) doRequest(ctx context.Context, cmd string, data any, out any) error {
 	payload := apiRequest{
 		CID:      p.cid,
 		ProvHash: p.provisioningHash,
@@ -76,43 +78,23 @@ func (p *Provider) doRequest(ctx context.Context, cmd string, data any) ([]byte,
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("lastpass: marshal request: %w", err)
+		return fmt.Errorf("lastpass: marshal request: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/enterpriseapi.php", p.baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("lastpass: read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("lastpass: API error (status %d): %s", resp.StatusCode, respBody)
-	}
-
-	return respBody, nil
+	return p.client.DoJSON(ctx, "lastpass", req, out)
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	respBody, err := p.doRequest(ctx, "getuserdata", nil)
-	if err != nil {
-		return nil, err
-	}
-
 	var result getUserDataResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("lastpass: decode response: %w", err)
+	if err := p.doRequest(ctx, "getuserdata", nil, &result); err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(result.Users))
@@ -144,8 +126,10 @@ func (p *Provider) AddUser(_ context.Context, _, _ string) error {
 
 func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	data := map[string]string{"username": email}
-	respBody, err := p.doRequest(ctx, "deluser", data)
-	if err != nil {
+	// LastPass reports command failures in a 200 body, so the raw reply is kept
+	// verbatim for the error message.
+	var respBody json.RawMessage
+	if err := p.doRequest(ctx, "deluser", data, &respBody); err != nil {
 		return err
 	}
 

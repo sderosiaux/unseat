@@ -2,13 +2,12 @@ package netlify
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.netlify.com"
@@ -17,7 +16,7 @@ type Provider struct {
 	token       string
 	accountSlug string
 	baseURL     string
-	client      *http.Client
+	client      *httpclient.Client
 }
 
 func New(token, accountSlug string) *Provider {
@@ -25,7 +24,7 @@ func New(token, accountSlug string) *Provider {
 		token:       token,
 		accountSlug: accountSlug,
 		baseURL:     defaultBaseURL,
-		client:      &http.Client{},
+		client:      httpclient.New(),
 	}
 }
 
@@ -64,24 +63,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		}
 		req.Header.Set("Authorization", "Bearer "+p.token)
 
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("netlify: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("netlify: API error (status %d): %s", resp.StatusCode, body)
-		}
-
 		var members []netlifyMember
-		if err := json.Unmarshal(body, &members); err != nil {
-			return nil, fmt.Errorf("netlify: decode response: %w", err)
+		if err := p.client.DoJSON(ctx, "netlify", req, &members); err != nil {
+			return nil, err
 		}
 
 		for _, m := range members {
@@ -131,17 +115,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("netlify: remove member failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "netlify", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

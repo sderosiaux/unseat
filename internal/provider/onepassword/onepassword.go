@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://scim.1password.com"
@@ -16,11 +16,11 @@ const defaultBaseURL = "https://scim.1password.com"
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token string) *Provider {
-	return &Provider{token: token, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the SCIM bridge URL (useful for testing or self-hosted bridges).
@@ -53,13 +53,6 @@ type scimUser struct {
 	Active      bool        `json:"active"`
 }
 
-type scimListResponse struct {
-	Resources    []scimUser `json:"Resources"`
-	TotalResults int        `json:"totalResults"`
-	ItemsPerPage int        `json:"itemsPerPage"`
-	StartIndex   int        `json:"startIndex"`
-}
-
 type scimPatchOperation struct {
 	Op    string         `json:"op"`
 	Value map[string]any `json:"value"`
@@ -70,46 +63,19 @@ type scimPatchOp struct {
 	Operations []scimPatchOperation `json:"Operations"`
 }
 
+func (p *Provider) authorize(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Accept", "application/scim+json")
+}
+
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	var all []scimUser
-	startIndex := 1
-	count := 100
-
-	for {
-		url := fmt.Sprintf("%s/scim/v2/Users?startIndex=%d&count=%d", p.baseURL, startIndex, count)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+p.token)
-		req.Header.Set("Accept", "application/scim+json")
-
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("1password: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("1password: API error (status %d): %s", resp.StatusCode, body)
-		}
-
-		var result scimListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("1password: decode response: %w", err)
-		}
-
-		all = append(all, result.Resources...)
-
-		if startIndex+result.ItemsPerPage > result.TotalResults {
-			break
-		}
-		startIndex += result.ItemsPerPage
+	all, err := httpclient.ListSCIM[scimUser](ctx, p.client, httpclient.SCIMPageOptions{
+		Provider: "1password",
+		URL:      p.baseURL + "/scim/v2/Users",
+		Decorate: p.authorize,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(all))
@@ -178,17 +144,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	req.Header.Set("Authorization", "Bearer "+p.token)
 	req.Header.Set("Content-Type", "application/scim+json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("1password: deactivate user failed (status %d): %s", resp.StatusCode, respBody)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "1password", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

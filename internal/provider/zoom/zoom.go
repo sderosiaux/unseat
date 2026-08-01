@@ -2,13 +2,12 @@ package zoom
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.zoom.us"
@@ -16,11 +15,11 @@ const defaultBaseURL = "https://api.zoom.us"
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token string) *Provider {
-	return &Provider{token: token, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 func (p *Provider) WithBaseURL(url string) *Provider {
@@ -32,10 +31,11 @@ func (p *Provider) Name() string { return "zoom" }
 
 func (p *Provider) Capabilities() core.Capabilities {
 	return core.Capabilities{
-		CanAdd:     false,
-		CanRemove:  true,
-		CanSuspend: false,
-		CanSetRole: false,
+		CanAdd:          false,
+		CanRemove:       true,
+		CanSuspend:      false,
+		CanSetRole:      false,
+		ReportsActivity: true,
 	}
 }
 
@@ -73,24 +73,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		}
 		req.Header.Set("Authorization", "Bearer "+p.token)
 
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("zoom: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("zoom: API error (status %d): %s", resp.StatusCode, body)
-		}
-
 		var result zoomListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("zoom: decode response: %w", err)
+		if err := p.client.DoJSON(ctx, "zoom", req, &result); err != nil {
+			return nil, err
 		}
 
 		all = append(all, result.Users...)
@@ -155,17 +140,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("zoom: remove user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "zoom", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

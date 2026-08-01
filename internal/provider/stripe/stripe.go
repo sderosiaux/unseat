@@ -5,11 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://access.stripe.com"
@@ -17,11 +17,11 @@ const defaultBaseURL = "https://access.stripe.com"
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token string) *Provider {
-	return &Provider{token: token, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the API base URL (useful for testing).
@@ -75,45 +75,19 @@ type scimCreateRequest struct {
 	Active   bool        `json:"active"`
 }
 
+func (p *Provider) authorize(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+p.token)
+}
+
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
-	var all []scimUser
-	startIndex := 1
-	count := 100
-
-	for {
-		url := fmt.Sprintf("%s/scim/v2/Users?startIndex=%d&count=%d", p.baseURL, startIndex, count)
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+p.token)
-
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("stripe: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("stripe: API error (status %d): %s", resp.StatusCode, body)
-		}
-
-		var result scimListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("stripe: decode response: %w", err)
-		}
-
-		all = append(all, result.Resources...)
-
-		if startIndex+result.ItemsPerPage > result.TotalResults {
-			break
-		}
-		startIndex += result.ItemsPerPage
+	all, err := httpclient.ListSCIM[scimUser](ctx, p.client, httpclient.SCIMPageOptions{
+		Provider: "stripe",
+		URL:      p.baseURL + "/scim/v2/Users",
+		PageSize: 100,
+		Decorate: p.authorize,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(all))
@@ -158,20 +132,10 @@ func (p *Provider) AddUser(ctx context.Context, email string, _ string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+p.token)
+	p.authorize(req)
 	req.Header.Set("Content-Type", "application/scim+json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("stripe: create user failed (status %d): %s", resp.StatusCode, respBody)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "stripe", req, nil)
 }
 
 func (p *Provider) RemoveUser(ctx context.Context, email string) error {
@@ -195,19 +159,9 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+p.token)
+	p.authorize(req)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("stripe: delete user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "stripe", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

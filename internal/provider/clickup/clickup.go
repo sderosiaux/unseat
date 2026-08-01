@@ -2,13 +2,12 @@ package clickup
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.clickup.com"
@@ -17,7 +16,7 @@ type Provider struct {
 	token   string
 	teamID  string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token, teamID string) *Provider {
@@ -25,7 +24,7 @@ func New(token, teamID string) *Provider {
 		token:   token,
 		teamID:  teamID,
 		baseURL: defaultBaseURL,
-		client:  &http.Client{},
+		client:  httpclient.New(),
 	}
 }
 
@@ -90,24 +89,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	}
 	req.Header.Set("Authorization", p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("clickup: read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("clickup: API error (status %d): %s", resp.StatusCode, body)
-	}
-
 	var result getTeamResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("clickup: decode response: %w", err)
+	if err := p.client.DoJSON(ctx, "clickup", req, &result); err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(result.Team.Members))
@@ -151,17 +135,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("clickup: remove user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "clickup", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

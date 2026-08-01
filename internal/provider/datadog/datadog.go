@@ -2,13 +2,12 @@ package datadog
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.datadoghq.com"
@@ -17,7 +16,7 @@ type Provider struct {
 	apiKey  string
 	appKey  string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(apiKey, appKey string) *Provider {
@@ -25,7 +24,7 @@ func New(apiKey, appKey string) *Provider {
 		apiKey:  apiKey,
 		appKey:  appKey,
 		baseURL: defaultBaseURL,
-		client:  &http.Client{},
+		client:  httpclient.New(),
 	}
 }
 
@@ -89,24 +88,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		}
 		p.setAuthHeaders(req)
 
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("datadog: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("datadog: API error (status %d): %s", resp.StatusCode, body)
-		}
-
 		var result listUsersResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("datadog: decode response: %w", err)
+		if err := p.client.DoJSON(ctx, "datadog", req, &result); err != nil {
+			return nil, err
 		}
 
 		for _, u := range result.Data {
@@ -162,17 +146,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	p.setAuthHeaders(req)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("datadog: remove user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "datadog", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

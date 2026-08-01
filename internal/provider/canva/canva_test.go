@@ -3,13 +3,19 @@ package canva
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// scimListResponse is the SCIM envelope Canva returns; the connector now
+// decodes it through httpclient.ListSCIM, so the tests build it explicitly.
+type scimListResponse = httpclient.SCIMListResponse[scimUser]
 
 func TestProviderName(t *testing.T) {
 	p := New("test-token")
@@ -83,30 +89,27 @@ func TestListUsers(t *testing.T) {
 	assert.Equal(t, "suspended", users[2].Status)
 }
 
+func page(startIndex, n, total int) scimListResponse {
+	resources := make([]scimUser, n)
+	for i := range resources {
+		id := startIndex + i
+		email := fmt.Sprintf("u%d@co.com", id)
+		resources[i] = scimUser{ID: fmt.Sprintf("s%d", id), UserName: email, Emails: []scimEmail{{Value: email}}, Active: true}
+	}
+	return scimListResponse{TotalResults: total, StartIndex: startIndex, ItemsPerPage: n, Resources: resources}
+}
+
 func TestListUsersPagination(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
+		assert.Equal(t, "10", r.URL.Query().Get("count"))
 		if callCount == 1 {
 			assert.Equal(t, "1", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(scimListResponse{
-				TotalResults: 12,
-				StartIndex:   1,
-				ItemsPerPage: 10,
-				Resources: []scimUser{
-					{ID: "s1", UserName: "alice@co.com", Emails: []scimEmail{{Value: "alice@co.com"}}, Active: true},
-				},
-			})
+			json.NewEncoder(w).Encode(page(1, 10, 12))
 		} else {
 			assert.Equal(t, "11", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(scimListResponse{
-				TotalResults: 12,
-				StartIndex:   11,
-				ItemsPerPage: 10,
-				Resources: []scimUser{
-					{ID: "s2", UserName: "bob@co.com", Emails: []scimEmail{{Value: "bob@co.com"}}, Active: true},
-				},
-			})
+			json.NewEncoder(w).Encode(page(11, 2, 12))
 		}
 	}))
 	defer server.Close()
@@ -114,10 +117,55 @@ func TestListUsersPagination(t *testing.T) {
 	p := New("test-token").WithBaseURL(server.URL)
 	users, err := p.ListUsers(context.Background())
 	require.NoError(t, err)
-	require.Len(t, users, 2)
+	require.Len(t, users, 12)
 	assert.Equal(t, 2, callCount)
-	assert.Equal(t, "alice@co.com", users[0].Email)
-	assert.Equal(t, "bob@co.com", users[1].Email)
+	assert.Equal(t, "u1@co.com", users[0].Email)
+	assert.Equal(t, "u12@co.com", users[11].Email)
+}
+
+// A short page must advance startIndex by what the page actually contained.
+// Advancing by the requested count instead skipped every user the server did
+// not return, so a throttled tenant reported seats as unassigned.
+func TestListUsersShortPage(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			assert.Equal(t, "1", r.URL.Query().Get("startIndex"))
+			json.NewEncoder(w).Encode(page(1, 3, 5))
+		} else {
+			assert.Equal(t, "4", r.URL.Query().Get("startIndex"))
+			json.NewEncoder(w).Encode(page(4, 2, 5))
+		}
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 5)
+	assert.Equal(t, 2, callCount)
+}
+
+// An empty page while the server still claims more results must fail loudly
+// rather than spin forever or silently truncate the inventory.
+func TestListUsersStalledPagination(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			json.NewEncoder(w).Encode(page(1, 1, 50))
+		} else {
+			json.NewEncoder(w).Encode(scimListResponse{TotalResults: 50, StartIndex: 2, Resources: []scimUser{}})
+		}
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	_, err := p.ListUsers(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pagination stalled")
+	assert.Equal(t, 2, callCount)
 }
 
 func TestRemoveUser(t *testing.T) {

@@ -2,12 +2,11 @@ package claudecode
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.anthropic.com"
@@ -15,11 +14,11 @@ const defaultBaseURL = "https://api.anthropic.com"
 type Provider struct {
 	apiKey  string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(apiKey string) *Provider {
-	return &Provider{apiKey: apiKey, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{apiKey: apiKey, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the API endpoint (useful for testing).
@@ -52,6 +51,11 @@ type apiListResponse struct {
 	LastID  string    `json:"last_id,omitempty"`
 }
 
+func (p *Provider) setAuthHeaders(req *http.Request) {
+	req.Header.Set("x-api-key", p.apiKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+}
+
 // fetchAllUsers retrieves all organization users via cursor pagination.
 func (p *Provider) fetchAllUsers(ctx context.Context) ([]apiUser, error) {
 	var all []apiUser
@@ -67,27 +71,11 @@ func (p *Provider) fetchAllUsers(ctx context.Context) ([]apiUser, error) {
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("x-api-key", p.apiKey)
-		req.Header.Set("anthropic-version", "2023-06-01")
-
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("claude-code: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("claude-code: API returned %d: %s", resp.StatusCode, body)
-		}
+		p.setAuthHeaders(req)
 
 		var listResp apiListResponse
-		if err := json.Unmarshal(body, &listResp); err != nil {
-			return nil, fmt.Errorf("claude-code: decode response: %w", err)
+		if err := p.client.DoJSON(ctx, "claude-code", req, &listResp); err != nil {
+			return nil, err
 		}
 
 		all = append(all, listResp.Data...)
@@ -149,20 +137,9 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("x-api-key", p.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
+	p.setAuthHeaders(req)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("claude-code: delete user %s failed with %d: %s", email, resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "claude-code", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

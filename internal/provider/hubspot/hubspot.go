@@ -2,13 +2,12 @@ package hubspot
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.hubapi.com"
@@ -16,11 +15,11 @@ const defaultBaseURL = "https://api.hubapi.com"
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token string) *Provider {
-	return &Provider{token: token, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 func (p *Provider) WithBaseURL(url string) *Provider {
@@ -36,6 +35,8 @@ func (p *Provider) Capabilities() core.Capabilities {
 		CanRemove:  true,
 		CanSuspend: false,
 		CanSetRole: false,
+		// Users carry lastActiveTime.
+		ReportsActivity: true,
 	}
 }
 
@@ -62,27 +63,14 @@ type usersResponse struct {
 	Paging  *paging       `json:"paging,omitempty"`
 }
 
-func (p *Provider) doGet(ctx context.Context, path string) ([]byte, error) {
+func (p *Provider) doGet(ctx context.Context, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+path, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("hubspot: read response: %w", err)
-	}
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("hubspot: API error %d: %s", resp.StatusCode, body)
-	}
-	return body, nil
+	return p.client.DoJSON(ctx, "hubspot", req, out)
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
@@ -95,14 +83,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			path += "?after=" + after
 		}
 
-		body, err := p.doGet(ctx, path)
-		if err != nil {
-			return nil, err
-		}
-
 		var resp usersResponse
-		if err := json.Unmarshal(body, &resp); err != nil {
-			return nil, fmt.Errorf("hubspot: decode response: %w", err)
+		if err := p.doGet(ctx, path, &resp); err != nil {
+			return nil, err
 		}
 
 		for _, u := range resp.Results {
@@ -160,17 +143,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("hubspot: delete user failed %d: %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "hubspot", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

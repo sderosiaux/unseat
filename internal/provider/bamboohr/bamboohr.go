@@ -2,12 +2,11 @@ package bamboohr
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.bamboohr.com"
@@ -16,11 +15,11 @@ type Provider struct {
 	apiKey    string
 	subdomain string
 	baseURL   string
-	client    *http.Client
+	client    *httpclient.Client
 }
 
 func New(apiKey, subdomain string) *Provider {
-	return &Provider{apiKey: apiKey, subdomain: subdomain, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{apiKey: apiKey, subdomain: subdomain, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the API base URL (useful for testing).
@@ -63,24 +62,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	p.setBasicAuth(req)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("bamboohr: read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bamboohr: API error (status %d): %s", resp.StatusCode, body)
-	}
-
 	var result directoryResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("bamboohr: decode response: %w", err)
+	if err := p.client.DoJSON(ctx, "bamboohr", req, &result); err != nil {
+		return nil, err
 	}
 
 	users := make([]core.User, 0, len(result.Employees))
@@ -125,17 +109,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	p.setBasicAuth(req)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("bamboohr: terminate employee failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "bamboohr", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

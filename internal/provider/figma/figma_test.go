@@ -90,6 +90,32 @@ func TestListUsersPagination(t *testing.T) {
 	assert.Equal(t, 2, callCount)
 }
 
+// A server that claims more results than it returns used to spin the
+// hand-rolled startIndex loop forever. The shared SCIM walker fails instead.
+func TestListUsersStalledPagination(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if r.URL.Query().Get("startIndex") == "1" {
+			json.NewEncoder(w).Encode(scimListResponse{
+				TotalResults: 10,
+				Resources: []scimUser{
+					{ID: "1", UserName: "a@co.com", DisplayName: "A", Active: true},
+				},
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(scimListResponse{TotalResults: 10, Resources: []scimUser{}})
+	}))
+	defer server.Close()
+
+	p := New("test-token", "tenant-1").WithBaseURL(server.URL)
+	_, err := p.ListUsers(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pagination stalled")
+	assert.Equal(t, 2, callCount)
+}
+
 func TestRemoveUser(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

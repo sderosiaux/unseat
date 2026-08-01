@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +34,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/scim/v2/Users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(scimListResponse{
+		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 			Resources: []scimUser{
 				{
 					ID:          "U001",
@@ -78,7 +79,7 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "1", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(scimListResponse{
+			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "U1", UserName: "u1@co.com", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
 					{ID: "U2", UserName: "u2@co.com", DisplayName: "User 2", Emails: []scimEmail{{Value: "u2@co.com", Primary: true}}, Active: true},
@@ -89,7 +90,7 @@ func TestListUsersPagination(t *testing.T) {
 			})
 		} else {
 			assert.Equal(t, "3", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(scimListResponse{
+			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "U3", UserName: "u3@co.com", DisplayName: "User 3", Emails: []scimEmail{{Value: "u3@co.com", Primary: true}}, Active: true},
 				},
@@ -113,7 +114,7 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(scimListResponse{
+			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "U001", UserName: "alice@co.com", DisplayName: "Alice", Emails: []scimEmail{{Value: "alice@co.com", Primary: true}}, Active: true},
 				},
@@ -145,7 +146,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(scimListResponse{
+		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 			Resources:    []scimUser{},
 			TotalResults: 0,
 			ItemsPerPage: 100,

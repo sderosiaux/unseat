@@ -2,28 +2,27 @@ package auth0
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token, domain string) *Provider {
 	return &Provider{
 		token:   token,
 		baseURL: fmt.Sprintf("https://%s", domain),
-		client:  &http.Client{},
+		client:  httpclient.New(),
 	}
 }
 
@@ -37,10 +36,11 @@ func (p *Provider) Name() string { return "auth0" }
 
 func (p *Provider) Capabilities() core.Capabilities {
 	return core.Capabilities{
-		CanAdd:     false,
-		CanRemove:  true,
-		CanSuspend: false,
-		CanSetRole: false,
+		CanAdd:          false,
+		CanRemove:       true,
+		CanSuspend:      false,
+		CanSetRole:      false,
+		ReportsActivity: true,
 	}
 }
 
@@ -79,24 +79,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		req.Header.Set("Authorization", "Bearer "+p.token)
 		req.Header.Set("Accept", "application/json")
 
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("auth0: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("auth0: API error (status %d): %s", resp.StatusCode, body)
-		}
-
 		var result listUsersResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("auth0: decode response: %w", err)
+		if err := p.client.DoJSON(ctx, "auth0", req, &result); err != nil {
+			return nil, err
 		}
 
 		all = append(all, result.Users...)
@@ -158,17 +143,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("auth0: delete user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "auth0", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

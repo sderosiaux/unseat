@@ -11,19 +11,24 @@ import (
 	"time"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
+
+// maxErrorBody caps how much of an error response is echoed back, matching the
+// shared client. Vendor error pages can be HTML megabytes and end up in logs.
+const maxErrorBody = 2 << 10
 
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token, domain string) *Provider {
 	return &Provider{
 		token:   token,
 		baseURL: fmt.Sprintf("https://%s.okta.com", domain),
-		client:  &http.Client{},
+		client:  httpclient.New(),
 	}
 }
 
@@ -37,10 +42,11 @@ func (p *Provider) Name() string { return "okta" }
 
 func (p *Provider) Capabilities() core.Capabilities {
 	return core.Capabilities{
-		CanAdd:     false,
-		CanRemove:  true,
-		CanSuspend: true,
-		CanSetRole: false,
+		CanAdd:          false,
+		CanRemove:       true,
+		CanSuspend:      true,
+		CanSetRole:      false,
+		ReportsActivity: true,
 	}
 }
 
@@ -62,48 +68,57 @@ type oktaUser struct {
 // linkRegexp parses RFC 5988 Link headers: <url>; rel="next"
 var linkRegexp = regexp.MustCompile(`<([^>]+)>;\s*rel="next"`)
 
+// getPage fetches one page of users and returns the URL of the next one, taken
+// from the Link header. Okta drives pagination through response headers, so
+// this cannot go through DoJSON — that hands back only the decoded body.
+func (p *Provider) getPage(ctx context.Context, url string) ([]oktaUser, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	req.Header.Set("Authorization", "SSWS "+p.token)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := p.client.Do(ctx, req)
+	if err != nil {
+		return nil, "", fmt.Errorf("okta: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		return nil, "", &httpclient.APIError{
+			Provider:   "okta",
+			StatusCode: resp.StatusCode,
+			Body:       string(body),
+			URL:        req.URL.String(),
+		}
+	}
+
+	var page []oktaUser
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return nil, "", fmt.Errorf("okta: decode response: %w", err)
+	}
+
+	for _, link := range resp.Header.Values("Link") {
+		if matches := linkRegexp.FindStringSubmatch(link); len(matches) == 2 {
+			return page, matches[1], nil
+		}
+	}
+	return page, "", nil
+}
+
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	var all []oktaUser
 	nextURL := fmt.Sprintf("%s/api/v1/users?limit=200", p.baseURL)
 
 	for nextURL != "" {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
+		page, next, err := p.getPage(ctx, nextURL)
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("Authorization", "SSWS "+p.token)
-		req.Header.Set("Accept", "application/json")
-
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("okta: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("okta: API error (status %d): %s", resp.StatusCode, body)
-		}
-
-		var page []oktaUser
-		if err := json.Unmarshal(body, &page); err != nil {
-			return nil, fmt.Errorf("okta: decode response: %w", err)
-		}
-
 		all = append(all, page...)
-
-		// Parse Link header for next page.
-		nextURL = ""
-		for _, link := range resp.Header.Values("Link") {
-			if matches := linkRegexp.FindStringSubmatch(link); len(matches) == 2 {
-				nextURL = matches[1]
-				break
-			}
-		}
+		nextURL = next
 	}
 
 	users := make([]core.User, 0, len(all))
@@ -174,17 +189,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "SSWS "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("okta: deactivate user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "okta", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

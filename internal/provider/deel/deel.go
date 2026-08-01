@@ -2,12 +2,11 @@ package deel
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.deel.com"
@@ -15,11 +14,11 @@ const defaultBaseURL = "https://api.deel.com"
 type Provider struct {
 	token   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token string) *Provider {
-	return &Provider{token: token, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 // WithBaseURL overrides the API base URL (useful for testing).
@@ -50,9 +49,9 @@ type deelListResponse struct {
 }
 
 type deelPage struct {
-	Offset     int `json:"offset"`
-	Limit      int `json:"limit"`
-	TotalRows  int `json:"total_rows"`
+	Offset    int `json:"offset"`
+	Limit     int `json:"limit"`
+	TotalRows int `json:"total_rows"`
 }
 
 func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
@@ -69,24 +68,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		req.Header.Set("Authorization", "Bearer "+p.token)
 		req.Header.Set("Accept", "application/json")
 
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("deel: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("deel: API error (status %d): %s", resp.StatusCode, body)
-		}
-
 		var result deelListResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("deel: decode response: %w", err)
+		if err := p.client.DoJSON(ctx, "deel", req, &result); err != nil {
+			return nil, err
 		}
 
 		all = append(all, result.Data...)
@@ -154,17 +138,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("deel: terminate user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "deel", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

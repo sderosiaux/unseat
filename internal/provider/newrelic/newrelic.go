@@ -2,13 +2,12 @@ package newrelic
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.newrelic.com"
@@ -16,14 +15,14 @@ const defaultBaseURL = "https://api.newrelic.com"
 type Provider struct {
 	apiKey  string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(apiKey string) *Provider {
 	return &Provider{
 		apiKey:  apiKey,
 		baseURL: defaultBaseURL,
-		client:  &http.Client{},
+		client:  httpclient.New(),
 	}
 }
 
@@ -65,24 +64,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		}
 		req.Header.Set("Api-Key", p.apiKey)
 
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("newrelic: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("newrelic: API error (status %d): %s", resp.StatusCode, body)
-		}
-
 		var result listUsersResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("newrelic: decode response: %w", err)
+		if err := p.client.DoJSON(ctx, "newrelic", req, &result); err != nil {
+			return nil, err
 		}
 
 		for _, u := range result.Users {
@@ -136,17 +120,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Api-Key", p.apiKey)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("newrelic: remove user failed (status %d): %s", resp.StatusCode, body)
-	}
-	return nil
+	return p.client.DoJSON(ctx, "newrelic", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

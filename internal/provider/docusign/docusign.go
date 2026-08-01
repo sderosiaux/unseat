@@ -2,12 +2,11 @@ package docusign
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/sderosiaux/unseat/internal/core"
+	"github.com/sderosiaux/unseat/internal/provider/httpclient"
 )
 
 const defaultBaseURL = "https://api.docusign.com/management"
@@ -16,11 +15,11 @@ type Provider struct {
 	token   string
 	orgID   string
 	baseURL string
-	client  *http.Client
+	client  *httpclient.Client
 }
 
 func New(token, orgID string) *Provider {
-	return &Provider{token: token, orgID: orgID, baseURL: defaultBaseURL, client: &http.Client{}}
+	return &Provider{token: token, orgID: orgID, baseURL: defaultBaseURL, client: httpclient.New()}
 }
 
 func (p *Provider) WithBaseURL(url string) *Provider {
@@ -44,7 +43,7 @@ type dsUser struct {
 }
 
 type usersResponse struct {
-	Users []dsUser `json:"users"`
+	Users  []dsUser `json:"users"`
 	Paging struct {
 		ResultSetSize          int `json:"result_set_size"`
 		ResultSetStartPosition int `json:"result_set_start_position"`
@@ -66,24 +65,9 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 		}
 		req.Header.Set("Authorization", "Bearer "+p.token)
 
-		resp, err := p.client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		defer resp.Body.Close()
-
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("docusign: read response: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("docusign: API returned %d: %s", resp.StatusCode, body)
-		}
-
 		var result usersResponse
-		if err := json.Unmarshal(body, &result); err != nil {
-			return nil, fmt.Errorf("docusign: decode response: %w", err)
+		if err := p.client.DoJSON(ctx, "docusign", req, &result); err != nil {
+			return nil, err
 		}
 
 		for _, u := range result.Users {
@@ -137,18 +121,7 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 	}
 	req.Header.Set("Authorization", "Bearer "+p.token)
 
-	resp, err := p.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("docusign: delete user returned %d: %s", resp.StatusCode, body)
-	}
-
-	return nil
+	return p.client.DoJSON(ctx, "docusign", req, nil)
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

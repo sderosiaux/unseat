@@ -229,7 +229,7 @@ func runAuditSeats(cmd *cobra.Command, _ []string) error {
 	fmt.Println("unresolved = username with no email and no alias — add an alias to judge it")
 
 	reportUnresolved(audit.Seats, audit.Directory, cfg.CorporateDomain())
-	reportGhosts(audit.Seats, audit.Directory)
+	reportGhosts(audit.Seats, audit.Directory, cfg.CorporateDomain())
 	reportFailures(audit.Failed)
 	return nil
 }
@@ -239,8 +239,8 @@ func runAuditSeats(cmd *cobra.Command, _ []string) error {
 // does not control. Deactivating the Workspace account will not touch them —
 // that is exactly why they need to be called out by name rather than folded
 // into the ordinary external count.
-func reportGhosts(seats []core.ClassifiedSeat, directory []core.User) {
-	ghosts := core.FindGhostIdentities(seats, directory)
+func reportGhosts(seats []core.ClassifiedSeat, directory []core.User, domain string) {
+	ghosts := core.FindGhostIdentities(seats, directory, domain)
 	if len(ghosts) == 0 {
 		return
 	}

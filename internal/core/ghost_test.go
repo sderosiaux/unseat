@@ -28,7 +28,7 @@ func TestFindGhostIdentities_ActiveEmployeeOnPersonalAddress(t *testing.T) {
 		{Email: "omar.haddad@corp.io", DisplayName: "Omar Haddad", Status: StatusActive},
 	}
 
-	ghosts := FindGhostIdentities(seats, directory)
+	ghosts := FindGhostIdentities(seats, directory, "corp.io")
 
 	require.Len(t, ghosts, 1)
 	assert.Equal(t, "github", ghosts[0].Provider)
@@ -45,7 +45,7 @@ func TestFindGhostIdentities_SameIdentitySuspendedIsNotAGhost(t *testing.T) {
 		{Email: "omar.haddad@corp.io", DisplayName: "Omar Haddad", Status: StatusSuspended},
 	}
 
-	ghosts := FindGhostIdentities(seats, directory)
+	ghosts := FindGhostIdentities(seats, directory, "corp.io")
 
 	assert.Empty(t, ghosts)
 }
@@ -58,7 +58,7 @@ func TestFindGhostIdentities_TrueExternalMatchingNobodyIsNotAGhost(t *testing.T)
 		{Email: "omar.haddad@corp.io", DisplayName: "Omar Haddad", Status: StatusActive},
 	}
 
-	ghosts := FindGhostIdentities(seats, directory)
+	ghosts := FindGhostIdentities(seats, directory, "corp.io")
 
 	assert.Empty(t, ghosts)
 }
@@ -75,7 +75,7 @@ func TestFindGhostIdentities_AmbiguityYieldsNothing(t *testing.T) {
 		{Email: "j.smith2@corp.io", DisplayName: "John Smith", Status: StatusActive},
 	}
 
-	ghosts := FindGhostIdentities(seats, directory)
+	ghosts := FindGhostIdentities(seats, directory, "corp.io")
 
 	assert.Empty(t, ghosts)
 }
@@ -88,7 +88,7 @@ func TestFindGhostIdentities_CaseAndAccentInsensitive(t *testing.T) {
 		{Email: "camille@corp.io", DisplayName: "Camille Duflot", Status: StatusActive},
 	}
 
-	ghosts := FindGhostIdentities(seats, directory)
+	ghosts := FindGhostIdentities(seats, directory, "corp.io")
 
 	require.Len(t, ghosts, 1)
 	assert.Equal(t, "camille@corp.io", ghosts[0].Email)
@@ -104,7 +104,7 @@ func TestFindGhostIdentities_MatchesOnLocalPartWhenNoUsableName(t *testing.T) {
 		{Email: "camille@corp.io", DisplayName: "Camille Duflot", Status: StatusActive},
 	}
 
-	ghosts := FindGhostIdentities(seats, directory)
+	ghosts := FindGhostIdentities(seats, directory, "corp.io")
 
 	require.Len(t, ghosts, 1)
 	assert.Equal(t, "camille@corp.io", ghosts[0].Email)
@@ -123,7 +123,7 @@ func TestFindGhostIdentities_IgnoresNonExternalSeats(t *testing.T) {
 		{Email: "omar.haddad@corp.io", DisplayName: "Omar Haddad", Status: StatusActive},
 	}
 
-	ghosts := FindGhostIdentities(seats, directory)
+	ghosts := FindGhostIdentities(seats, directory, "corp.io")
 
 	assert.Empty(t, ghosts)
 }
@@ -143,7 +143,7 @@ func TestFindGhostIdentitiesStatedNameVetoesWeakerBranches(t *testing.T) {
 		User:     User{Email: "jsmith@vendor.io", DisplayName: "Jane Smith"},
 	}}
 
-	assert.Empty(t, FindGhostIdentities(seats, directory),
+	assert.Empty(t, FindGhostIdentities(seats, directory, "corp.io"),
 		"the provider named someone the directory does not have — that contradicts, it does not merely fail to confirm")
 }
 
@@ -161,5 +161,95 @@ func TestFindGhostIdentitiesAmbiguousLocalPartNamesNobody(t *testing.T) {
 		User:     User{Email: "jsmith@vendor.io"},
 	}}
 
-	assert.Empty(t, FindGhostIdentities(seats, directory))
+	assert.Empty(t, FindGhostIdentities(seats, directory, "corp.io"))
+}
+
+// A directory identity with no Status set (or one this codebase does not
+// recognise) must not pass as active. Checking match.Status == StatusActive
+// rather than match.Status != StatusSuspended is what stops that — the
+// deny-list version would let this straight through.
+func TestFindGhostIdentitiesRequiresExplicitActiveStatus(t *testing.T) {
+	seats := []ClassifiedSeat{
+		externalSeat("github", "omarhaddad2017@gmail.com", "Omar Haddad"),
+	}
+	directory := []User{
+		{Email: "omar.haddad@corp.io", DisplayName: "Omar Haddad", Status: ""},
+	}
+
+	assert.Empty(t, FindGhostIdentities(seats, directory, "corp.io"))
+}
+
+// The provider-assigned login (GitHub's handle, distinct from the address
+// signed up with) is the third and weakest matching branch. It has to carry a
+// match on its own when neither the display name nor the address local part
+// says anything usable.
+func TestFindGhostIdentitiesMatchesOnProviderLogin(t *testing.T) {
+	directory := []User{
+		{Email: "camille@corp.io", DisplayName: "Camille Duflot", Status: StatusActive},
+	}
+	seats := []ClassifiedSeat{{
+		Provider: "github",
+		RawEmail: "randomcontractor99@personal.com",
+		Class:    SeatExternal,
+		User: User{
+			Email:    "randomcontractor99@personal.com",
+			Metadata: map[string]string{"login": "camiller"},
+		},
+	}}
+
+	ghosts := FindGhostIdentities(seats, directory, "corp.io")
+
+	require.Len(t, ghosts, 1)
+	assert.Equal(t, "camille@corp.io", ghosts[0].Email)
+	assert.Contains(t, ghosts[0].Basis, "handle")
+}
+
+// When the local part of the address already answers the match, the login
+// branch must never run — even when the login spells a different, equally
+// real directory identity. Reaching it anyway would let a provider-assigned
+// handle silently override a stronger signal that already resolved.
+func TestFindGhostIdentitiesLoginNotReachedWhenLocalPartAlreadyMatched(t *testing.T) {
+	directory := []User{
+		{Email: "camille@corp.io", DisplayName: "Camille Duflot", Status: StatusActive},
+		{Email: "unrelated@corp.io", DisplayName: "Unrelated Login", Status: StatusActive},
+	}
+	seats := []ClassifiedSeat{{
+		Provider: "github",
+		RawEmail: "camiller@personal.com",
+		Class:    SeatExternal,
+		User: User{
+			Email:    "camiller@personal.com",
+			Metadata: map[string]string{"login": "unrelatedlogin"},
+		},
+	}}
+
+	ghosts := FindGhostIdentities(seats, directory, "corp.io")
+
+	require.Len(t, ghosts, 1)
+	assert.Equal(t, "camille@corp.io", ghosts[0].Email,
+		"the login would have named a different, equally valid identity — it must not have been consulted")
+	assert.Contains(t, ghosts[0].Basis, "local part")
+}
+
+// The company label stripped from handles in AttributeUnresolved must apply
+// here too, or a seat like "someone-acme" is a ghost in one report and
+// invisible in the other for no reason a reader can see.
+func TestFindGhostIdentitiesStripsCompanyLabelFromHandle(t *testing.T) {
+	directory := []User{
+		{Email: "will.benton@corp.io", DisplayName: "William Benton", Status: StatusActive},
+	}
+	seats := []ClassifiedSeat{{
+		Provider: "github",
+		RawEmail: "willbenton-acme@personal.com",
+		Class:    SeatExternal,
+		User:     User{Email: "willbenton-acme@personal.com"},
+	}}
+
+	ghosts := FindGhostIdentities(seats, directory, "acme.com")
+	require.Len(t, ghosts, 1)
+	assert.Equal(t, "will.benton@corp.io", ghosts[0].Email)
+
+	// Without the domain to derive the label from, the same handle carries
+	// no usable signal — the company suffix is exactly what made it readable.
+	assert.Empty(t, FindGhostIdentities(seats, directory, ""))
 }

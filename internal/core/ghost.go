@@ -43,12 +43,21 @@ func localPart(email string) string {
 // uses for unresolved seats — the risk lives in the same ambiguity rule: a
 // form two identities could claim names neither.
 //
-// Only seats matched to a directory identity that is currently ACTIVE are
-// reported. A departed person who happened to sign up under a personal
-// address is an ordinary external — nobody's offboarding is silently
-// incomplete because of them.
-func FindGhostIdentities(seats []ClassifiedSeat, directory []User) []GhostIdentity {
+// Only seats matched to a directory identity whose Status is explicitly
+// StatusActive are reported — checking for StatusActive rather than rejecting
+// StatusSuspended, so an identity with an empty or unexpected status cannot
+// slip through and be reported as a match. A departed person who happened to
+// sign up under a personal address is an ordinary external — nobody's
+// offboarding is silently incomplete because of them.
+func FindGhostIdentities(seats []ClassifiedSeat, directory []User, domain string) []GhostIdentity {
 	keys := buildDirectoryKeys(directory)
+	// Same company-label decoration AttributeUnresolved strips off a handle
+	// (someone-acme) — this matcher must recognise the same noise or it
+	// misses ghosts AttributeUnresolved would have caught.
+	noise := handleNoise
+	if label := companyLabel(domain); label != "" {
+		noise = append(append([]string{}, handleNoise...), "-"+label, "_"+label)
+	}
 
 	var out []GhostIdentity
 	for _, seat := range seats {
@@ -86,7 +95,7 @@ func FindGhostIdentities(seats []ClassifiedSeat, directory []User) []GhostIdenti
 		// the name in disguise, e.g. tessaljvandermeer for Tessa Vandermeer.
 		local := localPart(seat.RawEmail)
 		if !ok && local != "" {
-			match, basis, ok = matchHandle(local, keys, handleNoise)
+			match, basis, ok = matchHandle(local, keys, noise)
 			if ok {
 				basis = "local part of external address " + basis
 			}
@@ -96,13 +105,13 @@ func FindGhostIdentities(seats []ClassifiedSeat, directory []User) []GhostIdenti
 		// (GitHub's login, distinct from the email a person signed up with).
 		login := seat.User.Metadata["login"]
 		if !ok && login != "" && !strings.EqualFold(login, local) {
-			match, basis, ok = matchHandle(login, keys, handleNoise)
+			match, basis, ok = matchHandle(login, keys, noise)
 			if ok {
 				basis = "handle " + basis
 			}
 		}
 
-		if !ok || match.Status == StatusSuspended {
+		if !ok || match.Status != StatusActive {
 			continue
 		}
 

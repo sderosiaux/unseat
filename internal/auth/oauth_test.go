@@ -65,9 +65,18 @@ func TestRunOAuthFlowTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := RunOAuthFlow(ctx, cfg, "test-client-id", "test-client-secret")
+	// Never launch a real browser from a test: `go test ./...` would pop a
+	// window on the developer's machine on every run.
+	var opened []string
+	_, err := RunOAuthFlow(ctx, cfg, "test-client-id", "test-client-secret",
+		WithBrowserOpener(func(url string) { opened = append(opened, url) }))
+
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "context deadline exceeded")
+
+	// The URL is still built and handed over — only the launching is stubbed.
+	require.Len(t, opened, 1)
+	assert.Contains(t, opened[0], "client_id=test-client-id")
 }
 
 func TestOAuthCallbackHandler(t *testing.T) {

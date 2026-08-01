@@ -21,9 +21,30 @@ type OAuthResult struct {
 	TokenExpiry  time.Time
 }
 
+// flowOptions configures a single OAuth run.
+type flowOptions struct {
+	openURL func(string)
+}
+
+// FlowOption customises RunOAuthFlow.
+type FlowOption func(*flowOptions)
+
+// WithBrowserOpener replaces how the authorization URL is presented.
+//
+// Tests must pass a no-op: RunOAuthFlow otherwise launches a real browser
+// window on the developer's machine on every `go test ./...`.
+func WithBrowserOpener(open func(string)) FlowOption {
+	return func(o *flowOptions) { o.openURL = open }
+}
+
 // RunOAuthFlow starts a temporary HTTP server, opens the browser for authorization,
 // waits for the callback, and exchanges the authorization code for tokens.
-func RunOAuthFlow(ctx context.Context, cfg ProviderAuth, clientID, clientSecret string) (*OAuthResult, error) {
+func RunOAuthFlow(ctx context.Context, cfg ProviderAuth, clientID, clientSecret string, opts ...FlowOption) (*OAuthResult, error) {
+	o := flowOptions{openURL: openBrowser}
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	listener, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		return nil, fmt.Errorf("listen: %w", err)
@@ -52,7 +73,7 @@ func RunOAuthFlow(ctx context.Context, cfg ProviderAuth, clientID, clientSecret 
 	authURL := oauthCfg.AuthCodeURL(state)
 	fmt.Printf("Opening browser for authorization...\n")
 	fmt.Printf("If the browser doesn't open, visit:\n%s\n\n", authURL)
-	openBrowser(authURL)
+	o.openURL(authURL)
 
 	fmt.Printf("Waiting for callback on http://localhost:%d/callback...\n", port)
 

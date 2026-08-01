@@ -35,9 +35,18 @@ func (p *Provider) Name() string { return "gitlab" }
 
 func (p *Provider) Capabilities() core.Capabilities {
 	return core.Capabilities{
-		CanRemove:       true,
-		CanSuspend:      true,
-		ReportsActivity: true,
+		CanRemove:  true,
+		CanSuspend: true,
+		// current_sign_in_at (which ListUsers maps to LastActivityAt) is only
+		// present in the GET /users response when the caller is a GitLab
+		// administrator; a regular-user token gets id/username/name/state/
+		// locked/avatar_url/web_url and nothing else
+		// (docs.gitlab.com/api/users, "As a regular user" vs. "As an
+		// administrator" example responses). We have no way to confirm at
+		// runtime that the configured PAT belongs to an admin account, so
+		// claiming this capability would read every non-admin deployment's
+		// nil timestamps as "confirmed never active".
+		ReportsActivity: false,
 	}
 }
 
@@ -122,6 +131,10 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 				Status:      status,
 				ProviderID:  strconv.Itoa(u.ID),
 			}
+			// Populated only when the token belongs to a GitLab administrator
+			// (see Capabilities); a regular-user token leaves this empty and
+			// LastActivityAt stays nil, which is why ReportsActivity is false —
+			// core must not read that nil as a confirmed-inactive signal.
 			if u.CurrentSignInAt != "" {
 				if t, err := time.Parse(time.RFC3339, u.CurrentSignInAt); err == nil {
 					user.LastActivityAt = &t

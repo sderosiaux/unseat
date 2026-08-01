@@ -25,8 +25,16 @@ func TestProviderCapabilities(t *testing.T) {
 	assert.False(t, caps.CanAdd)
 	assert.False(t, caps.CanSetRole)
 	assert.False(t, caps.HasWebhook)
+	// current_sign_in_at is documented as admin-only (docs.gitlab.com/api/users);
+	// we cannot confirm at runtime that the configured PAT is an admin's, so this
+	// must stay false rather than let a nil LastActivityAt read as "never active".
+	assert.False(t, caps.ReportsActivity)
 }
 
+// TestListUsers uses the regular-user response shape from
+// docs.gitlab.com/api/users ("As a regular user" example): no email, no
+// current_sign_in_at. That is the shape a non-admin PAT -- the common case,
+// since token privilege can't be verified at runtime -- actually receives.
 func TestListUsers(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "test-token", r.Header.Get("PRIVATE-TOKEN"))
@@ -35,10 +43,42 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "true", r.URL.Query().Get("active"))
 
 		w.Header().Set("X-Total-Pages", "1")
-		json.NewEncoder(w).Encode([]apiUser{
-			{ID: 1, Username: "alice", Name: "Alice Smith", Email: "alice@co.com", State: "active", IsAdmin: false, CurrentSignInAt: "2025-01-10T08:00:00Z"},
-			{ID: 2, Username: "bob", Name: "Bob Jones", Email: "bob@co.com", State: "active", IsAdmin: true, CurrentSignInAt: "2025-03-01T12:30:00Z"},
-		})
+		w.Write([]byte(`[
+			{"id": 1, "username": "alice", "name": "Alice Smith", "state": "active", "locked": false, "avatar_url": "https://gitlab.com/avatar/1", "web_url": "https://gitlab.com/alice"},
+			{"id": 2, "username": "bob", "name": "Bob Jones", "state": "active", "locked": false, "avatar_url": "https://gitlab.com/avatar/2", "web_url": "https://gitlab.com/bob"}
+		]`))
+	}))
+	defer server.Close()
+
+	p := New("test-token").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 2)
+
+	assert.Equal(t, "", users[0].Email)
+	assert.Equal(t, "Alice Smith", users[0].DisplayName)
+	assert.Equal(t, "member", users[0].Role)
+	assert.Equal(t, "active", users[0].Status)
+	assert.Equal(t, "1", users[0].ProviderID)
+	assert.Nil(t, users[0].LastActivityAt)
+
+	assert.Equal(t, "2", users[1].ProviderID)
+	assert.Nil(t, users[1].LastActivityAt)
+}
+
+// TestListUsersAdminResponse uses the administrator response shape (same doc
+// page, "As an administrator" example), which does carry current_sign_in_at.
+// Parsing still happens opportunistically for deployments that do configure an
+// admin PAT -- but Capabilities().ReportsActivity stays false regardless,
+// because ListUsers has no way to know which shape a given token will get
+// before making the call.
+func TestListUsersAdminResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Total-Pages", "1")
+		w.Write([]byte(`[
+			{"id": 1, "username": "alice", "name": "Alice Smith", "email": "alice@co.com", "state": "active", "is_admin": false, "last_sign_in_at": "2025-01-10T08:00:00Z", "current_sign_in_at": "2025-01-10T08:00:00Z", "last_activity_on": "2025-01-10"},
+			{"id": 2, "username": "bob", "name": "Bob Jones", "email": "bob@co.com", "state": "active", "is_admin": true, "last_sign_in_at": "2025-03-01T12:30:00Z", "current_sign_in_at": "2025-03-01T12:30:00Z", "last_activity_on": "2025-03-01"}
+		]`))
 	}))
 	defer server.Close()
 
@@ -48,10 +88,6 @@ func TestListUsers(t *testing.T) {
 	require.Len(t, users, 2)
 
 	assert.Equal(t, "alice@co.com", users[0].Email)
-	assert.Equal(t, "Alice Smith", users[0].DisplayName)
-	assert.Equal(t, "member", users[0].Role)
-	assert.Equal(t, "active", users[0].Status)
-	assert.Equal(t, "1", users[0].ProviderID)
 	require.NotNil(t, users[0].LastActivityAt)
 	assert.Equal(t, time.Date(2025, 1, 10, 8, 0, 0, 0, time.UTC), *users[0].LastActivityAt)
 

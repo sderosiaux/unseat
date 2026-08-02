@@ -19,44 +19,26 @@ identity_source:
   # exact scope list, so flipping this means re-authorizing in the console.
   # allow_write: true
 
-# Pricing turns seat counts into money. Two ways to state it, per provider:
-#
-#   monthly_spend  what the invoice says. unseat divides it by ACTIVE seats to
-#                  get the effective rate, so negotiated discounts are included
-#                  and the rate stays correct as headcount moves. Prefer this:
-#                  public list prices are wrong for anyone on a negotiated or
-#                  Enterprise contract.
-#   cost_per_seat  the unit price, when you already know it. Wins if both are set.
-#
-# Leave both out and unseat still reports counts, just never euros. All amounts
-# must share one currency — unseat does no conversion.
-currency: EUR
+# Billing is API-only. Do not put prices, invoices or monthly spend in YAML:
+# those figures drift, vary by contract and block adoption. When a provider API
+# exposes billed seats, plan or subscription amounts, unseat reports them with
+# provenance. When it cannot, unseat reports counts and marks money as unknown.
 
 providers:
   linear:
     api_key: "${LINEAR_API_KEY}"
-    monthly_spend: 592
-    # Whether deactivated seats keep being charged. Each connector already
-    # declares what its vendor does; set this only when your contract differs.
-    # Linear releases suspended seats at the next cycle, so they cost nothing
-    # and are reported as an access-review item rather than as waste.
-    # bills_suspended_seats: false
   figma:
     api_key: "${FIGMA_SCIM_TOKEN}"
-    cost_per_seat: 12
     extra:
       tenant_id: "${FIGMA_TENANT_ID}"
   hubspot:
     api_key: "${HUBSPOT_ACCESS_TOKEN}"
-    cost_per_seat: 90
   miro:
     api_key: "${MIRO_ACCESS_TOKEN}"
-    cost_per_seat: 8
     extra:
       org_id: "${MIRO_ORG_ID}"
   slack:
     api_key: "${SLACK_SCIM_TOKEN}"
-    cost_per_seat: 7
   anthropic:
     api_key: "${ANTHROPIC_ADMIN_KEY}"
   claude-code:

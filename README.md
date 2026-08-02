@@ -112,9 +112,12 @@ unseat scan
 ```
 
 `scan` reports deactivated-but-billed accounts, identities outside your domain,
-privileged-account sprawl, and — for providers whose API exposes it — unused
-seats. Add `cost_per_seat` to your config and the same report comes back in
-euros.
+privileged-account sprawl, non-human access coverage, and — for providers whose
+API exposes it — unused seats and billing exposure. It also refreshes the local
+SQLite cache used by the REST API, MCP tools and dashboard. Billing is API-only:
+if a provider exposes billed seats, plan or subscription amounts, unseat reports
+them with their source; if the API cannot state a price, unseat keeps the money
+column unknown rather than asking you to maintain prices in YAML.
 
 Reconciliation is the second step, once the read-only picture is worth acting on:
 
@@ -122,6 +125,7 @@ Reconciliation is the second step, once the read-only picture is worth acting on
 cp unseat.example.yaml unseat.yaml   # map Google Groups to providers
 
 unseat audit seats                   # classify every seat against the directory
+unseat audit credentials             # classify apps, integrations and webhooks
 unseat sync plan                     # what reconciliation would change
 unseat sync apply                    # execute, after showing the plan and confirming
 unseat sync watch --interval 5m      # daemon
@@ -210,6 +214,7 @@ unseat
 ├── scan                     Read-only seat audit — no directory, no mappings needed
 ├── audit
 │   ├── seats                Classify every seat: managed / unmapped / orphan / external
+│   ├── credentials          Classify apps, integrations and webhooks
 │   ├── orphans              Seats with no active directory identity
 │   ├── inactive [--days]    Unused seats, on providers that expose activity
 │   └── drift                Desired vs actual, without applying anything
@@ -260,6 +265,11 @@ becomes active again.
 ```
 GET /api/v1/providers                 All providers + sync status
 GET /api/v1/providers/{name}/users    Cached users for a provider
+GET /api/v1/providers/{name}/billing  Latest cached provider billing snapshot
+GET /api/v1/providers/{name}/credentials Cached non-human access for a provider
+GET /api/v1/billing                   Latest cached billing snapshots
+GET /api/v1/credentials               Cached non-human access inventory
+GET /api/v1/credentials/summary       Non-human access summary + coverage state
 GET /api/v1/providers/{name}/inactive Inactive users for a provider, if it exposes activity data [?days]
 GET /api/v1/inactive                  Inactive users across every provider that exposes activity data [?days]
 GET /api/v1/pending-removals          Seats inside their grace period, awaiting removal — not the same as orphans
@@ -279,7 +289,9 @@ For LLM agent integration (Claude, etc.) via [Model Context Protocol](https://mo
 unseat mcp
 ```
 
-Tools: `list_providers`, `provider_users`, `list_pending_removals`, `list_inactive_users`, `list_events`, `get_mappings`
+Tools: `list_providers`, `provider_users`, `list_billing`, `provider_billing`,
+`list_credentials`, `provider_credentials`, `credential_summary`,
+`list_pending_removals`, `list_inactive_users`, `list_events`, `get_mappings`
 
 Guardrails: dry_run by default for destructive actions, audit trail for agent vs human vs cron triggers.
 

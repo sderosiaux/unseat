@@ -15,10 +15,11 @@ A user supplies API keys. Everything unseat can determine for itself, it
 determines for itself. Asking for a value the provider's own API could answer
 is a defect, not a design choice.
 
-Concretely: seat counts, plan tier, billed seats, per-seat price, activity,
-roles and account state all come from the APIs. Config exists for facts no API
-can know — which Google Groups map to which providers, which seats policy
-protects, and corrections when a contract differs from what the vendor reports.
+Concretely: seat counts, plan tier, billed seats, subscription amounts,
+activity, roles and account state all come from the APIs. Config exists for
+facts no API can know — which Google Groups map to which providers, which seats
+policy protects, and corrections when a contract differs from what the vendor
+reports.
 
 Before adding a config field, the question is always: can an API answer this?
 If yes, call it. If only some providers can, call it for those and degrade
@@ -37,9 +38,10 @@ directory means nothing is removable. No activity API means "unknown", not
 
 ### 3. Never state a number more precisely than it is known.
 
-Every figure carries its provenance. A rate read from a billing API, one
-inferred from a plan identifier, one derived from an invoice, and one typed by
-hand are four different levels of confidence and must be displayed as such.
+Every figure carries its provenance. A subscription amount read from a billing
+API, billed-seat count read from an API, and plan metadata read from an API are
+different levels of confidence and must be displayed as such. Manual prices,
+public pricing page guesses and plan-name guesses are not accepted as spend.
 A confident wrong number is worse than an absent one — it gets taken to a
 budget meeting.
 
@@ -149,23 +151,23 @@ type Provider interface {
 `CredentialProvider` extends it with `ListCredentials()` for connectors whose API
 exposes non-human access (github, linear).
 
-### Billing Comes From The API First
+### Billing Is API-Only
 
 `BillingProvider` is an optional interface for connectors whose API exposes
 subscription data. Implement it wherever the vendor exposes anything —
-principle 1 makes a readable price a price nobody should have to type.
+principle 1 makes a readable billing fact a fact nobody should have to type.
 
-Linear encodes the rate in the plan identifier (`business_yearly_14`) and
-reports the seat count it actually charges for. That seat count is worth more
-than the price: comparing it against live accounts surfaces prepaid blocks and
-plan minimums, which are invisible from the user list alone.
+Linear reports the seat count it actually charges for. That count is useful
+even without a price: comparing it against live accounts surfaces prepaid
+blocks and plan minimums, which are invisible from the user list alone.
 
-Rate precedence: `cost_per_seat` in config, then `monthly_spend / active
-seats`, then the provider API. Every one is tagged with a `BillingSource` and
-displayed with a marker, because a figure inferred from a plan name must never
-look like one the vendor stated. Never invent a price for a plan that does not
-encode one — an Enterprise contract is unknowable, and a plausible guess in a
-budget meeting is worse than a blank.
+Accepted billing sources are provider APIs: invoice, subscription, billing
+portal, or billed-seat endpoints. Rejected sources are `cost_per_seat` in YAML,
+`monthly_spend` in YAML, public pricing pages, defaults, and plan-name guesses.
+If the API can state seats but not spend, report the seats and mark money
+unknown. Never invent a price for a plan that does not expose one — an
+Enterprise contract is unknowable, and a plausible guess in a budget meeting is
+worse than a blank.
 
 ### Provider Construction
 
@@ -203,14 +205,18 @@ Uses functional options: `NewReconciler(store, cfg, reg, identity, WithNotifier(
 
 ### Store
 
-`internal/store/store.go` defines the interface (11 methods). SQLite implementation in `sqlite.go` with goose migrations (`migrations/001_init.sql`). WAL mode enabled. Tables: `provider_users`, `events`, `pending_removals`, `sync_state`.
+`internal/store/store.go` defines the persistence interface. SQLite implementation
+in `sqlite.go` with goose migrations under `internal/store/migrations/`. WAL mode
+enabled and max open connections forced to 1 for local SQLite safety. Tables cover
+provider users, events, pending removals, sync state, billing snapshots and
+credential snapshots.
 
 ### Config
 
 YAML at `unseat.yaml`. Key sections:
 - `identity_source` — Google Directory connection
-- `providers` — map of provider name → `{api_key, base_url, extra, cost_per_seat}`
-- `currency` — labels every `cost_per_seat`; no conversion is performed
+- `providers` — map of provider name → `{api_key, base_url, extra}` and provider selection
+- no manual pricing — billing amounts come from provider APIs or stay unknown
 - `mappings` — Google Group → provider+role assignments
 - `policies` — grace_period, dry_run, notify_on_remove, exceptions
 
@@ -238,8 +244,10 @@ silently no-op, which is what the old `sync run` did.
 `audit credentials` is the non-human counterpart to `audit seats`: it lists and
 classifies installed apps, integrations and webhooks, and never revokes.
 
-`scan` is the read-only entry point: provider API keys only, no identity source,
-no mappings, no writes. It is what a new user should run first.
+`scan` is the read-only provider entry point: provider API keys only, no identity
+source and no mappings. It never writes to providers, but it does refresh local
+SQLite snapshots for users, billing and non-human credentials so REST/MCP/dashboard
+views do not look clean from an empty cache.
 
 ## File Layout
 

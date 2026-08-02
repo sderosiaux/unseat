@@ -124,6 +124,7 @@ Reconciliation is the second step, once the read-only picture is worth acting on
 ```bash
 cp unseat.example.yaml unseat.yaml   # map Google Groups to providers
 
+unseat config lint                   # catch unknown/removed YAML keys before a run
 unseat audit seats                   # classify every seat against the directory
 unseat audit credentials             # classify apps, integrations and webhooks
 unseat sync plan                     # what reconciliation would change
@@ -228,6 +229,8 @@ unseat
 │   ├── test <name...>       Verify connectivity against the real API
 │   ├── add <name...>        OAuth2 browser flow or API key
 │   └── supported            All known providers
+├── config
+│   └── lint                 Validate YAML keys, provider names and scalar formats
 ├── history
 │   └── events [--limit]     Event timeline
 ├── serve [--port] [--host]  REST API + dashboard (loopback by default, no auth)

@@ -93,7 +93,7 @@ func TestCorporateDomainFallsBackToIdentitySource(t *testing.T) {
 	})
 
 	t.Run("neither set", func(t *testing.T) {
-		cfg, err := Load(writeConfig(t, "currency: EUR\n"))
+		cfg, err := Load(writeConfig(t, "{}\n"))
 		require.NoError(t, err)
 		assert.Empty(t, cfg.CorporateDomain())
 	})

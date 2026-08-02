@@ -170,14 +170,12 @@ const billingQuery = `query {
   }
 }`
 
-// Billing reads the workspace subscription so the operator does not have to
-// type a price unseat can read.
+// Billing reads the workspace subscription from Linear's API.
 //
-// Linear does not expose an amount, but encodes it in the plan identifier —
-// "business_yearly_14" is 14 per seat per month. That is an inference about a
-// vendor's naming, not a documented contract, so the rate is reported as
-// derived from the plan rather than as a figure Linear stated. `seats` is
-// authoritative: it is what Linear actually charges for.
+// Linear exposes the seat count it charges for and the renewal date, but not a
+// vendor-stated amount. Older code inferred a price from plan identifiers such
+// as "business_yearly_14"; billing is now API-only, so the price remains
+// unknown unless Linear states it directly.
 func (p *Provider) Billing(ctx context.Context) (*core.Billing, error) {
 	data, err := p.graphql(ctx, billingQuery, nil)
 	if err != nil {
@@ -205,12 +203,12 @@ func (p *Provider) Billing(ctx context.Context) (*core.Billing, error) {
 	}
 
 	b := &core.Billing{
-		Plan:        sub.Type,
-		BilledSeats: int(sub.Seats),
-	}
-	if rate, ok := core.PriceFromPlanIdentifier(sub.Type); ok {
-		b.CostPerSeat = rate
-		b.Source = core.BillingSourcePlan
+		Provider:        p.Name(),
+		Plan:            sub.Type,
+		BilledSeats:     core.IntPtr(int(sub.Seats)),
+		Source:          core.BillingSourceAPISeatCount,
+		Confidence:      core.BillingConfidencePartial,
+		UnavailableReason: "Linear reports billed seats and renewal date, but not a subscription amount through this API",
 	}
 	if sub.NextBillingAt != "" {
 		if t, err := time.Parse(time.RFC3339, sub.NextBillingAt); err == nil {

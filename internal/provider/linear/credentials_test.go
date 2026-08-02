@@ -30,9 +30,11 @@ func credentialServer(t *testing.T, integrations, webhooks string) *httptest.Ser
 
 		switch {
 		case strings.Contains(req.Query, "integrations("):
-			fmt.Fprint(w, integrations)
+			_, err := fmt.Fprint(w, integrations)
+			require.NoError(t, err)
 		case strings.Contains(req.Query, "webhooks("):
-			fmt.Fprint(w, webhooks)
+			_, err := fmt.Fprint(w, webhooks)
+			require.NoError(t, err)
 		default:
 			t.Errorf("unexpected query %s", req.Query)
 		}
@@ -149,18 +151,21 @@ func TestListCredentialsPaginates(t *testing.T) {
 		require.NoError(t, json.Unmarshal(body, &req))
 
 		if strings.Contains(req.Query, "webhooks(") {
-			fmt.Fprint(w, `{"data":{"webhooks":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`)
+			_, err := fmt.Fprint(w, `{"data":{"webhooks":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":""}}}}`)
+			require.NoError(t, err)
 			return
 		}
 		calls++
 		if req.Variables["after"] == nil {
-			fmt.Fprint(w, `{"data":{"integrations":{"nodes":[{"id":"a","service":"one"}],
-			  "pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}`)
+			_, err := fmt.Fprint(w, `{"data":{"integrations":{"nodes":[{"id":"a","service":"one"}],
+				  "pageInfo":{"hasNextPage":true,"endCursor":"cursor-1"}}}}`)
+			require.NoError(t, err)
 			return
 		}
 		assert.Equal(t, "cursor-1", req.Variables["after"])
-		fmt.Fprint(w, `{"data":{"integrations":{"nodes":[{"id":"b","service":"two"}],
-		  "pageInfo":{"hasNextPage":false,"endCursor":""}}}}`)
+		_, err := fmt.Fprint(w, `{"data":{"integrations":{"nodes":[{"id":"b","service":"two"}],
+			  "pageInfo":{"hasNextPage":false,"endCursor":""}}}}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -172,7 +177,8 @@ func TestListCredentialsPaginates(t *testing.T) {
 
 func TestListCredentialsPropagatesErrors(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"errors":[{"message":"Access denied"}]}`)
+		_, err := fmt.Fprint(w, `{"errors":[{"message":"Access denied"}]}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

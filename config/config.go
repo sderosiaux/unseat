@@ -14,9 +14,6 @@ type Config struct {
 	Mappings       []Mapping                 `yaml:"mappings"`
 	Policies       Policies                  `yaml:"policies"`
 	Aliases        map[string][]string       `yaml:"aliases,omitempty"`
-	// Currency labels the cost_per_seat amounts. Purely cosmetic — unseat does
-	// no conversion, so every cost_per_seat must be in the same currency.
-	Currency string `yaml:"currency,omitempty"`
 	// Domain is the corporate email domain, used to spot external identities.
 	// It lives at the top level so `scan` can use it without configuring an
 	// identity source: telling an outside address from an inside one is a
@@ -31,14 +28,6 @@ func (c *Config) CorporateDomain() string {
 		return c.Domain
 	}
 	return c.IdentitySource.Domain
-}
-
-// CurrencyLabel returns the configured currency, defaulting to EUR.
-func (c *Config) CurrencyLabel() string {
-	if c.Currency == "" {
-		return "EUR"
-	}
-	return c.Currency
 }
 
 type IdentitySource struct {
@@ -59,28 +48,6 @@ type ProviderConfig struct {
 	APIKey    string            `yaml:"api_key"`
 	BaseURL   string            `yaml:"base_url,omitempty"`
 	ExtraArgs map[string]string `yaml:"extra,omitempty"`
-	// CostPerSeat is the monthly price of one seat, in Currency.
-	// Zero means unpriced: counts are still reported, money is not.
-	CostPerSeat float64 `yaml:"cost_per_seat,omitempty"`
-	// MonthlySpend is what this provider actually costs per month, taken from
-	// an invoice. unseat divides it by the active seat count to get the
-	// effective rate, so negotiated discounts are included and the rate stays
-	// correct as headcount moves. CostPerSeat wins when both are set.
-	MonthlySpend float64 `yaml:"monthly_spend,omitempty"`
-	// BillsSuspendedSeats overrides the connector's own knowledge of whether
-	// deactivated seats keep being charged. Nil means "use what the connector
-	// declares"; set it when your contract differs from the vendor's default.
-	BillsSuspendedSeats *bool `yaml:"bills_suspended_seats,omitempty"`
-}
-
-// SuspendedBillingFor resolves the billing behaviour for a provider's
-// deactivated seats: an explicit config value wins, otherwise the connector's
-// own declaration stands.
-func SuspendedBillingOverride(pc ProviderConfig) (billed bool, set bool) {
-	if pc.BillsSuspendedSeats == nil {
-		return false, false
-	}
-	return *pc.BillsSuspendedSeats, true
 }
 
 type Mapping struct {

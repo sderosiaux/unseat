@@ -242,7 +242,10 @@ func (p *Provider) fetchInstallEventPage(ctx context.Context, pageURL string) (e
 	if err != nil {
 		return nil, "", 0, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", resp.StatusCode, nil

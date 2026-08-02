@@ -165,9 +165,13 @@ func (p *Provider) Billing(ctx context.Context) (*core.Billing, error) {
 		return nil, nil
 	}
 	return &core.Billing{
-		Plan:        resp.PlanType,
-		BilledSeats: resp.SeatBreakdown.Total,
-		FilledSeats: resp.SeatBreakdown.Total,
+		Provider:        p.Name(),
+		Plan:            resp.PlanType,
+		BilledSeats:     core.IntPtr(resp.SeatBreakdown.Total),
+		FilledSeats:     core.IntPtr(resp.SeatBreakdown.Total),
+		Source:          core.BillingSourceAPISeatCount,
+		Confidence:      core.BillingConfidencePartial,
+		UnavailableReason: "GitHub Copilot reports seat counts here, but not this organization's contracted seat price",
 	}, nil
 }
 

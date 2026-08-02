@@ -64,9 +64,10 @@ func TestScanFlagsSuspendedButBilled(t *testing.T) {
 	assert.Zero(t, f.MonthlyWaste)
 	assert.Nil(t, findingOf(t, s, FindingSuspendedBilled))
 
-	assert.InDelta(t, 10.0, s.SuspendedExposure, 0.001)
+	assert.Zero(t, s.SuspendedExposure, "manual cost_per_seat is ignored")
+	assert.Nil(t, s.SuspendedExposureMinor)
 	assert.Zero(t, s.MonthlyWaste)
-	assert.InDelta(t, 10.0, s.MonthlyCost, 0.001, "only the one active seat is priced")
+	assert.Zero(t, s.MonthlyCost)
 }
 
 // Linear releases suspended seats at the next billing cycle. Pricing them
@@ -92,7 +93,7 @@ func TestScanSuspendedSeatsNotBilledCostNothing(t *testing.T) {
 	assert.Zero(t, f.MonthlyWaste)
 
 	assert.Zero(t, s.SuspendedExposure, "a released seat costs nothing")
-	assert.InDelta(t, 8.0, s.MonthlyCost, 0.001)
+	assert.Zero(t, s.MonthlyCost, "manual cost_per_seat is ignored")
 	assert.Nil(t, findingOf(t, s, FindingSuspendedBilled))
 }
 
@@ -114,8 +115,9 @@ func TestScanSuspendedSeatsBilledAreWaste(t *testing.T) {
 	f := findingOf(t, s, FindingSuspendedBilled)
 	require.NotNil(t, f)
 	assert.Equal(t, SeverityHigh, f.Severity)
-	assert.InDelta(t, 90.0, f.MonthlyWaste, 0.001)
-	assert.InDelta(t, 90.0, s.SuspendedExposure, 0.001)
+	assert.Zero(t, f.MonthlyWaste, "manual cost_per_seat is ignored")
+	assert.Nil(t, f.MonthlyWasteMinor)
+	assert.Zero(t, s.SuspendedExposure)
 	assert.Nil(t, findingOf(t, s, FindingSuspendedAccounts))
 }
 
@@ -207,7 +209,7 @@ func TestScanDoesNotCountSuspendedSeatAsInactive(t *testing.T) {
 	require.NotNil(t, findingOf(t, s, FindingSuspendedAccounts))
 	assert.Nil(t, findingOf(t, s, FindingInactive), "a deactivated seat is not an inactivity finding")
 	assert.Zero(t, s.MonthlyWaste)
-	assert.InDelta(t, 10.0, s.SuspendedExposure, 0.001)
+	assert.Zero(t, s.SuspendedExposure)
 	assert.Zero(t, s.MonthlyCost, "no active seats")
 }
 
@@ -246,7 +248,7 @@ func TestIsPrivilegedRole(t *testing.T) {
 	}
 }
 
-func TestScanCost(t *testing.T) {
+func TestScanCostFromProviderAPI(t *testing.T) {
 	s := Scan(ScanInput{
 		Provider: "figma",
 		Users: []User{
@@ -254,13 +256,25 @@ func TestScanCost(t *testing.T) {
 			{Email: "b@co.com", Status: "active"},
 			{Email: "c@co.com", Status: "suspended"},
 		},
-		Domain:      "co.com",
-		CostPerSeat: 12,
-		Now:         scanNow,
+		Domain: "co.com",
+		Billing: &Billing{
+			Provider:         "figma",
+			CostPerSeatMinor: Int64Ptr(1200),
+			Source:           BillingSourceAPIInvoice,
+			Confidence:       BillingConfidenceExact,
+		},
+		SuspendedBilling: SuspendedBillingCharged,
+		Now:              scanNow,
 	})
 	assert.InDelta(t, 24.0, s.MonthlyCost, 0.001, "two active seats, the suspended one is priced separately")
+	require.NotNil(t, s.MonthlyCostMinor)
+	assert.Equal(t, int64(2400), *s.MonthlyCostMinor)
 	assert.InDelta(t, 12.0, s.SuspendedExposure, 0.001)
-	assert.Zero(t, s.MonthlyWaste, "nothing is confirmed wasted without activity data")
+	require.NotNil(t, s.SuspendedExposureMinor)
+	assert.Equal(t, int64(1200), *s.SuspendedExposureMinor)
+	assert.InDelta(t, 12.0, s.MonthlyWaste, 0.001, "a connector-known charged suspended seat is confirmed waste")
+	require.NotNil(t, s.MonthlyWasteMinor)
+	assert.Equal(t, int64(1200), *s.MonthlyWasteMinor)
 }
 
 // An unpriced provider must still report counts, and must report zero money
@@ -322,133 +336,82 @@ func TestScanEmptyProvider(t *testing.T) {
 	assert.Nil(t, findingOf(t, s, FindingAdminSprawl), "no seats cannot be sprawl")
 }
 
-// The rate can be stated or derived from the invoice. Deriving keeps it
-// correct as headcount moves, and the derivation is flagged so it can be
-// checked against the invoice it came from.
-func TestScanDerivesRateFromMonthlySpend(t *testing.T) {
+func TestScanIgnoresManualPricing(t *testing.T) {
 	users := []User{
 		{Email: "a@co.com", Status: StatusActive},
 		{Email: "b@co.com", Status: StatusActive},
-		// Deactivated seats must not dilute the rate: on a real tenant most
-		// seats can be suspended, which would deflate it toward zero.
 		{Email: "gone@co.com", Status: StatusSuspended},
 		{Email: "left@co.com", Status: StatusSuspended},
 	}
 
-	t.Run("derived from active seats only", func(t *testing.T) {
-		s := Scan(ScanInput{
-			Provider: "linear", Users: users, Domain: "co.com",
-			MonthlySpend: 32, SuspendedBilling: SuspendedBillingReleased, Now: scanNow,
-		})
-		assert.Equal(t, BillingSourceInvoice, s.RateSource)
-		assert.InDelta(t, 16.0, s.CostPerSeat, 0.001, "32 / 2 active, not / 4 total")
-		assert.InDelta(t, 32.0, s.MonthlyCost, 0.001)
+	s := Scan(ScanInput{
+		Provider: "linear", Users: users, Domain: "co.com",
+		CostPerSeat: 10, MonthlySpend: 32, SuspendedBilling: SuspendedBillingCharged, Now: scanNow,
 	})
+	assert.Empty(t, s.RateSource)
+	assert.Zero(t, s.CostPerSeat)
+	assert.Nil(t, s.CostPerSeatMinor)
+	assert.Zero(t, s.MonthlyCost)
+	assert.Zero(t, s.SuspendedExposure)
 
-	t.Run("a stated price wins over the invoice", func(t *testing.T) {
-		s := Scan(ScanInput{
-			Provider: "linear", Users: users, Domain: "co.com",
-			CostPerSeat: 10, MonthlySpend: 32, Now: scanNow,
-		})
-		assert.Equal(t, BillingSourceConfig, s.RateSource)
-		assert.InDelta(t, 10.0, s.CostPerSeat, 0.001)
+	idle := Scan(ScanInput{
+		Provider: "linear",
+		Users: []User{
+			{Email: "a@co.com", Status: StatusActive, LastActivityAt: daysAgo(2)},
+			{Email: "idle@co.com", Status: StatusActive, LastActivityAt: daysAgo(300)},
+		},
+		Domain: "co.com", MonthlySpend: 32,
+		ReportsActivity: true, InactiveThreshold: 60 * 24 * time.Hour, Now: scanNow,
 	})
-
-	t.Run("no active seats cannot yield a rate", func(t *testing.T) {
-		s := Scan(ScanInput{
-			Provider: "linear",
-			Users:    []User{{Email: "gone@co.com", Status: StatusSuspended}},
-			Domain:   "co.com", MonthlySpend: 500, Now: scanNow,
-		})
-		assert.Empty(t, s.RateSource, "dividing by zero must not invent a rate")
-		assert.Zero(t, s.CostPerSeat)
-	})
-
-	t.Run("derived rate prices waste", func(t *testing.T) {
-		s := Scan(ScanInput{
-			Provider: "linear",
-			Users: []User{
-				{Email: "a@co.com", Status: StatusActive, LastActivityAt: daysAgo(2)},
-				{Email: "idle@co.com", Status: StatusActive, LastActivityAt: daysAgo(300)},
-			},
-			Domain: "co.com", MonthlySpend: 32,
-			ReportsActivity: true, InactiveThreshold: 60 * 24 * time.Hour, Now: scanNow,
-		})
-		assert.InDelta(t, 16.0, s.CostPerSeat, 0.001)
-		assert.InDelta(t, 16.0, s.MonthlyWaste, 0.001, "one idle seat at the derived rate")
-	})
+	f := findingOf(t, idle, FindingInactive)
+	require.NotNil(t, f)
+	assert.Zero(t, f.MonthlyWaste)
+	assert.Nil(t, f.MonthlyWasteMinor)
 }
 
-// Principle 1: a price the provider's API can report is a price nobody should
-// have to type. Principle 3: it must not be displayed as confidently as a
-// figure the vendor stated outright.
-func TestScanUsesProviderBillingWhenConfigIsSilent(t *testing.T) {
+func TestScanUsesOnlyProviderBillingForMoney(t *testing.T) {
 	users := []User{
 		{Email: "a@co.com", Status: StatusActive},
 		{Email: "b@co.com", Status: StatusActive},
 	}
 	renewal := time.Date(2026, 8, 27, 0, 0, 0, 0, time.UTC)
 	sub := &Billing{
-		Plan: "business_yearly_14", BilledSeats: 2, CostPerSeat: 14,
-		Source: BillingSourcePlan, NextBillingAt: &renewal,
+		Plan: "business", BilledSeats: IntPtr(2), CostPerSeatMinor: Int64Ptr(1400),
+		Source: BillingSourceAPIInvoice, Confidence: BillingConfidenceExact, NextBillingAt: &renewal,
 	}
 
-	t.Run("no config at all: the API supplies the rate", func(t *testing.T) {
+	t.Run("provider API supplies the rate", func(t *testing.T) {
 		s := Scan(ScanInput{Provider: "linear", Users: users, Domain: "co.com", Billing: sub, Now: scanNow})
 		assert.InDelta(t, 14.0, s.CostPerSeat, 0.001)
-		assert.Equal(t, BillingSourcePlan, s.RateSource, "an inference must be labelled as one")
+		require.NotNil(t, s.CostPerSeatMinor)
+		assert.Equal(t, int64(1400), *s.CostPerSeatMinor)
+		assert.Equal(t, BillingSourceAPIInvoice, s.RateSource)
 		assert.InDelta(t, 28.0, s.MonthlyCost, 0.001)
-		assert.Equal(t, "business_yearly_14", s.Plan)
+		assert.Equal(t, "business", s.Plan)
 		assert.Equal(t, 2, s.BilledSeats)
 		require.NotNil(t, s.NextBillingAt)
 	})
 
-	t.Run("an invoice beats the vendor's plan name", func(t *testing.T) {
+	t.Run("manual invoice is ignored", func(t *testing.T) {
 		s := Scan(ScanInput{Provider: "linear", Users: users, Domain: "co.com",
 			Billing: sub, MonthlySpend: 40, Now: scanNow})
-		assert.InDelta(t, 20.0, s.CostPerSeat, 0.001)
-		assert.Equal(t, BillingSourceInvoice, s.RateSource)
+		assert.InDelta(t, 14.0, s.CostPerSeat, 0.001)
+		assert.Equal(t, BillingSourceAPIInvoice, s.RateSource)
 	})
 
-	t.Run("an explicit price beats everything", func(t *testing.T) {
+	t.Run("manual unit price is ignored", func(t *testing.T) {
 		s := Scan(ScanInput{Provider: "linear", Users: users, Domain: "co.com",
 			Billing: sub, MonthlySpend: 40, CostPerSeat: 9, Now: scanNow})
-		assert.InDelta(t, 9.0, s.CostPerSeat, 0.001)
-		assert.Equal(t, BillingSourceConfig, s.RateSource)
+		assert.InDelta(t, 14.0, s.CostPerSeat, 0.001)
+		assert.Equal(t, BillingSourceAPIInvoice, s.RateSource)
 	})
 
 	t.Run("plan metadata survives even when the API knows no price", func(t *testing.T) {
 		s := Scan(ScanInput{Provider: "linear", Users: users, Domain: "co.com",
-			Billing: &Billing{Plan: "free", BilledSeats: 0}, Now: scanNow})
+			Billing: &Billing{Plan: "free", BilledSeats: IntPtr(0), Source: BillingSourceAPISeatCount}, Now: scanNow})
 		assert.Zero(t, s.CostPerSeat)
 		assert.Equal(t, "free", s.Plan)
 	})
-}
-
-func TestPriceFromPlanIdentifier(t *testing.T) {
-	cases := map[string]struct {
-		want float64
-		ok   bool
-	}{
-		"business_yearly_14":  {14, true},
-		"standard_monthly_10": {10, true},
-		"plus_9.5":            {9.5, true},
-		"free":                {0, false},
-		"enterprise":          {0, false},
-		"":                    {0, false},
-		// A trailing zero is not a price, it is a missing one.
-		"trial_0": {0, false},
-		// A year is not a price, but this heuristic cannot tell — documented
-		// as an inference precisely because of cases like this.
-		"legacy_2019": {2019, true},
-	}
-	for plan, want := range cases {
-		got, ok := PriceFromPlanIdentifier(plan)
-		assert.Equal(t, want.ok, ok, plan)
-		if want.ok {
-			assert.InDelta(t, want.want, got, 0.001, plan)
-		}
-	}
 }
 
 // Purchased seats that nobody occupies are the most expensive thing a scan can
@@ -465,34 +428,41 @@ func TestScanFlagsUnusedPurchasedSeats(t *testing.T) {
 		// filled; they are billed but never appear in the member list, so our
 		// own tally would overstate the gap.
 		s := Scan(ScanInput{
-			Provider: "github", Users: users, Domain: "co.com", CostPerSeat: 21,
-			Billing: &Billing{Plan: "enterprise", BilledSeats: 80, FilledSeats: 41},
-			Now:     scanNow,
+			Provider: "github", Users: users, Domain: "co.com",
+			Billing: &Billing{
+				Plan: "enterprise", BilledSeats: IntPtr(80), FilledSeats: IntPtr(41),
+				CostPerSeatMinor: Int64Ptr(2100), Source: BillingSourceAPIInvoice,
+			},
+			Now: scanNow,
 		})
 		f := findingOf(t, s, FindingOverProvisioned)
 		require.NotNil(t, f)
 		assert.Equal(t, 39, f.Count, "80 purchased minus 41 filled, not minus our 2 listed")
 		assert.Equal(t, SeverityHigh, f.Severity)
 		assert.InDelta(t, 39*21.0, f.MonthlyWaste, 0.001)
+		require.NotNil(t, f.MonthlyWasteMinor)
+		assert.Equal(t, int64(39*2100), *f.MonthlyWasteMinor)
 		// Cost is what is purchased, not what is used.
 		assert.InDelta(t, 80*21.0, s.MonthlyCost, 0.001)
 	})
 
 	t.Run("falls back to active seats when the vendor reports no filled count", func(t *testing.T) {
 		s := Scan(ScanInput{
-			Provider: "acme", Users: users, Domain: "co.com", CostPerSeat: 10,
-			Billing: &Billing{BilledSeats: 5},
+			Provider: "acme", Users: users, Domain: "co.com",
+			Billing: &Billing{BilledSeats: IntPtr(5), Source: BillingSourceAPISeatCount},
 			Now:     scanNow,
 		})
 		f := findingOf(t, s, FindingOverProvisioned)
 		require.NotNil(t, f)
 		assert.Equal(t, 3, f.Count)
+		assert.Zero(t, f.MonthlyWaste)
+		assert.Nil(t, f.MonthlyWasteMinor)
 	})
 
 	t.Run("no finding when every purchased seat is taken", func(t *testing.T) {
 		s := Scan(ScanInput{
-			Provider: "linear", Users: users, Domain: "co.com", CostPerSeat: 14,
-			Billing: &Billing{BilledSeats: 2, FilledSeats: 2},
+			Provider: "linear", Users: users, Domain: "co.com",
+			Billing: &Billing{BilledSeats: IntPtr(2), FilledSeats: IntPtr(2), CostPerSeatMinor: Int64Ptr(1400)},
 			Now:     scanNow,
 		})
 		assert.Nil(t, findingOf(t, s, FindingOverProvisioned))
@@ -501,8 +471,8 @@ func TestScanFlagsUnusedPurchasedSeats(t *testing.T) {
 
 	t.Run("more filled than purchased is not negative waste", func(t *testing.T) {
 		s := Scan(ScanInput{
-			Provider: "acme", Users: users, Domain: "co.com", CostPerSeat: 10,
-			Billing: &Billing{BilledSeats: 2, FilledSeats: 5},
+			Provider: "acme", Users: users, Domain: "co.com",
+			Billing: &Billing{BilledSeats: IntPtr(2), FilledSeats: IntPtr(5), CostPerSeatMinor: Int64Ptr(1000)},
 			Now:     scanNow,
 		})
 		assert.Nil(t, findingOf(t, s, FindingOverProvisioned))

@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sderosiaux/unseat/config"
 	"github.com/sderosiaux/unseat/internal/core"
 	"github.com/sderosiaux/unseat/internal/provider"
 	"github.com/spf13/cobra"
@@ -43,6 +42,10 @@ type scanResult struct {
 	// users is retained so seats can be correlated across providers, which is
 	// the one question no single provider can answer.
 	users []core.User
+	// credentialCache carries the non-human access inventory read during scan.
+	// It is cached for API/MCP/dashboard consumers even though scan itself does
+	// not require a directory and therefore cannot prove orphaned ownership.
+	credentialCache credentialCacheEntry
 	// reportsActivity is the capability AS OBSERVED on the live provider. It
 	// cannot be recomputed later: GitHub only learns it by calling the audit
 	// log, so a freshly constructed provider answers false.
@@ -80,7 +83,7 @@ func runScan(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	results := scanAll(cmd.Context(), cfg, reg, targets, domain)
+	results := scanAll(cmd.Context(), reg, targets, domain)
 
 	// Cached before the output branch: a scripted --json run left the cache
 	// untouched, so a later `audit inactive` answered from whatever the last
@@ -106,14 +109,14 @@ func runScan(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		return printJSON(map[string]any{
-			"currency":               cfg.CurrencyLabel(),
 			"threshold_days":         scanDays,
 			"providers":              payload,
+			"credential_inventory":   scanCredentialPayload(targets, results),
 			"incomplete_offboarding": core.FindOffboardingGaps(seats),
 		})
 	}
 
-	printScanReport(cfg, targets, results)
+	printScanReport(targets, results)
 	return nil
 }
 
@@ -136,29 +139,40 @@ func cacheScan(ctx context.Context, targets []string, results map[string]scanRes
 		slog.Debug("scan cache unavailable", "error", err)
 		return
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	for _, name := range targets {
 		r := results[name]
-		// A provider that failed keeps whatever was cached before rather than
-		// being wiped: UpsertProviderUsers deletes before inserting, so caching
-		// an empty result would turn a fetch error into a confident "no seats".
-		if r.err != nil || len(r.users) == 0 {
+		if r.credentialCache.Provider != "" {
+			writeCredentialSnapshots(ctx, db, []credentialCacheEntry{r.credentialCache})
+		}
+		if r.err != nil {
 			continue
 		}
-		if err := db.UpsertProviderUsers(ctx, name, r.users); err != nil {
-			slog.Debug("cache provider users failed", "provider", name, "error", err)
-			continue
+		if r.scan.Billing != nil {
+			if err := db.InsertBillingSnapshot(ctx, *r.scan.Billing); err != nil {
+				slog.Debug("cache billing snapshot failed", "provider", name, "error", err)
+			}
 		}
-		if err := db.UpdateSyncState(ctx, name, len(r.users), r.reportsActivity); err != nil {
-			slog.Debug("update sync state failed", "provider", name, "error", err)
+		// A provider that returned no users keeps whatever user cache existed
+		// before rather than being wiped: UpsertProviderUsers deletes before
+		// inserting, so caching an empty result could turn a fetch anomaly into
+		// a confident "no seats".
+		if len(r.users) > 0 {
+			if err := db.UpsertProviderUsers(ctx, name, r.users); err != nil {
+				slog.Debug("cache provider users failed", "provider", name, "error", err)
+				continue
+			}
+			if err := db.UpdateSyncState(ctx, name, len(r.users), r.reportsActivity); err != nil {
+				slog.Debug("update sync state failed", "provider", name, "error", err)
+			}
 		}
 	}
 }
 
 // scanAll queries every target provider concurrently. Providers are independent
 // remote systems, so a slow or broken one must not delay the rest.
-func scanAll(ctx context.Context, cfg *config.Config, reg *provider.Registry, targets []string, domain string) map[string]scanResult {
+func scanAll(ctx context.Context, reg *provider.Registry, targets []string, domain string) map[string]scanResult {
 	threshold := time.Duration(scanDays) * 24 * time.Hour
 	now := time.Now()
 
@@ -190,6 +204,7 @@ func scanAll(ctx context.Context, cfg *config.Config, reg *provider.Registry, ta
 			}
 
 			caps := p.Capabilities()
+			credentialCache, _ := inspectProviderCredentials(ctx, name, p, nil, domain, nil)
 
 			// Ask the provider about its own subscription. A price unseat can
 			// read is a price nobody has to type. A failure here must not sink
@@ -199,28 +214,24 @@ func scanAll(ctx context.Context, cfg *config.Config, reg *provider.Registry, ta
 				b, err := bp.Billing(ctx)
 				if err != nil {
 					slog.Debug("billing lookup failed", "provider", name, "error", err)
+					sub = unavailableBilling(name, now, "billing API unavailable or missing scope: "+err.Error())
 				} else {
 					sub = b
 				}
-			}
-
-			suspendedBilling := caps.SuspendedBilling
-			if billed, overridden := config.SuspendedBillingOverride(cfg.Providers[name]); overridden {
-				suspendedBilling = core.SuspendedBillingReleased
-				if billed {
-					suspendedBilling = core.SuspendedBillingCharged
+				if sub == nil {
+					sub = unavailableBilling(name, now, "provider billing API returned no subscription data")
 				}
+			} else {
+				sub = unavailableBilling(name, now, "provider connector does not expose billing API data yet")
 			}
 
-			set(scanResult{users: users, reportsActivity: caps.ReportsActivity, scan: core.Scan(core.ScanInput{
+			set(scanResult{users: users, credentialCache: credentialCache, reportsActivity: caps.ReportsActivity, scan: core.Scan(core.ScanInput{
 				Provider:          name,
 				Users:             users,
 				Domain:            domain,
 				ReportsActivity:   caps.ReportsActivity,
-				SuspendedBilling:  suspendedBilling,
+				SuspendedBilling:  caps.SuspendedBilling,
 				InactiveThreshold: threshold,
-				CostPerSeat:       cfg.Providers[name].CostPerSeat,
-				MonthlySpend:      cfg.Providers[name].MonthlySpend,
 				Billing:           sub,
 				Now:               now,
 			})})
@@ -231,11 +242,21 @@ func scanAll(ctx context.Context, cfg *config.Config, reg *provider.Registry, ta
 	return results
 }
 
-func printScanReport(cfg *config.Config, targets []string, results map[string]scanResult) {
-	currency := cfg.CurrencyLabel()
+func unavailableBilling(provider string, fetchedAt time.Time, reason string) *core.Billing {
+	return &core.Billing{
+		Provider:          provider,
+		FetchedAt:         fetchedAt.UTC(),
+		Source:            core.BillingSourceUnavailable,
+		Confidence:        core.BillingConfidenceUnavailable,
+		UnavailableReason: reason,
+	}
+}
 
+func printScanReport(targets []string, results map[string]scanResult) {
 	var totalSeats int
-	var totalCost, totalWaste, totalExposure float64
+	totalCost := map[string]int64{}
+	totalWaste := map[string]int64{}
+	totalExposure := map[string]int64{}
 	var failures []string
 	var unpriced []string
 
@@ -247,33 +268,29 @@ func printScanReport(cfg *config.Config, targets []string, results map[string]sc
 			continue
 		}
 		s := r.scan
+		currency := scanCurrency(s)
 		totalSeats += s.Total
-		totalCost += s.MonthlyCost
-		totalWaste += s.MonthlyWaste
-		totalExposure += s.SuspendedExposure
-		if s.CostPerSeat == 0 {
+		addMoney(totalCost, currency, s.MonthlyCostMinor)
+		addMoney(totalWaste, currency, s.MonthlyWasteMinor)
+		addMoney(totalExposure, currency, s.SuspendedExposureMinor)
+		if !scanHasMoney(s) {
 			unpriced = append(unpriced, name)
 		}
-
-		// The rate carries a marker for how it was established: a figure read
-		// from a vendor API and one typed by hand must not look alike.
-		perSeat := money(s.CostPerSeat, s.CostPerSeat) + rateMarker(s.RateSource)
 
 		rows = append(rows, []string{
 			name,
 			fmt.Sprintf("%d", s.Active),
 			fmt.Sprintf("%d", s.Suspended),
 			fmt.Sprintf("%d", s.Admins),
-			perSeat,
-			money(s.MonthlyCost, s.CostPerSeat),
-			money(s.MonthlyWaste, s.CostPerSeat),
-			money(s.SuspendedExposure, s.CostPerSeat),
+			moneyMinor(s.CostPerSeatMinor, currency),
+			moneyMinor(s.MonthlyCostMinor, currency),
+			moneyMinor(s.MonthlyWasteMinor, currency),
+			moneyMinor(s.SuspendedExposureMinor, currency),
 		})
 	}
 
 	if len(rows) > 0 {
-		printTable([]string{"PROVIDER", "ACTIVE", "SUSPENDED", "ADMINS", "PER SEAT", "MONTHLY COST", "WASTED", "SUSPENDED €"}, rows)
-		printRateLegend(targets, results)
+		printTable([]string{"PROVIDER", "ACTIVE", "SUSPENDED", "ADMINS", "PER SEAT", "MONTHLY COST", "WASTED", "SUSPENDED WASTE"}, rows)
 	}
 
 	for _, name := range targets {
@@ -319,25 +336,22 @@ func printScanReport(cfg *config.Config, targets []string, results map[string]sc
 	}
 
 	printOffboardingGaps(targets, results)
+	printCredentialScanSummary(targets, results)
 
 	fmt.Printf("\n%d seats across %d provider(s).\n", totalSeats, len(rows))
-	if totalCost > 0 {
-		fmt.Printf("Active spend: %.2f %s/month.\n", totalCost, currency)
-	}
-	if totalWaste > 0 {
-		fmt.Printf("Confirmed waste (billed, no recorded usage): %.2f %s/month — %.2f %s/year.\n",
-			totalWaste, currency, totalWaste*12, currency)
-	}
-	if totalExposure > 0 {
-		fmt.Printf("Deactivated seats: %.2f %s/month IF your contract bills them until deletion.\n",
-			totalExposure, currency)
-		fmt.Println("Vendors differ — Linear releases them at the next cycle, others bill until the user is deleted.")
-	}
+	printMoneyTotals("Active spend", totalCost, "/month")
+	printWasteTotals(totalWaste)
+	printMoneyTotals("Deactivated billed-seat exposure", totalExposure, "/month")
 
 	if len(unpriced) > 0 {
 		sort.Strings(unpriced)
-		fmt.Printf("\nUnpriced (%d): %s\n", len(unpriced), strings.Join(unpriced, ", "))
-		fmt.Println("Set `cost_per_seat` on these providers to turn seat counts into money.")
+		fmt.Printf("\nPrice/spend unknown via provider API (%d): %s\n", len(unpriced), strings.Join(unpriced, ", "))
+		fmt.Println("No YAML price is used for this report; when the API cannot state spend, unseat reports counts and the unavailable reason.")
+		for _, name := range unpriced {
+			if reason := results[name].scan.BillingUnavailableReason; reason != "" {
+				fmt.Printf("  %-16s %s\n", name, reason)
+			}
+		}
 	}
 
 	if len(failures) > 0 {
@@ -386,46 +400,137 @@ func printOffboardingGaps(targets []string, results map[string]scanResult) {
 // maxGapsShown keeps the terminal report readable; --json carries everything.
 const maxGapsShown = 25
 
-// rateMarkers annotate each rate with how it was established. Principle 3:
-// never state a number more precisely than it is known.
-var rateMarkers = map[core.BillingSource]string{
-	core.BillingSourceAPI:     "",
-	core.BillingSourcePlan:    "~",
-	core.BillingSourceInvoice: "*",
-	core.BillingSourceConfig:  "",
-}
-
-var rateLegend = map[core.BillingSource]string{
-	core.BillingSourcePlan:    "~ inferred from the plan identifier reported by the vendor's API — confirm against your invoice",
-	core.BillingSourceInvoice: "* derived from monthly_spend / active seats",
-}
-
-func rateMarker(s core.BillingSource) string { return rateMarkers[s] }
-
-func printRateLegend(targets []string, results map[string]scanResult) {
-	seen := map[core.BillingSource]bool{}
+func printCredentialScanSummary(targets []string, results map[string]scanResult) {
+	rows := make([][]string, 0, len(targets))
+	var caveats []string
 	for _, name := range targets {
-		if r := results[name]; r.err == nil {
-			seen[r.scan.RateSource] = true
+		entry := results[name].credentialCache
+		if entry.Provider == "" {
+			continue
 		}
-	}
-	var lines []string
-	for src, text := range rateLegend {
-		if seen[src] {
-			lines = append(lines, text)
+		if entry.Status != credentialSyncOK && entry.Message != "" {
+			caveats = append(caveats, fmt.Sprintf("  %-16s %s", name, entry.Message))
 		}
+		summary := core.SummarizeCredentials(name, entry.Credentials, entry.UsageKnown)
+		total := summary.Total
+		if entry.Status != credentialSyncOK {
+			total = len(entry.Credentials)
+		}
+		rows = append(rows, []string{
+			name,
+			entry.Status,
+			fmt.Sprintf("%d", total),
+			fmt.Sprintf("%d", summary.External),
+			fmt.Sprintf("%d", summary.Dormant),
+			fmt.Sprintf("%d", summary.Unowned),
+			fmt.Sprintf("%d", summary.Overreaching),
+			yesNo(entry.UsageKnown),
+		})
 	}
-	sort.Strings(lines)
-	for _, l := range lines {
-		fmt.Println("\n" + l)
+	if len(rows) == 0 {
+		return
+	}
+
+	fmt.Println("\nNON-HUMAN ACCESS")
+	printTable([]string{"PROVIDER", "STATUS", "TOTAL", "EXTERNAL", "DORMANT", "UNOWNED", "OVERREACH", "USAGE DATA"}, rows)
+	fmt.Println("  Cached from provider APIs during scan. Without an identity source, owner employment is not judged.")
+	for _, caveat := range caveats {
+		fmt.Println(caveat)
 	}
 }
 
-// money renders an amount, or a dash when the provider has no configured price
-// — printing 0.00 for an unpriced provider would read as "this costs nothing".
-func money(amount, costPerSeat float64) string {
-	if costPerSeat == 0 {
+type scanCredentialInventory struct {
+	Provider        string                 `json:"provider"`
+	Status          string                 `json:"status"`
+	CredentialCount int                    `json:"credential_count"`
+	UsageKnown      bool                   `json:"usage_known"`
+	Message         string                 `json:"message,omitempty"`
+	Summary         core.CredentialSummary `json:"summary,omitempty"`
+}
+
+func scanCredentialPayload(targets []string, results map[string]scanResult) []scanCredentialInventory {
+	out := make([]scanCredentialInventory, 0, len(targets))
+	for _, name := range targets {
+		entry := results[name].credentialCache
+		if entry.Provider == "" {
+			continue
+		}
+		out = append(out, scanCredentialInventory{
+			Provider:        name,
+			Status:          entry.Status,
+			CredentialCount: len(entry.Credentials),
+			UsageKnown:      entry.UsageKnown,
+			Message:         entry.Message,
+			Summary:         core.SummarizeCredentials(name, entry.Credentials, entry.UsageKnown),
+		})
+	}
+	if out == nil {
+		out = []scanCredentialInventory{}
+	}
+	return out
+}
+
+func scanCurrency(s core.ProviderScan) string {
+	if s.Billing == nil {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(s.Billing.Currency))
+}
+
+func scanHasMoney(s core.ProviderScan) bool {
+	return s.MonthlyCostMinor != nil || s.CostPerSeatMinor != nil
+}
+
+func addMoney(totals map[string]int64, currency string, amount *int64) {
+	if amount == nil {
+		return
+	}
+	totals[currency] += *amount
+}
+
+// moneyMinor renders an amount, or a dash when the provider API did not state
+// money. Printing 0.00 for an unknown price would read as "this costs nothing".
+func moneyMinor(amount *int64, currency string) string {
+	if amount == nil {
 		return "—"
 	}
-	return fmt.Sprintf("%.2f", amount)
+	return formatMoneyMinor(*amount, currency)
+}
+
+func formatMoneyMinor(amount int64, currency string) string {
+	value := fmt.Sprintf("%.2f", float64(amount)/100)
+	if currency == "" {
+		return value
+	}
+	return value + " " + currency
+}
+
+func printMoneyTotals(label string, totals map[string]int64, suffix string) {
+	for _, currency := range sortedMoneyCurrencies(totals) {
+		amount := totals[currency]
+		if amount == 0 {
+			continue
+		}
+		fmt.Printf("%s: %s%s.\n", label, formatMoneyMinor(amount, currency), suffix)
+	}
+}
+
+func printWasteTotals(totals map[string]int64) {
+	for _, currency := range sortedMoneyCurrencies(totals) {
+		amount := totals[currency]
+		if amount == 0 {
+			continue
+		}
+		fmt.Printf("Confirmed waste (billed, no recorded usage): %s/month — %s/year.\n",
+			formatMoneyMinor(amount, currency), formatMoneyMinor(amount*12, currency))
+	}
+}
+
+func sortedMoneyCurrencies(totals map[string]int64) []string {
+	currencies := make([]string, 0, len(totals))
+	for currency := range totals {
+		currencies = append(currencies, currency)
+	}
+	sort.Strings(currencies)
+	return currencies
 }

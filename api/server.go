@@ -34,8 +34,13 @@ func (s *Server) setupRoutes() {
 		r.Use(middleware.SetHeader("Content-Type", "application/json"))
 		r.Get("/providers", s.handleListProviders)
 		r.Get("/providers/{name}/users", s.handleProviderUsers)
+		r.Get("/providers/{name}/billing", s.handleProviderBilling)
+		r.Get("/providers/{name}/credentials", s.handleProviderCredentials)
 		r.Get("/providers/{name}/inactive", s.handleInactiveUsers)
+		r.Get("/billing", s.handleListBilling)
 		r.Get("/inactive", s.handleAllInactiveUsers)
+		r.Get("/credentials", s.handleListCredentials)
+		r.Get("/credentials/summary", s.handleCredentialsSummary)
 		// Named for what it reads. As /orphans it invited "empty means no
 		// orphaned accounts", when it only ever meant "no removal is currently
 		// counting down" — a table that stays empty until a non-dry-run sync

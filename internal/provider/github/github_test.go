@@ -35,8 +35,14 @@ func TestProviderCapabilities(t *testing.T) {
 	assert.False(t, caps.ReportsActivity)
 }
 
+func encodeTestJSON(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		panic(err)
+	}
+}
+
 func noSAMLHandler(w http.ResponseWriter, _ *http.Request) {
-	json.NewEncoder(w).Encode(map[string]any{
+	encodeTestJSON(w, map[string]any{
 		"data": map[string]any{
 			"organization": map[string]any{
 				"samlIdentityProvider": nil,
@@ -53,7 +59,7 @@ func noSAMLHandler(w http.ResponseWriter, _ *http.Request) {
 func handleCommon(w http.ResponseWriter, r *http.Request) bool {
 	switch r.URL.Path {
 	case "/user/memberships/orgs/my-org":
-		json.NewEncoder(w).Encode(map[string]any{"state": "active", "role": "member"})
+		encodeTestJSON(w, map[string]any{"state": "active", "role": "member"})
 		return true
 	case "/graphql":
 		noSAMLHandler(w, r)
@@ -62,7 +68,7 @@ func handleCommon(w http.ResponseWriter, r *http.Request) bool {
 		w.WriteHeader(http.StatusNotFound)
 		return true
 	case "/orgs/my-org/events":
-		json.NewEncoder(w).Encode([]map[string]any{})
+		encodeTestJSON(w, []map[string]any{})
 		return true
 	}
 	return false
@@ -80,20 +86,20 @@ func TestListUsers(t *testing.T) {
 
 		switch {
 		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
-			json.NewEncoder(w).Encode([]orgMember{{Login: "bob", ID: 102}})
+			encodeTestJSON(w, []orgMember{{Login: "bob", ID: 102}})
 		case r.URL.Path == "/orgs/my-org/members":
-			json.NewEncoder(w).Encode([]orgMember{
+			encodeTestJSON(w, []orgMember{
 				{Login: "alice", ID: 101},
 				{Login: "bob", ID: 102},
 			})
 		case r.URL.Path == "/orgs/my-org/events":
-			json.NewEncoder(w).Encode([]map[string]any{
+			encodeTestJSON(w, []map[string]any{
 				{"actor": map[string]any{"login": "alice"}, "created_at": activityTime.Format(time.RFC3339)},
 			})
 		case r.URL.Path == "/users/alice":
-			json.NewEncoder(w).Encode(map[string]any{"email": "alice@co.com", "name": "Alice Smith", "login": "alice"})
+			encodeTestJSON(w, map[string]any{"email": "alice@co.com", "name": "Alice Smith", "login": "alice"})
 		case r.URL.Path == "/users/bob":
-			json.NewEncoder(w).Encode(map[string]any{"email": "bob@co.com", "name": "Bob Jones", "login": "bob"})
+			encodeTestJSON(w, map[string]any{"email": "bob@co.com", "name": "Bob Jones", "login": "bob"})
 		}
 	}))
 	defer server.Close()
@@ -125,11 +131,11 @@ func TestListUsersNoPublicEmail(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
-			json.NewEncoder(w).Encode([]orgMember{})
+			encodeTestJSON(w, []orgMember{})
 		case r.URL.Path == "/orgs/my-org/members":
-			json.NewEncoder(w).Encode([]orgMember{{Login: "private-user", ID: 200}})
+			encodeTestJSON(w, []orgMember{{Login: "private-user", ID: 200}})
 		case r.URL.Path == "/users/private-user":
-			json.NewEncoder(w).Encode(map[string]any{"email": nil, "name": "Private User", "login": "private-user"})
+			encodeTestJSON(w, map[string]any{"email": nil, "name": "Private User", "login": "private-user"})
 		}
 	}))
 	defer server.Close()
@@ -155,9 +161,9 @@ func TestUnresolvedLoginClassifiesAsUnresolved(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
-			json.NewEncoder(w).Encode([]orgMember{})
+			encodeTestJSON(w, []orgMember{})
 		case r.URL.Path == "/orgs/my-org/members":
-			json.NewEncoder(w).Encode([]orgMember{{Login: "ghost", ID: 300}})
+			encodeTestJSON(w, []orgMember{{Login: "ghost", ID: 300}})
 		case r.URL.Path == "/users/ghost":
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -188,11 +194,11 @@ func TestMissingActivityIsNotReportedAsInactive(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
-			json.NewEncoder(w).Encode([]orgMember{})
+			encodeTestJSON(w, []orgMember{})
 		case r.URL.Path == "/orgs/my-org/members":
-			json.NewEncoder(w).Encode([]orgMember{{Login: "quiet", ID: 400}})
+			encodeTestJSON(w, []orgMember{{Login: "quiet", ID: 400}})
 		case r.URL.Path == "/users/quiet":
-			json.NewEncoder(w).Encode(map[string]any{"email": "quiet@co.com", "name": "Quiet", "login": "quiet"})
+			encodeTestJSON(w, map[string]any{"email": "quiet@co.com", "name": "Quiet", "login": "quiet"})
 		}
 	}))
 	defer server.Close()
@@ -227,22 +233,22 @@ func TestListUsersPagination(t *testing.T) {
 		}
 		if strings.HasPrefix(r.URL.Path, "/users/") {
 			login := strings.TrimPrefix(r.URL.Path, "/users/")
-			json.NewEncoder(w).Encode(map[string]any{"email": login + "@co.com", "name": login, "login": login})
+			encodeTestJSON(w, map[string]any{"email": login + "@co.com", "name": login, "login": login})
 			return
 		}
 		if r.URL.Query().Get("role") == "admin" {
-			json.NewEncoder(w).Encode([]orgMember{})
+			encodeTestJSON(w, []orgMember{})
 			return
 		}
 		memberCalls++
 		if memberCalls == 1 {
 			w.Header().Set("Link", fmt.Sprintf(`<%s/orgs/my-org/members?page=2>; rel="next"`, "http://"+r.Host))
-			json.NewEncoder(w).Encode([]orgMember{
+			encodeTestJSON(w, []orgMember{
 				{Login: "alice", ID: 101},
 				{Login: "bob", ID: 102},
 			})
 		} else {
-			json.NewEncoder(w).Encode([]orgMember{
+			encodeTestJSON(w, []orgMember{
 				{Login: "charlie", ID: 103},
 			})
 		}
@@ -267,7 +273,7 @@ func TestListUsersWithSAML(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/graphql":
-			json.NewEncoder(w).Encode(map[string]any{
+			encodeTestJSON(w, map[string]any{
 				"data": map[string]any{
 					"organization": map[string]any{
 						"samlIdentityProvider": map[string]any{
@@ -289,9 +295,9 @@ func TestListUsersWithSAML(t *testing.T) {
 				},
 			})
 		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
-			json.NewEncoder(w).Encode([]orgMember{})
+			encodeTestJSON(w, []orgMember{})
 		case r.URL.Path == "/orgs/my-org/members":
-			json.NewEncoder(w).Encode([]orgMember{
+			encodeTestJSON(w, []orgMember{
 				{Login: "alice", ID: 101},
 				{Login: "bob", ID: 102},
 			})
@@ -321,12 +327,13 @@ func TestListUsersRejectsNonMemberToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/user/memberships/orgs/my-org" {
 			w.WriteHeader(http.StatusNotFound)
-			w.Write([]byte(`{"message":"Not Found"}`))
+			_, err := w.Write([]byte(`{"message":"Not Found"}`))
+			require.NoError(t, err)
 			return
 		}
 		if r.URL.Path == "/orgs/my-org/members" {
 			membersListed = true
-			json.NewEncoder(w).Encode([]orgMember{{Login: "public-only", ID: 1}})
+			require.NoError(t, json.NewEncoder(w).Encode([]orgMember{{Login: "public-only", ID: 1}}))
 		}
 	}))
 	defer server.Close()
@@ -343,7 +350,8 @@ func TestListUsersRejectsTokenWithoutOrgScope(t *testing.T) {
 		if r.URL.Path == "/user/memberships/orgs/my-org" {
 			w.Header().Set("X-OAuth-Scopes", "repo, user:email")
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"message":"Resource not accessible"}`))
+			_, err := w.Write([]byte(`{"message":"Resource not accessible"}`))
+			require.NoError(t, err)
 			return
 		}
 		t.Errorf("unexpected call to %s", r.URL.Path)
@@ -360,7 +368,7 @@ func TestListUsersRejectsTokenWithoutOrgScope(t *testing.T) {
 func TestListUsersRejectsPendingMembership(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/user/memberships/orgs/my-org" {
-			json.NewEncoder(w).Encode(map[string]any{"state": "pending", "role": "member"})
+			encodeTestJSON(w, map[string]any{"state": "pending", "role": "member"})
 			return
 		}
 		t.Errorf("unexpected call to %s", r.URL.Path)
@@ -377,13 +385,13 @@ func TestListUsersAcceptsAdminScopedToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/user/memberships/orgs/my-org" {
 			w.Header().Set("X-OAuth-Scopes", "admin:org, repo")
-			json.NewEncoder(w).Encode(map[string]any{"state": "active", "role": "admin"})
+			encodeTestJSON(w, map[string]any{"state": "active", "role": "admin"})
 			return
 		}
 		if handleCommon(w, r) {
 			return
 		}
-		json.NewEncoder(w).Encode([]orgMember{})
+		encodeTestJSON(w, []orgMember{})
 	}))
 	defer server.Close()
 
@@ -409,7 +417,7 @@ func TestOrgActivityStopsAtEventCap(t *testing.T) {
 		if r.URL.Path == "/orgs/my-org/events" {
 			eventCalls++
 			w.Header().Set("Link", fmt.Sprintf(`<%s/orgs/my-org/events?page=99>; rel="next"`, "http://"+r.Host))
-			json.NewEncoder(w).Encode([]map[string]any{
+			encodeTestJSON(w, []map[string]any{
 				{"actor": map[string]any{"login": fmt.Sprintf("user%d", eventCalls)}, "created_at": "2026-03-01T12:00:00Z"},
 			})
 			return
@@ -417,7 +425,7 @@ func TestOrgActivityStopsAtEventCap(t *testing.T) {
 		if handleCommon(w, r) {
 			return
 		}
-		json.NewEncoder(w).Encode([]orgMember{})
+		encodeTestJSON(w, []orgMember{})
 	}))
 	defer server.Close()
 
@@ -435,11 +443,11 @@ func TestRemoveUser(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/orgs/my-org/members" && r.Method == http.MethodGet && r.URL.Query().Get("role") == "admin":
-			json.NewEncoder(w).Encode([]orgMember{})
+			encodeTestJSON(w, []orgMember{})
 		case r.URL.Path == "/orgs/my-org/members" && r.Method == http.MethodGet:
-			json.NewEncoder(w).Encode([]orgMember{{Login: "alice", ID: 101}})
+			encodeTestJSON(w, []orgMember{{Login: "alice", ID: 101}})
 		case strings.HasPrefix(r.URL.Path, "/users/"):
-			json.NewEncoder(w).Encode(map[string]any{"email": "alice@co.com", "name": "Alice", "login": "alice"})
+			encodeTestJSON(w, map[string]any{"email": "alice@co.com", "name": "Alice", "login": "alice"})
 		case r.Method == http.MethodDelete:
 			assert.Equal(t, "/orgs/my-org/members/alice", r.URL.Path)
 			deleteCalled = true
@@ -460,7 +468,7 @@ func TestRemoveUserNotFound(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/orgs/my-org/members" {
-			json.NewEncoder(w).Encode([]orgMember{})
+			encodeTestJSON(w, []orgMember{})
 		}
 	}))
 	defer server.Close()
@@ -477,7 +485,8 @@ func TestAPIError(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"message":"Bad credentials"}`))
+		_, err := w.Write([]byte(`{"message":"Bad credentials"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -508,7 +517,8 @@ func TestSetRoleNotSupported(t *testing.T) {
 func TestBilling(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/orgs/acme", r.URL.Path)
-		fmt.Fprint(w, `{"login":"acme","plan":{"name":"enterprise","seats":80,"filled_seats":41}}`)
+		_, err := fmt.Fprint(w, `{"login":"acme","plan":{"name":"enterprise","seats":80,"filled_seats":41}}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -517,18 +527,23 @@ func TestBilling(t *testing.T) {
 	require.NotNil(t, b)
 
 	assert.Equal(t, "enterprise", b.Plan)
-	assert.Equal(t, 80, b.BilledSeats)
-	assert.Equal(t, 41, b.FilledSeats)
+	require.NotNil(t, b.BilledSeats)
+	assert.Equal(t, 80, *b.BilledSeats)
+	require.NotNil(t, b.FilledSeats)
+	assert.Equal(t, 41, *b.FilledSeats)
 	// An Enterprise agreement is unknowable from here: no price may be invented.
-	assert.Zero(t, b.CostPerSeat)
-	assert.Empty(t, b.Source)
+	assert.Nil(t, b.CostPerSeatMinor)
+	assert.Equal(t, core.BillingSourceAPISeatCount, b.Source)
+	assert.Equal(t, core.BillingConfidencePartial, b.Confidence)
+	assert.NotEmpty(t, b.UnavailableReason)
 }
 
 // plan is only returned to org admins. A member-scoped token seeing no plan is
 // an absence, not a failure — the seat findings still stand.
 func TestBillingWithoutAdminAccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"login":"acme"}`)
+		_, err := fmt.Fprint(w, `{"login":"acme"}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -551,7 +566,8 @@ func TestAuditLogParsesMillisecondTimestamp(t *testing.T) {
 		// this path answers 404 (the "no Enterprise" default every other test
 		// relies on), which would shadow the 200 this test needs to serve.
 		if r.URL.Path == "/orgs/my-org/audit-log" {
-			fmt.Fprintf(w, `[{"actor":"alice","action":"org.add_member","created_at":%d}]`, wantMillis)
+			_, err := fmt.Fprintf(w, `[{"actor":"alice","action":"org.add_member","created_at":%d}]`, wantMillis)
+			require.NoError(t, err)
 			return
 		}
 		if handleCommon(w, r) {
@@ -559,11 +575,11 @@ func TestAuditLogParsesMillisecondTimestamp(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
-			json.NewEncoder(w).Encode([]orgMember{})
+			encodeTestJSON(w, []orgMember{})
 		case r.URL.Path == "/orgs/my-org/members":
-			json.NewEncoder(w).Encode([]orgMember{{Login: "alice", ID: 101}})
+			encodeTestJSON(w, []orgMember{{Login: "alice", ID: 101}})
 		case r.URL.Path == "/users/alice":
-			json.NewEncoder(w).Encode(map[string]any{"email": "alice@co.com", "name": "Alice", "login": "alice"})
+			encodeTestJSON(w, map[string]any{"email": "alice@co.com", "name": "Alice", "login": "alice"})
 		}
 	}))
 	defer server.Close()
@@ -594,8 +610,9 @@ func TestAuditLogMostRecentWinsPerActor(t *testing.T) {
 			// takes entries[0] rather than the last it happens to decode.
 			assert.Equal(t, "desc", r.URL.Query().Get("order"))
 			assert.Contains(t, r.URL.Query().Get("phrase"), "actor:alice")
-			fmt.Fprintf(w, `[{"actor":"alice","action":"org.add_member","created_at":%d},{"actor":"Alice","action":"repo.access","created_at":%d}]`,
+			_, err := fmt.Fprintf(w, `[{"actor":"alice","action":"org.add_member","created_at":%d},{"actor":"Alice","action":"repo.access","created_at":%d}]`,
 				newer.UnixMilli(), older.UnixMilli())
+			require.NoError(t, err)
 			return
 		}
 		if handleCommon(w, r) {
@@ -603,11 +620,11 @@ func TestAuditLogMostRecentWinsPerActor(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
-			json.NewEncoder(w).Encode([]orgMember{})
+			encodeTestJSON(w, []orgMember{})
 		case r.URL.Path == "/orgs/my-org/members":
-			json.NewEncoder(w).Encode([]orgMember{{Login: "alice", ID: 101}})
+			encodeTestJSON(w, []orgMember{{Login: "alice", ID: 101}})
 		case r.URL.Path == "/users/alice":
-			json.NewEncoder(w).Encode(map[string]any{"email": "alice@co.com", "name": "Alice", "login": "alice"})
+			encodeTestJSON(w, map[string]any{"email": "alice@co.com", "name": "Alice", "login": "alice"})
 		}
 	}))
 	defer server.Close()
@@ -629,24 +646,25 @@ func TestAuditLog403FallsBackToEventsAndReportsActivityStaysFalse(t *testing.T) 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/user/memberships/orgs/my-org":
-			json.NewEncoder(w).Encode(map[string]any{"state": "active", "role": "member"})
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"state": "active", "role": "member"}))
 		case "/graphql":
 			noSAMLHandler(w, r)
 		case "/orgs/my-org/audit-log":
 			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(`{"message":"Audit log access requires a GitHub Enterprise Cloud plan"}`))
+			_, err := w.Write([]byte(`{"message":"Audit log access requires a GitHub Enterprise Cloud plan"}`))
+			require.NoError(t, err)
 		case "/orgs/my-org/events":
-			json.NewEncoder(w).Encode([]map[string]any{
+			require.NoError(t, json.NewEncoder(w).Encode([]map[string]any{
 				{"actor": map[string]any{"login": "alice"}, "created_at": activityTime.Format(time.RFC3339)},
-			})
+			}))
 		case "/orgs/my-org/members":
 			if r.URL.Query().Get("role") == "admin" {
-				json.NewEncoder(w).Encode([]orgMember{})
+				require.NoError(t, json.NewEncoder(w).Encode([]orgMember{}))
 				return
 			}
-			json.NewEncoder(w).Encode([]orgMember{{Login: "alice", ID: 101}})
+			require.NoError(t, json.NewEncoder(w).Encode([]orgMember{{Login: "alice", ID: 101}}))
 		case "/users/alice":
-			json.NewEncoder(w).Encode(map[string]any{"email": "alice@co.com", "name": "Alice", "login": "alice"})
+			encodeTestJSON(w, map[string]any{"email": "alice@co.com", "name": "Alice", "login": "alice"})
 		}
 	}))
 	defer server.Close()
@@ -675,7 +693,7 @@ func TestAuditLog404FallsBackAndReportsActivityStaysFalse(t *testing.T) {
 		if handleCommon(w, r) {
 			return
 		}
-		json.NewEncoder(w).Encode([]orgMember{})
+		encodeTestJSON(w, []orgMember{})
 	}))
 	defer server.Close()
 
@@ -711,10 +729,12 @@ func TestAuditLogQueriesEveryMemberIndividually(t *testing.T) {
 			mu.Unlock()
 
 			if strings.Contains(phrase, "actor:carol") {
-				fmt.Fprint(w, `[]`) // genuinely nothing in the window
+				_, err := fmt.Fprint(w, `[]`) // genuinely nothing in the window
+				require.NoError(t, err)
 				return
 			}
-			fmt.Fprintf(w, `[{"actor":"x","action":"repo.access","created_at":%d}]`, time.Now().UnixMilli())
+			_, err := fmt.Fprintf(w, `[{"actor":"x","action":"repo.access","created_at":%d}]`, time.Now().UnixMilli())
+			require.NoError(t, err)
 			return
 		}
 		if handleCommon(w, r) {
@@ -722,13 +742,13 @@ func TestAuditLogQueriesEveryMemberIndividually(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
-			json.NewEncoder(w).Encode([]orgMember{})
+			encodeTestJSON(w, []orgMember{})
 		case r.URL.Path == "/orgs/my-org/members":
-			json.NewEncoder(w).Encode([]orgMember{
+			encodeTestJSON(w, []orgMember{
 				{Login: "alice", ID: 1}, {Login: "bob", ID: 2}, {Login: "carol", ID: 3},
 			})
 		default:
-			json.NewEncoder(w).Encode(map[string]any{})
+			encodeTestJSON(w, map[string]any{})
 		}
 	}))
 	defer server.Close()
@@ -757,10 +777,11 @@ func TestListUsersGoldenMembersShape(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
-			json.NewEncoder(w).Encode([]orgMember{})
+			require.NoError(t, json.NewEncoder(w).Encode([]orgMember{}))
 		case r.URL.Path == "/orgs/my-org/members":
 			w.Header().Set("Content-Type", "application/json")
-			w.Write(membersBody)
+			_, err := w.Write(membersBody)
+			require.NoError(t, err)
 		case strings.HasPrefix(r.URL.Path, "/users/"):
 			// A real org token overwhelmingly sees no public email on members;
 			// the bare login is the contract (see ListUsers).
@@ -796,7 +817,8 @@ func TestBillingGoldenOrgShape(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/orgs/my-org", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
+		_, err := w.Write(body)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -808,10 +830,14 @@ func TestBillingGoldenOrgShape(t *testing.T) {
 	// Synthetic figures: a golden file preserves the payload's SHAPE, not the
 	// captured tenant's scale. Real repository counts and disk usage were
 	// scrubbed — this repo is public.
-	assert.Equal(t, 25, b.BilledSeats)
-	assert.Equal(t, 12, b.FilledSeats)
-	assert.Zero(t, b.CostPerSeat)
-	assert.Empty(t, b.Source)
+	require.NotNil(t, b.BilledSeats)
+	assert.Equal(t, 25, *b.BilledSeats)
+	require.NotNil(t, b.FilledSeats)
+	assert.Equal(t, 12, *b.FilledSeats)
+	assert.Nil(t, b.CostPerSeatMinor)
+	assert.Equal(t, core.BillingSourceAPISeatCount, b.Source)
+	assert.Equal(t, core.BillingConfidencePartial, b.Confidence)
+	assert.NotEmpty(t, b.UnavailableReason)
 }
 
 // Losing audit-log access partway through invalidates the whole map: the
@@ -822,19 +848,25 @@ func TestAuditLogPartialFailureDropsActivityClaim(t *testing.T) {
 		case strings.Contains(r.URL.Path, "/audit-log") && strings.Contains(r.URL.Query().Get("phrase"), "actor:"):
 			w.WriteHeader(http.StatusForbidden)
 		case strings.Contains(r.URL.Path, "/audit-log"):
-			fmt.Fprint(w, `[{"actor":"noisy","created_at":1755000000000}]`)
+			_, err := fmt.Fprint(w, `[{"actor":"noisy","created_at":1755000000000}]`)
+			require.NoError(t, err)
 		case strings.HasSuffix(r.URL.Path, "/members"):
 			if r.URL.Query().Get("role") == "admin" {
-				fmt.Fprint(w, `[]`)
+				_, err := fmt.Fprint(w, `[]`)
+				require.NoError(t, err)
 				return
 			}
-			fmt.Fprint(w, `[{"login":"noisy","id":1},{"login":"other","id":2}]`)
+			_, err := fmt.Fprint(w, `[{"login":"noisy","id":1},{"login":"other","id":2}]`)
+			require.NoError(t, err)
 		case strings.Contains(r.URL.Path, "/memberships/orgs/"):
-			fmt.Fprint(w, `{"state":"active"}`)
+			_, err := fmt.Fprint(w, `{"state":"active"}`)
+			require.NoError(t, err)
 		case strings.Contains(r.URL.Path, "/graphql"):
-			fmt.Fprint(w, `{"data":{"organization":{"samlIdentityProvider":null}}}`)
+			_, err := fmt.Fprint(w, `{"data":{"organization":{"samlIdentityProvider":null}}}`)
+			require.NoError(t, err)
 		default:
-			fmt.Fprint(w, `{}`)
+			_, err := fmt.Fprint(w, `{}`)
+			require.NoError(t, err)
 		}
 	}))
 	defer server.Close()
@@ -860,12 +892,15 @@ func TestAuditLogReadsTimestampFromEitherSpelling(t *testing.T) {
 			switch {
 			case strings.Contains(phrase, "actor:gituser"):
 				// A git event, exactly as the API returns it.
-				fmt.Fprintf(w, `[{"actor":"gituser","action":"git.fetch","created_at":null,"@timestamp":%d}]`, recent.UnixMilli())
+				_, err := fmt.Fprintf(w, `[{"actor":"gituser","action":"git.fetch","created_at":null,"@timestamp":%d}]`, recent.UnixMilli())
+				require.NoError(t, err)
 			case strings.Contains(phrase, "actor:webuser"):
-				fmt.Fprintf(w, `[{"actor":"webuser","action":"repo.access","created_at":%d}]`, recent.UnixMilli())
+				_, err := fmt.Fprintf(w, `[{"actor":"webuser","action":"repo.access","created_at":%d}]`, recent.UnixMilli())
+				require.NoError(t, err)
 			default:
 				// Neither spelling: not evidence of idleness, so no timestamp.
-				fmt.Fprint(w, `[{"actor":"undated","action":"repo.access"}]`)
+				_, err := fmt.Fprint(w, `[{"actor":"undated","action":"repo.access"}]`)
+				require.NoError(t, err)
 			}
 			return
 		}
@@ -874,13 +909,13 @@ func TestAuditLogReadsTimestampFromEitherSpelling(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
-			json.NewEncoder(w).Encode([]orgMember{})
+			encodeTestJSON(w, []orgMember{})
 		case r.URL.Path == "/orgs/my-org/members":
-			json.NewEncoder(w).Encode([]orgMember{
+			encodeTestJSON(w, []orgMember{
 				{Login: "gituser", ID: 1}, {Login: "webuser", ID: 2}, {Login: "undated", ID: 3},
 			})
 		default:
-			json.NewEncoder(w).Encode(map[string]any{})
+			encodeTestJSON(w, map[string]any{})
 		}
 	}))
 	defer server.Close()

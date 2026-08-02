@@ -29,7 +29,8 @@ type IdentityProvider interface {
 // Implement it wherever the vendor exposes anything: a price unseat can read
 // is a price the operator does not have to type, and asking for a value the
 // API already knows is a defect. Connectors that cannot answer simply do not
-// implement it, and unseat degrades to whatever config provides.
+// implement it, and unseat reports billing as unavailable instead of inventing
+// a price elsewhere.
 type BillingProvider interface {
 	Provider
 	Billing(ctx context.Context) (*core.Billing, error)

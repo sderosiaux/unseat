@@ -22,6 +22,14 @@ type Store interface {
 	GetSyncState(ctx context.Context, provider string) (*SyncState, error)
 	ListSyncStates(ctx context.Context) ([]SyncState, error)
 	ActivityReportingProviders(ctx context.Context) (reporting, silent []string, err error)
+	InsertBillingSnapshot(ctx context.Context, snapshot core.BillingSnapshot) error
+	LatestBillingSnapshot(ctx context.Context, provider string) (*core.BillingSnapshot, error)
+	ListLatestBillingSnapshots(ctx context.Context) ([]core.BillingSnapshot, error)
+	UpsertProviderCredentials(ctx context.Context, provider string, credentials []core.ClassifiedCredential) error
+	GetProviderCredentials(ctx context.Context, provider string) ([]core.ClassifiedCredential, error)
+	ListProviderCredentials(ctx context.Context) ([]core.ClassifiedCredential, error)
+	UpdateCredentialSyncState(ctx context.Context, state CredentialSyncState) error
+	ListCredentialSyncStates(ctx context.Context) ([]CredentialSyncState, error)
 	Close() error
 }
 
@@ -57,4 +65,17 @@ type SyncState struct {
 	LastSyncedAt time.Time `json:"last_synced_at"`
 	UserCount    int       `json:"user_count"`
 	Status       string    `json:"status"`
+}
+
+// CredentialSyncState tracks the last credential inventory read for a provider.
+//
+// Status is intentionally explicit. A provider that is skipped or not supported
+// is not clean; it is unevaluated, and callers must surface that distinction.
+type CredentialSyncState struct {
+	Provider        string    `json:"provider"`
+	LastSyncedAt    time.Time `json:"last_synced_at"`
+	CredentialCount int       `json:"credential_count"`
+	Status          string    `json:"status"`
+	UsageKnown      bool      `json:"usage_known"`
+	Message         string    `json:"message,omitempty"`
 }

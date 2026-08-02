@@ -14,7 +14,7 @@ import (
 func TestNewMCPServer(t *testing.T) {
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{}
 	srv := New(db, cfg)
@@ -25,7 +25,7 @@ func TestNewMCPServer(t *testing.T) {
 func TestHandleListProviders(t *testing.T) {
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	ctx := context.Background()
 	require.NoError(t, db.UpdateSyncState(ctx, "slack", 5, false))
@@ -41,7 +41,7 @@ func TestHandleListProviders(t *testing.T) {
 func TestHandleProviderUsers(t *testing.T) {
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	ctx := context.Background()
 	require.NoError(t, db.UpsertProviderUsers(ctx, "github", []core.User{
@@ -56,10 +56,46 @@ func TestHandleProviderUsers(t *testing.T) {
 	require.Equal(t, "alice@test.com", out.Users[0].Email)
 }
 
+func TestHandleListBilling(t *testing.T) {
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	ctx := context.Background()
+	require.NoError(t, db.InsertBillingSnapshot(ctx, core.BillingSnapshot{
+		Provider:           "github",
+		BilledSeats:        core.IntPtr(80),
+		MonthlyAmountMinor: core.Int64Ptr(168000),
+		Currency:           "USD",
+		Source:             core.BillingSourceAPIInvoice,
+		Confidence:         core.BillingConfidenceExact,
+	}))
+
+	srv := New(db, &config.Config{})
+	_, out, err := srv.handleListBilling(ctx, nil, emptyInput{})
+	require.NoError(t, err)
+	require.Len(t, out.Billing, 1)
+	require.Equal(t, "github", out.Billing[0].Provider)
+	require.Equal(t, int64(168000), *out.Billing[0].MonthlyAmountMinor)
+}
+
+func TestHandleProviderBillingMissingSnapshot(t *testing.T) {
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	srv := New(db, &config.Config{})
+	_, out, err := srv.handleProviderBilling(context.Background(), nil, providerInput{Provider: "linear"})
+	require.NoError(t, err)
+	require.Equal(t, "linear", out.Provider)
+	require.Nil(t, out.Billing)
+	require.NotEmpty(t, out.Reason)
+}
+
 func TestHandleListOrphans(t *testing.T) {
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	ctx := context.Background()
 	require.NoError(t, db.UpdateSyncState(ctx, "slack", 3, false))
@@ -76,7 +112,7 @@ func TestHandleListOrphans(t *testing.T) {
 func TestHandleListEvents(t *testing.T) {
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	ctx := context.Background()
 	require.NoError(t, db.InsertEvent(ctx, core.Event{
@@ -108,7 +144,7 @@ func TestHandleGetMappings(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	srv := New(db, cfg)
 	_, out, err := srv.handleGetMappings(context.Background(), nil, emptyInput{})
@@ -121,11 +157,81 @@ func TestHandleGetMappings(t *testing.T) {
 func TestHandleGetMappingsEmpty(t *testing.T) {
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	srv := New(db, &config.Config{})
 	_, out, err := srv.handleGetMappings(context.Background(), nil, emptyInput{})
 	require.NoError(t, err)
 	require.NotNil(t, out.Mappings)
 	require.Empty(t, out.Mappings)
+}
+
+func TestHandleListCredentials(t *testing.T) {
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	ctx := context.Background()
+	require.NoError(t, db.UpsertProviderCredentials(ctx, "github", []core.ClassifiedCredential{
+		{
+			Credential: core.Credential{
+				Kind:      core.CredentialDeployKey,
+				ID:        "key-1",
+				Label:     "Production Deploy",
+				CreatedBy: "gone@test.com",
+			},
+			Class:  core.CredentialOrphaned,
+			Reason: "gone@test.com is not in the directory",
+		},
+	}))
+	require.NoError(t, db.UpdateCredentialSyncState(ctx, store.CredentialSyncState{
+		Provider:        "github",
+		CredentialCount: 1,
+		Status:          "ok",
+	}))
+
+	srv := New(db, &config.Config{})
+	_, out, err := srv.handleListCredentials(ctx, nil, emptyInput{})
+	require.NoError(t, err)
+	require.Len(t, out.Credentials, 1)
+	require.Equal(t, "github", out.Credentials[0].Credential.Provider)
+	require.Len(t, out.SyncStates, 1)
+	require.Equal(t, "ok", out.SyncStates[0].Status)
+}
+
+func TestHandleProviderCredentialsEmptyArray(t *testing.T) {
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	srv := New(db, &config.Config{})
+	_, out, err := srv.handleProviderCredentials(context.Background(), nil, providerInput{Provider: "linear"})
+	require.NoError(t, err)
+	require.Equal(t, "linear", out.Provider)
+	require.NotNil(t, out.Credentials)
+	require.Empty(t, out.Credentials)
+	require.Nil(t, out.SyncState)
+}
+
+func TestHandleCredentialSummaryIncludesUnsupportedState(t *testing.T) {
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	ctx := context.Background()
+	require.NoError(t, db.UpdateCredentialSyncState(ctx, store.CredentialSyncState{
+		Provider:        "figma",
+		CredentialCount: 0,
+		Status:          "not_supported",
+		Message:         "provider API exposes no credential listing",
+	}))
+
+	srv := New(db, &config.Config{})
+	_, out, err := srv.handleCredentialSummary(ctx, nil, emptyInput{})
+	require.NoError(t, err)
+	require.NotNil(t, out.Summary)
+	require.Empty(t, out.Summary)
+	require.Len(t, out.SyncStates, 1)
+	require.Equal(t, "figma", out.SyncStates[0].Provider)
+	require.Equal(t, "not_supported", out.SyncStates[0].Status)
 }

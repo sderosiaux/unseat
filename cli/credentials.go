@@ -40,10 +40,20 @@ type credentialAudit struct {
 	// listing at all. Leaving them out silently would let an empty section read
 	// as "nothing to find" when it means "never looked".
 	Skipped []string `json:"not_supported,omitempty"`
+	cache   []credentialCacheEntry
 }
 
 func classifyCredentials(ctx context.Context, cfg *config.Config) (*credentialAudit, error) {
-	reg, identity, err := provider.BuildRegistry(ctx, cfg)
+	var (
+		reg      *provider.Registry
+		identity provider.IdentityProvider
+		err      error
+	)
+	if cfg.IdentitySource.Provider == "" {
+		reg, identity, err = provider.BuildRegistryWithIdentity(cfg, nil)
+	} else {
+		reg, identity, err = provider.BuildRegistry(ctx, cfg)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("initialize providers: %w", err)
 	}
@@ -81,24 +91,18 @@ func classifyCredentials(ctx context.Context, cfg *config.Config) (*credentialAu
 			continue
 		}
 
-		cp, ok := p.(provider.CredentialProvider)
-		if !ok {
+		entry, classified := inspectProviderCredentials(ctx, name, p, directory, cfg.CorporateDomain(), aliasIndex)
+		audit.cache = append(audit.cache, entry)
+
+		switch entry.Status {
+		case credentialSyncNotSupported:
 			audit.Skipped = append(audit.Skipped, name)
 			continue
-		}
-
-		creds, err := cp.ListCredentials(ctx)
-		if err != nil {
-			audit.Failed[name] = err.Error()
+		case credentialSyncFailed:
+			audit.Failed[name] = entry.Message
 			continue
 		}
 
-		classified := core.ClassifyCredentials(core.ClassifyCredentialsInput{
-			Credentials: creds,
-			Directory:   directory,
-			Domain:      cfg.Domain,
-			AliasIndex:  aliasIndex,
-		})
 		audit.Credentials = append(audit.Credentials, classified...)
 		audit.Summary = append(audit.Summary,
 			core.SummarizeCredentials(name, classified, p.Capabilities().ReportsCredentialUsage))
@@ -106,6 +110,41 @@ func classifyCredentials(ctx context.Context, cfg *config.Config) (*credentialAu
 
 	sort.Strings(audit.Skipped)
 	return audit, nil
+}
+
+func inspectProviderCredentials(
+	ctx context.Context,
+	name string,
+	p provider.Provider,
+	directory map[string]core.DirectoryUser,
+	domain string,
+	aliasIndex map[string]string,
+) (credentialCacheEntry, []core.ClassifiedCredential) {
+	entry := credentialCacheEntry{Provider: name}
+	cp, ok := p.(provider.CredentialProvider)
+	if !ok {
+		entry.Status = credentialSyncNotSupported
+		entry.Message = "provider API exposes no credential listing"
+		return entry, nil
+	}
+
+	creds, err := cp.ListCredentials(ctx)
+	if err != nil {
+		entry.Status = credentialSyncFailed
+		entry.Message = err.Error()
+		return entry, nil
+	}
+
+	classified := core.ClassifyCredentials(core.ClassifyCredentialsInput{
+		Credentials: creds,
+		Directory:   directory,
+		Domain:      domain,
+		AliasIndex:  aliasIndex,
+	})
+	entry.Status = credentialSyncOK
+	entry.Credentials = classified
+	entry.UsageKnown = p.Capabilities().ReportsCredentialUsage
+	return entry, classified
 }
 
 func runAuditCredentials(cmd *cobra.Command, args []string) error {
@@ -118,6 +157,8 @@ func runAuditCredentials(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	cacheCredentialSnapshots(cmd.Context(), audit.cache)
 
 	if jsonOutput {
 		return printJSON(audit)

@@ -14,7 +14,7 @@ func newTestStore(t *testing.T) Store {
 	t.Helper()
 	s, err := NewSQLite(":memory:")
 	require.NoError(t, err)
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s
 }
 
@@ -227,6 +227,165 @@ func TestSyncState(t *testing.T) {
 	states, err := s.ListSyncStates(ctx)
 	require.NoError(t, err)
 	assert.Len(t, states, 1)
+}
+
+func TestBillingSnapshotsRoundTripLatestPerProvider(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	first := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	second := first.Add(time.Hour)
+	periodStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+
+	require.NoError(t, s.InsertBillingSnapshot(ctx, core.BillingSnapshot{
+		Provider:          "github",
+		FetchedAt:         first,
+		Plan:              "enterprise",
+		BilledSeats:       core.IntPtr(80),
+		FilledSeats:       core.IntPtr(41),
+		Source:            core.BillingSourceAPISeatCount,
+		Confidence:        core.BillingConfidencePartial,
+		UnavailableReason: "GitHub reports seats but not contracted price",
+	}))
+	require.NoError(t, s.InsertBillingSnapshot(ctx, core.BillingSnapshot{
+		Provider:           "github",
+		AccountID:          "org/acme",
+		FetchedAt:          second,
+		Plan:               "enterprise",
+		BilledSeats:        core.IntPtr(80),
+		FilledSeats:        core.IntPtr(40),
+		CostPerSeatMinor:   core.Int64Ptr(2100),
+		MonthlyAmountMinor: core.Int64Ptr(168000),
+		Currency:           "USD",
+		Source:             core.BillingSourceAPIInvoice,
+		Confidence:         core.BillingConfidenceExact,
+		PeriodStart:        &periodStart,
+		PeriodEnd:          &periodEnd,
+		LineItems: []core.BillingLine{{
+			ID:          "line_1",
+			Description: "GitHub Enterprise seats",
+			Quantity:    core.IntPtr(80),
+			AmountMinor: core.Int64Ptr(168000),
+			Currency:    "USD",
+			PeriodStart: &periodStart,
+			PeriodEnd:   &periodEnd,
+		}},
+	}))
+	require.NoError(t, s.InsertBillingSnapshot(ctx, core.BillingSnapshot{
+		Provider:          "figma",
+		FetchedAt:         first,
+		Source:            core.BillingSourceUnavailable,
+		Confidence:        core.BillingConfidenceUnavailable,
+		UnavailableReason: "provider connector does not expose billing API data yet",
+	}))
+
+	got, err := s.LatestBillingSnapshot(ctx, "github")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "org/acme", got.AccountID)
+	assert.Equal(t, int64(168000), *got.MonthlyAmountMinor)
+	assert.Equal(t, int64(2100), *got.CostPerSeatMinor)
+	assert.Equal(t, 80, got.BilledSeatCount())
+	require.Len(t, got.LineItems, 1)
+	assert.Equal(t, "line_1", got.LineItems[0].ID)
+	assert.Equal(t, int64(168000), *got.LineItems[0].AmountMinor)
+
+	all, err := s.ListLatestBillingSnapshots(ctx)
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+	assert.Equal(t, "figma", all[0].Provider)
+	assert.Equal(t, core.BillingConfidenceUnavailable, all[0].Confidence)
+	assert.Equal(t, "github", all[1].Provider)
+	assert.Equal(t, int64(168000), *all[1].MonthlyAmountMinor)
+}
+
+func TestProviderCredentialsRoundTripAndReplace(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	created := time.Now().AddDate(-1, 0, 0).UTC().Truncate(time.Second)
+	used := time.Now().AddDate(0, 0, -3).UTC().Truncate(time.Second)
+
+	require.NoError(t, s.UpsertProviderCredentials(ctx, "github", []core.ClassifiedCredential{
+		{
+			Credential: core.Credential{
+				Provider:         "ignored",
+				Kind:             core.CredentialAppInstallation,
+				ID:               "app-1",
+				Label:            "Deploy Bot",
+				CreatedAt:        &created,
+				CreatedBy:        "gone@co.com",
+				LastUsedAt:       &used,
+				Scopes:           []string{"contents:write", "metadata:read"},
+				PrivilegedScopes: []string{"contents:write"},
+				Reach:            core.ReachAll,
+				Metadata:         map[string]string{"url": "https://github.com/apps/deploy-bot"},
+			},
+			Class:        core.CredentialOrphaned,
+			Reason:       "gone@co.com is not in the directory",
+			Overreaching: true,
+			ReachReason:  "write or admin access to every resource: contents:write",
+		},
+	}))
+
+	got, err := s.GetProviderCredentials(ctx, "github")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "github", got[0].Credential.Provider)
+	assert.Equal(t, core.CredentialAppInstallation, got[0].Credential.Kind)
+	assert.Equal(t, "app-1", got[0].Credential.ID)
+	assert.Equal(t, []string{"contents:write", "metadata:read"}, got[0].Credential.Scopes)
+	assert.Equal(t, []string{"contents:write"}, got[0].Credential.PrivilegedScopes)
+	assert.Equal(t, "https://github.com/apps/deploy-bot", got[0].Credential.Metadata["url"])
+	require.NotNil(t, got[0].Credential.CreatedAt)
+	require.NotNil(t, got[0].Credential.LastUsedAt)
+	assert.Equal(t, created.Unix(), got[0].Credential.CreatedAt.Unix())
+	assert.Equal(t, used.Unix(), got[0].Credential.LastUsedAt.Unix())
+	assert.True(t, got[0].Overreaching)
+	assert.Equal(t, core.CredentialOrphaned, got[0].Class)
+
+	require.NoError(t, s.UpsertProviderCredentials(ctx, "github", []core.ClassifiedCredential{
+		{
+			Credential: core.Credential{
+				Kind:  core.CredentialWebhook,
+				ID:    "hook-1",
+				Label: "Audit Hook",
+			},
+			Class:  core.CredentialUnowned,
+			Reason: "the provider does not report who authorised this",
+		},
+	}))
+
+	got, err = s.GetProviderCredentials(ctx, "github")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, core.CredentialWebhook, got[0].Credential.Kind)
+	assert.Equal(t, "hook-1", got[0].Credential.ID)
+	assert.NotNil(t, got[0].Credential.Scopes)
+	assert.NotNil(t, got[0].Credential.PrivilegedScopes)
+	assert.NotNil(t, got[0].Credential.Metadata)
+}
+
+func TestCredentialSyncStateCanRecordUnsupportedProvider(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.UpdateCredentialSyncState(ctx, CredentialSyncState{
+		Provider:        "figma",
+		CredentialCount: 0,
+		Status:          "not_supported",
+		Message:         "provider API exposes no credential listing",
+	}))
+
+	states, err := s.ListCredentialSyncStates(ctx)
+	require.NoError(t, err)
+	require.Len(t, states, 1)
+	assert.Equal(t, "figma", states[0].Provider)
+	assert.Equal(t, "not_supported", states[0].Status)
+	assert.Equal(t, "provider API exposes no credential listing", states[0].Message)
+
+	credentials, err := s.GetProviderCredentials(ctx, "figma")
+	require.NoError(t, err)
+	assert.Empty(t, credentials)
 }
 
 // A deactivated seat is trivially unused. Reporting it as inactivity

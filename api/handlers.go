@@ -3,18 +3,23 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"slices"
+	"sort"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/sderosiaux/unseat/internal/core"
 	"github.com/sderosiaux/unseat/internal/store"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		slog.Debug("write json response failed", "error", err)
+	}
 }
 
 func (s *Server) handleListProviders(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +39,148 @@ func (s *Server) handleProviderUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, users)
+}
+
+func (s *Server) handleListBilling(w http.ResponseWriter, r *http.Request) {
+	snapshots, err := s.store.ListLatestBillingSnapshots(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if snapshots == nil {
+		snapshots = []core.BillingSnapshot{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"billing": snapshots})
+}
+
+func (s *Server) handleProviderBilling(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	snapshot, err := s.store.LatestBillingSnapshot(r.Context(), name)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if snapshot == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"provider": name,
+			"billing":  nil,
+			"reason":   "no billing snapshot has been cached; run `unseat scan`",
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, snapshot)
+}
+
+type credentialsResponse struct {
+	Credentials []core.ClassifiedCredential `json:"credentials"`
+	SyncStates  []store.CredentialSyncState `json:"sync_states"`
+}
+
+type providerCredentialsResponse struct {
+	Provider    string                      `json:"provider"`
+	Credentials []core.ClassifiedCredential `json:"credentials"`
+	SyncState   *store.CredentialSyncState  `json:"sync_state,omitempty"`
+}
+
+type credentialsSummaryResponse struct {
+	Summary    []core.CredentialSummary    `json:"summary"`
+	SyncStates []store.CredentialSyncState `json:"sync_states"`
+}
+
+func (s *Server) handleListCredentials(w http.ResponseWriter, r *http.Request) {
+	credentials, err := s.store.ListProviderCredentials(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	states, err := s.store.ListCredentialSyncStates(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if credentials == nil {
+		credentials = []core.ClassifiedCredential{}
+	}
+	if states == nil {
+		states = []store.CredentialSyncState{}
+	}
+	writeJSON(w, http.StatusOK, credentialsResponse{
+		Credentials: credentials,
+		SyncStates:  states,
+	})
+}
+
+func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	credentials, err := s.store.GetProviderCredentials(r.Context(), name)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	states, err := s.store.ListCredentialSyncStates(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	var state *store.CredentialSyncState
+	for i := range states {
+		if states[i].Provider == name {
+			state = &states[i]
+			break
+		}
+	}
+	if credentials == nil {
+		credentials = []core.ClassifiedCredential{}
+	}
+	writeJSON(w, http.StatusOK, providerCredentialsResponse{
+		Provider:    name,
+		Credentials: credentials,
+		SyncState:   state,
+	})
+}
+
+func (s *Server) handleCredentialsSummary(w http.ResponseWriter, r *http.Request) {
+	credentials, err := s.store.ListProviderCredentials(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	states, err := s.store.ListCredentialSyncStates(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	summary := summarizeCredentials(credentials, states)
+	if states == nil {
+		states = []store.CredentialSyncState{}
+	}
+	writeJSON(w, http.StatusOK, credentialsSummaryResponse{
+		Summary:    summary,
+		SyncStates: states,
+	})
+}
+
+func summarizeCredentials(credentials []core.ClassifiedCredential, states []store.CredentialSyncState) []core.CredentialSummary {
+	byProvider := make(map[string][]core.ClassifiedCredential)
+	for _, c := range credentials {
+		byProvider[c.Credential.Provider] = append(byProvider[c.Credential.Provider], c)
+	}
+	usageKnown := make(map[string]bool)
+	for _, st := range states {
+		usageKnown[st.Provider] = st.UsageKnown
+	}
+
+	providers := make([]string, 0, len(byProvider))
+	for provider := range byProvider {
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+
+	out := make([]core.CredentialSummary, 0, len(providers))
+	for _, provider := range providers {
+		out = append(out, core.SummarizeCredentials(provider, byProvider[provider], usageKnown[provider]))
+	}
+	return out
 }
 
 // handleListPendingRemovals returns seats inside their grace period.

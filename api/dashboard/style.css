@@ -284,6 +284,10 @@ td.mono {
   font-weight: 500;
 }
 
+.credentials-list-header {
+  margin-top: 1.5rem;
+}
+
 /* Empty state */
 .empty {
   text-align: center;

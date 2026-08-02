@@ -35,7 +35,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer tok", r.Header.Get("Authorization"))
 
 		// Raw JSON in the shape the live API returns, offsets and all.
-		fmt.Fprint(w, `{"total_seats":3,"seats":[
+		_, err := fmt.Fprint(w, `{"total_seats":3,"seats":[
 		  {"created_at":"2025-05-12T06:00:49-04:00","last_activity_at":"2026-07-31T14:26:52-04:00",
 		   "last_activity_editor":"JetBrains-IU/262","plan_type":"business",
 		   "assignee":{"login":"dlefevre","type":"User"}},
@@ -45,6 +45,7 @@ func TestListUsers(t *testing.T) {
 		   "pending_cancellation_date":"2026-08-31","plan_type":"business",
 		   "assignee":{"login":"leaving","type":"User"}}
 		]}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -100,10 +101,12 @@ func TestListUsersPaginates(t *testing.T) {
 				fmt.Fprintf(&b, `{"plan_type":"business","assignee":{"login":"u%d"}}`, i)
 			}
 			b.WriteString(`]}`)
-			fmt.Fprint(w, b.String())
+			_, err := fmt.Fprint(w, b.String())
+			require.NoError(t, err)
 			return
 		}
-		fmt.Fprint(w, `{"total_seats":101,"seats":[{"plan_type":"business","assignee":{"login":"last"}}]}`)
+		_, err := fmt.Fprint(w, `{"total_seats":101,"seats":[{"plan_type":"business","assignee":{"login":"last"}}]}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -130,8 +133,9 @@ func TestListUsersNamesTheScopeOnAuthFailure(t *testing.T) {
 func TestBilling(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/orgs/acme/copilot/billing", r.URL.Path)
-		fmt.Fprint(w, `{"seat_breakdown":{"total":10,"active_this_cycle":1,"inactive_this_cycle":9},
+		_, err := fmt.Fprint(w, `{"seat_breakdown":{"total":10,"active_this_cycle":1,"inactive_this_cycle":9},
 		                "plan_type":"business"}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -140,12 +144,16 @@ func TestBilling(t *testing.T) {
 	require.NotNil(t, b)
 
 	assert.Equal(t, "business", b.Plan)
-	assert.Equal(t, 10, b.BilledSeats)
-	assert.Equal(t, 10, b.FilledSeats, "every Copilot seat is assigned by definition")
+	require.NotNil(t, b.BilledSeats)
+	assert.Equal(t, 10, *b.BilledSeats)
+	require.NotNil(t, b.FilledSeats)
+	assert.Equal(t, 10, *b.FilledSeats, "every Copilot seat is assigned by definition")
 	// Enterprise agreements differ and the usage report is not a statement of
 	// this org's rate, so no price is asserted.
-	assert.Zero(t, b.CostPerSeat)
-	assert.Empty(t, b.Source)
+	assert.Nil(t, b.CostPerSeatMinor)
+	assert.Equal(t, core.BillingSourceAPISeatCount, b.Source)
+	assert.Equal(t, core.BillingConfidencePartial, b.Confidence)
+	assert.NotEmpty(t, b.UnavailableReason)
 }
 
 // The cycle counters are a trap. Observed live: a pool whose ten seats had all
@@ -154,8 +162,9 @@ func TestBilling(t *testing.T) {
 // have invented two thousand dollars a year.
 func TestBillingIgnoresCycleRelativeCounters(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"seat_breakdown":{"total":10,"active_this_cycle":1,"inactive_this_cycle":9},
-		                "plan_type":"business"}`)
+		_, err := fmt.Fprint(w, `{"seat_breakdown":{"total":10,"active_this_cycle":1,"inactive_this_cycle":9},
+			                "plan_type":"business"}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -164,12 +173,14 @@ func TestBillingIgnoresCycleRelativeCounters(t *testing.T) {
 	require.NotNil(t, b)
 	// Nothing derived from active/inactive_this_cycle reaches the report: the
 	// only usage signal this connector trusts is per-seat last_activity_at.
-	assert.Equal(t, 10, b.FilledSeats)
+	require.NotNil(t, b.FilledSeats)
+	assert.Equal(t, 10, *b.FilledSeats)
 }
 
 func TestBillingNoCopilotSubscription(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"seat_breakdown":{"total":0}}`)
+		_, err := fmt.Fprint(w, `{"seat_breakdown":{"total":0}}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

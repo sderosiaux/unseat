@@ -187,7 +187,10 @@ func (p *Provider) verifyOrgVisibility(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -269,7 +272,10 @@ func (p *Provider) fetchMemberPage(ctx context.Context, url string) (members []o
 	if err != nil {
 		return nil, false, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -441,7 +447,10 @@ func (p *Provider) fetchAuditLogPage(ctx context.Context, pageURL string) (entri
 	if err != nil {
 		return nil, "", 0, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", resp.StatusCode, nil
@@ -515,7 +524,10 @@ func (p *Provider) fetchEventPage(ctx context.Context, url string) (events []org
 	if err != nil {
 		return nil, false
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, false
@@ -783,9 +795,13 @@ func (p *Provider) Billing(ctx context.Context) (*core.Billing, error) {
 	// No price is inferred: GitHub plan names carry none, and an Enterprise
 	// agreement is unknowable from here.
 	return &core.Billing{
-		Plan:        org.Plan.Name,
-		BilledSeats: org.Plan.Seats,
-		FilledSeats: org.Plan.FilledSeats,
+		Provider:          p.Name(),
+		Plan:              org.Plan.Name,
+		BilledSeats:       core.IntPtr(org.Plan.Seats),
+		FilledSeats:       core.IntPtr(org.Plan.FilledSeats),
+		Source:            core.BillingSourceAPISeatCount,
+		Confidence:        core.BillingConfidencePartial,
+		UnavailableReason: "GitHub reports purchased and filled seats, but not this organization's contracted seat price",
 	}, nil
 }
 

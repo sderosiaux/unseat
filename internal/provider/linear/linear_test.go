@@ -43,7 +43,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, float64(250), req.Variables["first"])
 		assert.Nil(t, req.Variables["after"])
 
-		json.NewEncoder(w).Encode(map[string]any{
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
 				"users": map[string]any{
 					"nodes": []map[string]any{
@@ -54,7 +54,7 @@ func TestListUsers(t *testing.T) {
 					"pageInfo": map[string]any{"hasNextPage": false, "endCursor": ""},
 				},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -89,7 +89,7 @@ func TestListUsersPaginates(t *testing.T) {
 		cursors = append(cursors, req.Variables["after"])
 
 		if req.Variables["after"] == nil {
-			json.NewEncoder(w).Encode(map[string]any{
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{
 					"users": map[string]any{
 						"nodes": []map[string]any{
@@ -99,11 +99,11 @@ func TestListUsersPaginates(t *testing.T) {
 						"pageInfo": map[string]any{"hasNextPage": true, "endCursor": "cursor-1"},
 					},
 				},
-			})
+			}))
 			return
 		}
 
-		json.NewEncoder(w).Encode(map[string]any{
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
 				"users": map[string]any{
 					"nodes": []map[string]any{
@@ -112,7 +112,7 @@ func TestListUsersPaginates(t *testing.T) {
 					"pageInfo": map[string]any{"hasNextPage": false, "endCursor": "cursor-2"},
 				},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -130,14 +130,14 @@ func TestListUsersStopsOnEmptyCursor(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		json.NewEncoder(w).Encode(map[string]any{
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
 				"users": map[string]any{
 					"nodes":    []map[string]any{{"id": "u1", "name": "Alice", "email": "alice@co.com", "active": true}},
 					"pageInfo": map[string]any{"hasNextPage": true, "endCursor": ""},
 				},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -154,7 +154,7 @@ func TestListUsersSkipsAppUsers(t *testing.T) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 		assert.Contains(t, req.Query, "app")
 
-		json.NewEncoder(w).Encode(map[string]any{
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
 				"users": map[string]any{
 					"nodes": []map[string]any{
@@ -165,7 +165,7 @@ func TestListUsersSkipsAppUsers(t *testing.T) {
 					"pageInfo": map[string]any{"hasNextPage": false},
 				},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -182,7 +182,7 @@ func TestListUsersIncludesDisabled(t *testing.T) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 		assert.Contains(t, req.Query, "includeDisabled: true")
 
-		json.NewEncoder(w).Encode(map[string]any{
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
 				"users": map[string]any{
 					"nodes": []map[string]any{
@@ -191,7 +191,7 @@ func TestListUsersIncludesDisabled(t *testing.T) {
 					"pageInfo": map[string]any{"hasNextPage": false},
 				},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -208,11 +208,11 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		var req gqlRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 
 		if callCount == 1 {
 			// ListUsers call
-			json.NewEncoder(w).Encode(map[string]any{
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{
 					"users": map[string]any{
 						"nodes": []map[string]any{
@@ -220,15 +220,15 @@ func TestRemoveUser(t *testing.T) {
 						},
 					},
 				},
-			})
+			}))
 		} else {
 			// userSuspend mutation
 			assert.Equal(t, "u1", req.Variables["id"])
-			json.NewEncoder(w).Encode(map[string]any{
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"data": map[string]any{
 					"userSuspend": map[string]any{"success": true},
 				},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -241,13 +241,13 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
 				"users": map[string]any{
 					"nodes": []map[string]any{},
 				},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -259,11 +259,11 @@ func TestRemoveUserNotFound(t *testing.T) {
 
 func TestGraphQLError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"errors": []map[string]any{
 				{"message": "authentication failed"},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -287,13 +287,14 @@ func TestSetRoleNotSupported(t *testing.T) {
 	assert.Contains(t, err.Error(), "not supported")
 }
 
-// Linear encodes the per-seat price in the plan identifier and reports the
-// seat count it actually charges for, so a priced report needs no config.
+// Linear reports the seat count it actually charges for. It does not state a
+// subscription amount here, so no price is inferred from the plan identifier.
 func TestBilling(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// The exact shape the live API returns.
-		fmt.Fprint(w, `{"data":{"organization":{"subscription":{
+		_, err := fmt.Fprint(w, `{"data":{"organization":{"subscription":{
 		  "type":"business_yearly_14","seats":37,"nextBillingAt":"2026-08-27T13:59:14.000Z"}}}}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -302,10 +303,12 @@ func TestBilling(t *testing.T) {
 	require.NotNil(t, b)
 
 	assert.Equal(t, "business_yearly_14", b.Plan)
-	assert.Equal(t, 37, b.BilledSeats)
-	assert.InDelta(t, 14.0, b.CostPerSeat, 0.001)
-	// An inference about a naming convention, never presented as a stated price.
-	assert.Equal(t, core.BillingSourcePlan, b.Source)
+	require.NotNil(t, b.BilledSeats)
+	assert.Equal(t, 37, *b.BilledSeats)
+	assert.Nil(t, b.CostPerSeatMinor)
+	assert.Equal(t, core.BillingSourceAPISeatCount, b.Source)
+	assert.Equal(t, core.BillingConfidencePartial, b.Confidence)
+	assert.NotEmpty(t, b.UnavailableReason)
 	require.NotNil(t, b.NextBillingAt)
 	assert.Equal(t, 2026, b.NextBillingAt.Year())
 }
@@ -313,7 +316,8 @@ func TestBilling(t *testing.T) {
 // A free workspace has no subscription. That is an absence, not a failure.
 func TestBillingFreeWorkspace(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"data":{"organization":{"subscription":null}}}`)
+		_, err := fmt.Fprint(w, `{"data":{"organization":{"subscription":null}}}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -326,7 +330,8 @@ func TestBillingFreeWorkspace(t *testing.T) {
 // that reveals over-provisioning.
 func TestBillingPlanWithoutEncodedPrice(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"data":{"organization":{"subscription":{"type":"enterprise","seats":250}}}}`)
+		_, err := fmt.Fprint(w, `{"data":{"organization":{"subscription":{"type":"enterprise","seats":250}}}}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -334,9 +339,10 @@ func TestBillingPlanWithoutEncodedPrice(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, b)
 	assert.Equal(t, "enterprise", b.Plan)
-	assert.Equal(t, 250, b.BilledSeats)
-	assert.Zero(t, b.CostPerSeat, "no price may be invented for a custom contract")
-	assert.Empty(t, b.Source)
+	require.NotNil(t, b.BilledSeats)
+	assert.Equal(t, 250, *b.BilledSeats)
+	assert.Nil(t, b.CostPerSeatMinor, "no price may be invented for a custom contract")
+	assert.Equal(t, core.BillingSourceAPISeatCount, b.Source)
 }
 
 // TestListUsersGoldenShape replays the real users-query response shape
@@ -347,7 +353,8 @@ func TestListUsersGoldenShape(t *testing.T) {
 	body := golden.Load(t, "linear-users.json")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
+		_, err := w.Write(body)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

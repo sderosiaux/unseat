@@ -50,10 +50,10 @@ policies:
 
 	tmpFile, err := os.CreateTemp("", "unseat-*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	t.Cleanup(func() { require.NoError(t, os.Remove(tmpFile.Name())) })
 	_, err = tmpFile.WriteString(yaml)
 	require.NoError(t, err)
-	tmpFile.Close()
+	require.NoError(t, tmpFile.Close())
 
 	cfg, err := Load(tmpFile.Name())
 	require.NoError(t, err)
@@ -79,9 +79,10 @@ policies:
 func TestLoadConfigInvalid(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "bad-*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
-	tmpFile.WriteString("not: [valid: yaml: {{")
-	tmpFile.Close()
+	t.Cleanup(func() { require.NoError(t, os.Remove(tmpFile.Name())) })
+	_, err = tmpFile.WriteString("not: [valid: yaml: {{")
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
 
 	_, err = Load(tmpFile.Name())
 	assert.Error(t, err)
@@ -149,9 +150,10 @@ policies:
 `
 	tmpFile, err := os.CreateTemp("", "unseat-dryrun-*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
-	tmpFile.WriteString(yaml)
-	tmpFile.Close()
+	t.Cleanup(func() { require.NoError(t, os.Remove(tmpFile.Name())) })
+	_, err = tmpFile.WriteString(yaml)
+	require.NoError(t, err)
+	require.NoError(t, tmpFile.Close())
 
 	cfg, err := Load(tmpFile.Name())
 	require.NoError(t, err)
@@ -183,10 +185,10 @@ aliases:
 `
 	tmpFile, err := os.CreateTemp("", "unseat-alias-*.yaml")
 	require.NoError(t, err)
-	defer os.Remove(tmpFile.Name())
+	t.Cleanup(func() { require.NoError(t, os.Remove(tmpFile.Name())) })
 	_, err = tmpFile.WriteString(yaml)
 	require.NoError(t, err)
-	tmpFile.Close()
+	require.NoError(t, tmpFile.Close())
 
 	cfg, err := Load(tmpFile.Name())
 	require.NoError(t, err)

@@ -44,14 +44,16 @@ func credentialServer(t *testing.T, auditStatus int) *httptest.Server {
 		switch r.URL.Path {
 		case "/orgs/acme/installations":
 			assert.Equal(t, "Bearer tok", r.Header.Get("Authorization"))
-			fmt.Fprint(w, installationsBody)
+			_, err := fmt.Fprint(w, installationsBody)
+			require.NoError(t, err)
 		case "/orgs/acme/audit-log":
 			assert.Equal(t, "action:integration_installation.create", r.URL.Query().Get("phrase"))
 			if auditStatus != http.StatusOK {
 				w.WriteHeader(auditStatus)
 				return
 			}
-			fmt.Fprint(w, installEventsBody)
+			_, err := fmt.Fprint(w, installEventsBody)
+			require.NoError(t, err)
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -175,10 +177,12 @@ func TestListCredentialsPaginates(t *testing.T) {
 				}
 				b += fmt.Sprintf(`{"id":%d,"app_slug":"app%d","repository_selection":"selected"}`, i, i)
 			}
-			fmt.Fprintf(w, `{"total_count":101,"installations":[%s]}`, b)
+			_, err := fmt.Fprintf(w, `{"total_count":101,"installations":[%s]}`, b)
+			require.NoError(t, err)
 			return
 		}
-		fmt.Fprint(w, `{"total_count":101,"installations":[{"id":999,"app_slug":"last","repository_selection":"selected"}]}`)
+		_, err := fmt.Fprint(w, `{"total_count":101,"installations":[{"id":999,"app_slug":"last","repository_selection":"selected"}]}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

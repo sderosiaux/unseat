@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -65,6 +66,16 @@ type providerUsersOutput struct {
 	Users []core.User `json:"users"`
 }
 
+type listBillingOutput struct {
+	Billing []core.BillingSnapshot `json:"billing"`
+}
+
+type providerBillingOutput struct {
+	Provider string                `json:"provider"`
+	Billing  *core.BillingSnapshot `json:"billing"`
+	Reason   string                `json:"reason,omitempty"`
+}
+
 type listEventsOutput struct {
 	Events []core.Event `json:"events"`
 }
@@ -84,6 +95,22 @@ type listInactiveOutput struct {
 	Users         []store.InactiveUser `json:"users"`
 }
 
+type listCredentialsOutput struct {
+	Credentials []core.ClassifiedCredential `json:"credentials"`
+	SyncStates  []store.CredentialSyncState `json:"sync_states"`
+}
+
+type providerCredentialsOutput struct {
+	Provider    string                      `json:"provider"`
+	Credentials []core.ClassifiedCredential `json:"credentials"`
+	SyncState   *store.CredentialSyncState  `json:"sync_state,omitempty"`
+}
+
+type credentialsSummaryOutput struct {
+	Summary    []core.CredentialSummary    `json:"summary"`
+	SyncStates []store.CredentialSyncState `json:"sync_states"`
+}
+
 // --- Tool registration ---
 
 func (s *MCPServer) registerTools() {
@@ -96,6 +123,16 @@ func (s *MCPServer) registerTools() {
 		Name:        "provider_users",
 		Description: "List cached users for a specific SaaS provider",
 	}, s.handleProviderUsers)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "list_billing",
+		Description: "List latest cached provider billing snapshots. Billing amounts are API-only; missing money means unknown, not zero.",
+	}, s.handleListBilling)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "provider_billing",
+		Description: "Get the latest cached billing snapshot for one SaaS provider",
+	}, s.handleProviderBilling)
 
 	// Named for what it actually reads. It used to be called list_orphans,
 	// which invited agents to treat "empty" as "no orphaned accounts" when it
@@ -113,6 +150,24 @@ func (s *MCPServer) registerTools() {
 			"exposes activity data are evaluated; the others are returned in `unevaluable` and " +
 			"their absence from the list means unknown, not active.",
 	}, s.handleListInactive)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name: "list_credentials",
+		Description: "List cached non-human access findings: apps, integrations, webhooks, tokens, " +
+			"and their classifications. Also returns credential sync states so skipped or unsupported " +
+			"providers are visible and not mistaken for clean.",
+	}, s.handleListCredentials)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "provider_credentials",
+		Description: "List cached non-human access findings for one SaaS provider",
+	}, s.handleProviderCredentials)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name: "credential_summary",
+		Description: "Summarize cached non-human access findings by provider, including sync states " +
+			"for providers that were skipped, failed, or not supported.",
+	}, s.handleCredentialSummary)
 
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "list_events",
@@ -147,6 +202,32 @@ func (s *MCPServer) handleProviderUsers(ctx context.Context, _ *mcp.CallToolRequ
 		users = []core.User{}
 	}
 	return nil, providerUsersOutput{Users: users}, nil
+}
+
+func (s *MCPServer) handleListBilling(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, listBillingOutput, error) {
+	snapshots, err := s.store.ListLatestBillingSnapshots(ctx)
+	if err != nil {
+		return nil, listBillingOutput{}, err
+	}
+	if snapshots == nil {
+		snapshots = []core.BillingSnapshot{}
+	}
+	return nil, listBillingOutput{Billing: snapshots}, nil
+}
+
+func (s *MCPServer) handleProviderBilling(ctx context.Context, _ *mcp.CallToolRequest, input providerInput) (*mcp.CallToolResult, providerBillingOutput, error) {
+	snapshot, err := s.store.LatestBillingSnapshot(ctx, input.Provider)
+	if err != nil {
+		return nil, providerBillingOutput{}, err
+	}
+	if snapshot == nil {
+		return nil, providerBillingOutput{
+			Provider: input.Provider,
+			Billing:  nil,
+			Reason:   "no billing snapshot has been cached; run `unseat scan`",
+		}, nil
+	}
+	return nil, providerBillingOutput{Provider: input.Provider, Billing: snapshot}, nil
 }
 
 func (s *MCPServer) handleListOrphans(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, listOrphansOutput, error) {
@@ -223,6 +304,89 @@ func (s *MCPServer) handleListInactive(ctx context.Context, _ *mcp.CallToolReque
 		out.Users = []store.InactiveUser{}
 	}
 	return nil, out, nil
+}
+
+func (s *MCPServer) handleListCredentials(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, listCredentialsOutput, error) {
+	credentials, err := s.store.ListProviderCredentials(ctx)
+	if err != nil {
+		return nil, listCredentialsOutput{}, err
+	}
+	states, err := s.store.ListCredentialSyncStates(ctx)
+	if err != nil {
+		return nil, listCredentialsOutput{}, err
+	}
+	if credentials == nil {
+		credentials = []core.ClassifiedCredential{}
+	}
+	if states == nil {
+		states = []store.CredentialSyncState{}
+	}
+	return nil, listCredentialsOutput{Credentials: credentials, SyncStates: states}, nil
+}
+
+func (s *MCPServer) handleProviderCredentials(ctx context.Context, _ *mcp.CallToolRequest, input providerInput) (*mcp.CallToolResult, providerCredentialsOutput, error) {
+	credentials, err := s.store.GetProviderCredentials(ctx, input.Provider)
+	if err != nil {
+		return nil, providerCredentialsOutput{}, err
+	}
+	states, err := s.store.ListCredentialSyncStates(ctx)
+	if err != nil {
+		return nil, providerCredentialsOutput{}, err
+	}
+	var state *store.CredentialSyncState
+	for i := range states {
+		if states[i].Provider == input.Provider {
+			state = &states[i]
+			break
+		}
+	}
+	if credentials == nil {
+		credentials = []core.ClassifiedCredential{}
+	}
+	return nil, providerCredentialsOutput{
+		Provider:    input.Provider,
+		Credentials: credentials,
+		SyncState:   state,
+	}, nil
+}
+
+func (s *MCPServer) handleCredentialSummary(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, credentialsSummaryOutput, error) {
+	credentials, err := s.store.ListProviderCredentials(ctx)
+	if err != nil {
+		return nil, credentialsSummaryOutput{}, err
+	}
+	states, err := s.store.ListCredentialSyncStates(ctx)
+	if err != nil {
+		return nil, credentialsSummaryOutput{}, err
+	}
+	summary := summarizeCredentials(credentials, states)
+	if states == nil {
+		states = []store.CredentialSyncState{}
+	}
+	return nil, credentialsSummaryOutput{Summary: summary, SyncStates: states}, nil
+}
+
+func summarizeCredentials(credentials []core.ClassifiedCredential, states []store.CredentialSyncState) []core.CredentialSummary {
+	byProvider := make(map[string][]core.ClassifiedCredential)
+	for _, c := range credentials {
+		byProvider[c.Credential.Provider] = append(byProvider[c.Credential.Provider], c)
+	}
+	usageKnown := make(map[string]bool)
+	for _, st := range states {
+		usageKnown[st.Provider] = st.UsageKnown
+	}
+
+	providers := make([]string, 0, len(byProvider))
+	for provider := range byProvider {
+		providers = append(providers, provider)
+	}
+	sort.Strings(providers)
+
+	out := make([]core.CredentialSummary, 0, len(providers))
+	for _, provider := range providers {
+		out = append(out, core.SummarizeCredentials(provider, byProvider[provider], usageKnown[provider]))
+	}
+	return out
 }
 
 func (s *MCPServer) handleGetMappings(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, getMappingsOutput, error) {

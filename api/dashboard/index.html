@@ -16,6 +16,7 @@
       <button class="nav-btn active" data-view="overview">Overview</button>
       <button class="nav-btn" data-view="users">Users</button>
       <button class="nav-btn" data-view="inactive">Inactive</button>
+      <button class="nav-btn" data-view="credentials">Credentials</button>
       <button class="nav-btn" data-view="events">Events</button>
     </nav>
   </header>
@@ -72,6 +73,23 @@
         </div>
       </div>
       <div id="events-table-wrap"></div>
+    </section>
+
+    <section id="view-credentials" class="view">
+      <div class="section-header">
+        <h2>Credentials</h2>
+        <div class="controls">
+          <select id="credentials-provider-filter">
+            <option value="">All providers</option>
+          </select>
+          <input type="search" id="credentials-search" placeholder="Filter by label or owner...">
+        </div>
+      </div>
+      <div id="credentials-summary-wrap"></div>
+      <div class="section-header credentials-list-header">
+        <h2>Findings</h2>
+      </div>
+      <div id="credentials-table-wrap"></div>
     </section>
   </main>
 

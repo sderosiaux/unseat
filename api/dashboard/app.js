@@ -17,7 +17,7 @@
   });
 
   // --- Data cache ---
-  let cache = { providers: null, users: {}, inactive: null, events: null, mappings: null };
+  let cache = { providers: null, users: {}, inactive: null, credentials: null, credentialSummary: null, events: null, mappings: null };
 
   async function api(path) {
     const res = await fetch(API + path);
@@ -31,6 +31,7 @@
       case 'overview': loadOverview(); break;
       case 'users': loadUsers(); break;
       case 'inactive': loadInactive(); break;
+      case 'credentials': loadCredentials(); break;
       case 'events': loadEvents(); break;
     }
   }
@@ -198,6 +199,126 @@
     ) + caveat;
   }
 
+  // --- Credentials ---
+  async function loadCredentials() {
+    const select = $('#credentials-provider-filter');
+    await ensureCredentials();
+    const providers = credentialProviderNames();
+
+    if (select.options.length <= 1) {
+      providers.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        select.appendChild(opt);
+      });
+    }
+
+    renderCredentials();
+    select.onchange = renderCredentials;
+    $('#credentials-search').oninput = debounce(renderCredentials, 200);
+  }
+
+  async function ensureCredentials() {
+    const [inventory, summary] = await Promise.all([
+      cache.credentials || api('/credentials'),
+      cache.credentialSummary || api('/credentials/summary'),
+    ]);
+    cache.credentials = inventory;
+    cache.credentialSummary = summary;
+  }
+
+  function credentialProviderNames() {
+    const names = new Set();
+    ((cache.credentialSummary || {}).sync_states || []).forEach(st => names.add(st.provider));
+    ((cache.credentialSummary || {}).summary || []).forEach(s => names.add(s.provider));
+    ((cache.credentials || {}).credentials || []).forEach(c => names.add(c.credential.provider));
+    return [...names].sort();
+  }
+
+  function renderCredentials() {
+    const summaryWrap = $('#credentials-summary-wrap');
+    const tableWrap = $('#credentials-table-wrap');
+    const provider = $('#credentials-provider-filter').value;
+    const search = ($('#credentials-search').value || '').toLowerCase();
+
+    const summaryPayload = cache.credentialSummary || {};
+    const inventoryPayload = cache.credentials || {};
+    const summaries = summaryPayload.summary || [];
+    const states = summaryPayload.sync_states || [];
+    const summaryByProvider = new Map(summaries.map(s => [s.provider, s]));
+    const stateByProvider = new Map(states.map(st => [st.provider, st]));
+    const providerNames = credentialProviderNames().filter(name => !provider || name === provider);
+
+    if (providerNames.length === 0) {
+      summaryWrap.innerHTML = emptyState('No credential inventory yet', 'Run unseat scan or unseat audit credentials to populate this view.');
+      tableWrap.innerHTML = '';
+      return;
+    }
+
+    summaryWrap.innerHTML = renderTable(
+      ['Provider', 'Status', 'Total', 'Orphaned', 'External', 'Dormant', 'Unowned', 'Overreach', 'Usage'],
+      providerNames.map(name => {
+        const s = summaryByProvider.get(name) || {};
+        const st = stateByProvider.get(name) || {};
+        return [
+          name,
+          { badge: syncStatusBadge(st.status || 'unknown') },
+          s.total ?? st.credential_count ?? 0,
+          s.orphaned || 0,
+          s.external || 0,
+          s.dormant || 0,
+          s.unowned || 0,
+          s.overreaching || 0,
+          st.usage_known ? 'known' : 'unknown',
+        ];
+      })
+    );
+
+    let credentials = inventoryPayload.credentials || [];
+    if (provider) {
+      credentials = credentials.filter(c => c.credential.provider === provider);
+    }
+    if (search) {
+      credentials = credentials.filter(c => {
+        const cred = c.credential || {};
+        return (cred.label || '').toLowerCase().includes(search) ||
+          (cred.created_by || '').toLowerCase().includes(search) ||
+          (cred.id || '').toLowerCase().includes(search);
+      });
+    }
+
+    const unsupported = providerNames
+      .map(name => stateByProvider.get(name))
+      .filter(st => st && st.status !== 'ok')
+      .map(st => `${st.provider}: ${st.status}${st.message ? ` (${st.message})` : ''}`);
+    const caveat = unsupported.length
+      ? `<p class="note">Not clean: ${esc(unsupported.join(', '))}.</p>`
+      : '';
+
+    if (credentials.length === 0) {
+      tableWrap.innerHTML = emptyState('No credential findings cached', 'An empty list only covers providers with status ok above.') + caveat;
+      return;
+    }
+
+    tableWrap.innerHTML = renderTable(
+      ['Provider', 'Class', 'Kind', 'Label', 'Owner', 'Reach', 'Privileged Scopes', 'Created'],
+      credentials.map(c => {
+        const cred = c.credential || {};
+        return [
+          cred.provider,
+          { badge: credentialClassBadge(c.class || 'unowned') },
+          cred.kind || '-',
+          cred.label || cred.id || '-',
+          { value: cred.created_by || '-', cls: 'mono' },
+          cred.reach || 'unknown',
+          (cred.privileged_scopes || []).join(', ') || '-',
+          cred.created_at ? formatDate(cred.created_at) : '-',
+        ];
+      })
+    ) + caveat;
+  }
+
   // --- Events ---
   async function loadEvents() {
     await renderEvents();
@@ -254,6 +375,22 @@
   function statusBadge(status) {
     const cls = status === 'active' ? 'badge-ok'
       : status === 'suspended' ? 'badge-error'
+      : 'badge-neutral';
+    return `<span class="badge ${cls}">${esc(status)}</span>`;
+  }
+
+  function credentialClassBadge(clsName) {
+    const cls = clsName === 'live' ? 'badge-ok'
+      : clsName === 'orphaned' || clsName === 'external' ? 'badge-error'
+      : clsName === 'dormant' || clsName === 'unowned' ? 'badge-warn'
+      : 'badge-neutral';
+    return `<span class="badge ${cls}">${esc(clsName)}</span>`;
+  }
+
+  function syncStatusBadge(status) {
+    const cls = status === 'ok' ? 'badge-ok'
+      : status === 'not_supported' || status === 'skipped' ? 'badge-warn'
+      : status === 'failed' ? 'badge-error'
       : 'badge-neutral';
     return `<span class="badge ${cls}">${esc(status)}</span>`;
   }

@@ -34,7 +34,7 @@ func newTestReconciler(t *testing.T) *Reconciler {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
 	cfg := &config.Config{
 		Mappings: []config.Mapping{

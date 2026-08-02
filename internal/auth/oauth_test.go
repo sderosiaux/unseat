@@ -83,12 +83,12 @@ func TestOAuthCallbackHandler(t *testing.T) {
 	// Test the callback handler logic directly by simulating what RunOAuthFlow sets up internally.
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"access_token":  "test-access-token",
 			"refresh_token": "test-refresh-token",
 			"token_type":    "bearer",
 			"expires_in":    3600,
-		})
+		}))
 	}))
 	defer tokenServer.Close()
 

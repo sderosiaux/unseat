@@ -34,7 +34,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "/api/v10/guilds/guild-123/members", r.URL.Path)
 		assert.Equal(t, "1000", r.URL.Query().Get("limit"))
 
-		json.NewEncoder(w).Encode([]discordMember{
+		require.NoError(t, json.NewEncoder(w).Encode([]discordMember{
 			{
 				User: discordUser{ID: "111", Username: "alice", GlobalName: "Alice Smith", Email: "alice@co.com"},
 				Nick: "Ali",
@@ -42,7 +42,7 @@ func TestListUsers(t *testing.T) {
 			{
 				User: discordUser{ID: "222", Username: "bob", GlobalName: "Bob Jones", Email: "bob@co.com"},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -75,12 +75,12 @@ func TestListUsersPagination(t *testing.T) {
 					User: discordUser{ID: id, Username: fmt.Sprintf("user%d", i+1), Email: fmt.Sprintf("u%d@co.com", i+1)},
 				}
 			}
-			json.NewEncoder(w).Encode(members)
+			require.NoError(t, json.NewEncoder(w).Encode(members))
 		} else {
 			assert.Equal(t, "1000", r.URL.Query().Get("after"))
-			json.NewEncoder(w).Encode([]discordMember{
+			require.NoError(t, json.NewEncoder(w).Encode([]discordMember{
 				{User: discordUser{ID: "1001", Username: "lastuser", Email: "last@co.com"}},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -94,9 +94,9 @@ func TestListUsersPagination(t *testing.T) {
 
 func TestListUsersNoEmail(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]discordMember{
+		require.NoError(t, json.NewEncoder(w).Encode([]discordMember{
 			{User: discordUser{ID: "111", Username: "alice", GlobalName: "Alice Smith"}},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -113,9 +113,9 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode([]discordMember{
+			require.NoError(t, json.NewEncoder(w).Encode([]discordMember{
 				{User: discordUser{ID: "111", Username: "alice", Email: "alice@co.com"}},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/api/v10/guilds/guild-123/members/111", r.URL.Path)
@@ -133,7 +133,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]discordMember{})
+		require.NoError(t, json.NewEncoder(w).Encode([]discordMember{}))
 	}))
 	defer server.Close()
 
@@ -146,7 +146,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"code":0,"message":"401: Unauthorized"}`))
+		_, err := w.Write([]byte(`{"code":0,"message":"401: Unauthorized"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

@@ -124,7 +124,7 @@ func runSyncWatch(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -164,7 +164,7 @@ func computePlans(ctx context.Context, cfg *config.Config) ([]*core.ReconcilePla
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	reg, identity, err := provider.BuildRegistry(ctx, cfg)
 	if err != nil {

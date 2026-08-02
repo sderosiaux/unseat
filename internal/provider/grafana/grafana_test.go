@@ -32,10 +32,10 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/api/org/users", r.URL.Path)
 
-		json.NewEncoder(w).Encode([]grafanaOrgUser{
+		require.NoError(t, json.NewEncoder(w).Encode([]grafanaOrgUser{
 			{OrgID: 1, UserID: 10, Email: "alice@co.com", Name: "Alice Smith", Login: "alice", Role: "Admin"},
 			{OrgID: 1, UserID: 20, Email: "bob@co.com", Name: "", Login: "bob", Role: "Viewer"},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -60,16 +60,17 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode([]grafanaOrgUser{
+			require.NoError(t, json.NewEncoder(w).Encode([]grafanaOrgUser{
 				{OrgID: 1, UserID: 10, Email: "alice@co.com", Name: "Alice", Login: "alice", Role: "Admin"},
-			})
+			}))
 			return
 		}
 		assert.Equal(t, http.MethodDelete, r.Method)
 		assert.Equal(t, "/api/org/users/10", r.URL.Path)
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"message":"User removed from organization"}`))
+		_, err := w.Write([]byte(`{"message":"User removed from organization"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -81,7 +82,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]grafanaOrgUser{})
+		require.NoError(t, json.NewEncoder(w).Encode([]grafanaOrgUser{}))
 	}))
 	defer server.Close()
 
@@ -94,7 +95,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"message":"Unauthorized"}`))
+		_, err := w.Write([]byte(`{"message":"Unauthorized"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

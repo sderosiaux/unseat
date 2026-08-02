@@ -43,10 +43,11 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "true", r.URL.Query().Get("active"))
 
 		w.Header().Set("X-Total-Pages", "1")
-		w.Write([]byte(`[
+		_, err := w.Write([]byte(`[
 			{"id": 1, "username": "alice", "name": "Alice Smith", "state": "active", "locked": false, "avatar_url": "https://gitlab.com/avatar/1", "web_url": "https://gitlab.com/alice"},
 			{"id": 2, "username": "bob", "name": "Bob Jones", "state": "active", "locked": false, "avatar_url": "https://gitlab.com/avatar/2", "web_url": "https://gitlab.com/bob"}
 		]`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -75,10 +76,11 @@ func TestListUsers(t *testing.T) {
 func TestListUsersAdminResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Total-Pages", "1")
-		w.Write([]byte(`[
-			{"id": 1, "username": "alice", "name": "Alice Smith", "email": "alice@co.com", "state": "active", "is_admin": false, "last_sign_in_at": "2025-01-10T08:00:00Z", "current_sign_in_at": "2025-01-10T08:00:00Z", "last_activity_on": "2025-01-10"},
-			{"id": 2, "username": "bob", "name": "Bob Jones", "email": "bob@co.com", "state": "active", "is_admin": true, "last_sign_in_at": "2025-03-01T12:30:00Z", "current_sign_in_at": "2025-03-01T12:30:00Z", "last_activity_on": "2025-03-01"}
-		]`))
+		_, err := w.Write([]byte(`[
+				{"id": 1, "username": "alice", "name": "Alice Smith", "email": "alice@co.com", "state": "active", "is_admin": false, "last_sign_in_at": "2025-01-10T08:00:00Z", "current_sign_in_at": "2025-01-10T08:00:00Z", "last_activity_on": "2025-01-10"},
+				{"id": 2, "username": "bob", "name": "Bob Jones", "email": "bob@co.com", "state": "active", "is_admin": true, "last_sign_in_at": "2025-03-01T12:30:00Z", "current_sign_in_at": "2025-03-01T12:30:00Z", "last_activity_on": "2025-03-01"}
+			]`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -104,15 +106,15 @@ func TestListUsersPagination(t *testing.T) {
 		w.Header().Set("X-Total-Pages", "2")
 		if callCount == 1 {
 			assert.Equal(t, "1", r.URL.Query().Get("page"))
-			json.NewEncoder(w).Encode([]apiUser{
+			require.NoError(t, json.NewEncoder(w).Encode([]apiUser{
 				{ID: 1, Username: "alice", Name: "Alice", Email: "alice@co.com", State: "active"},
 				{ID: 2, Username: "bob", Name: "Bob", Email: "bob@co.com", State: "active"},
-			})
+			}))
 		} else {
 			assert.Equal(t, "2", r.URL.Query().Get("page"))
-			json.NewEncoder(w).Encode([]apiUser{
+			require.NoError(t, json.NewEncoder(w).Encode([]apiUser{
 				{ID: 3, Username: "charlie", Name: "Charlie", Email: "charlie@co.com", State: "active"},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -133,9 +135,9 @@ func TestRemoveUser(t *testing.T) {
 		callCount++
 		if r.Method == http.MethodGet {
 			w.Header().Set("X-Total-Pages", "1")
-			json.NewEncoder(w).Encode([]apiUser{
+			require.NoError(t, json.NewEncoder(w).Encode([]apiUser{
 				{ID: 42, Username: "alice", Name: "Alice", Email: "alice@co.com", State: "active"},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodPost, r.Method)
 			assert.Equal(t, "/api/v4/users/42/block", r.URL.Path)
@@ -154,7 +156,7 @@ func TestRemoveUser(t *testing.T) {
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Total-Pages", "1")
-		json.NewEncoder(w).Encode([]apiUser{})
+		require.NoError(t, json.NewEncoder(w).Encode([]apiUser{}))
 	}))
 	defer server.Close()
 
@@ -167,7 +169,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"401 Unauthorized"}`))
+		_, err := w.Write([]byte(`{"error":"401 Unauthorized"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

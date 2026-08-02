@@ -15,6 +15,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func encodeTestJSON(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		panic(err)
+	}
+}
+
 func TestProviderName(t *testing.T) {
 	p := New("test-token")
 	assert.Equal(t, "notion", p.Name())
@@ -36,7 +42,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/scim/v2/Users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+		encodeTestJSON(w, httpclient.SCIMListResponse[scimUser]{
 			Resources: []scimUser{
 				{
 					ID:          "u-abc",
@@ -81,7 +87,7 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "1", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+			encodeTestJSON(w, httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "u1", UserName: "u1@co.com", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
 					{ID: "u2", UserName: "u2@co.com", DisplayName: "User 2", Emails: []scimEmail{{Value: "u2@co.com", Primary: true}}, Active: true},
@@ -92,7 +98,7 @@ func TestListUsersPagination(t *testing.T) {
 			})
 		} else {
 			assert.Equal(t, "3", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+			encodeTestJSON(w, httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "u3", UserName: "u3@co.com", DisplayName: "User 3", Emails: []scimEmail{{Value: "u3@co.com", Primary: true}}, Active: true},
 				},
@@ -126,7 +132,7 @@ func TestListUsersStopsOnEmptyPage(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if calls.Add(1) == 1 {
-			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+			encodeTestJSON(w, httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "u1", UserName: "u1@co.com", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
 					{ID: "u2", UserName: "u2@co.com", DisplayName: "User 2", Emails: []scimEmail{{Value: "u2@co.com", Primary: true}}, Active: true},
@@ -138,7 +144,7 @@ func TestListUsersStopsOnEmptyPage(t *testing.T) {
 			return
 		}
 		// Server still claims 10 total but hands back nothing.
-		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+		encodeTestJSON(w, httpclient.SCIMListResponse[scimUser]{
 			Resources:    []scimUser{},
 			TotalResults: 10,
 			ItemsPerPage: 2,
@@ -177,7 +183,7 @@ func TestListUsersStopsOnEmptyPage(t *testing.T) {
 
 func TestListUsersDisplayNameFallbacks(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+		encodeTestJSON(w, httpclient.SCIMListResponse[scimUser]{
 			Resources: []scimUser{
 				{ID: "u1", UserName: "a@co.com", DisplayName: "Top Level", Name: scimName{Formatted: "Ignored", GivenName: "Ig", FamilyName: "Nored"}, Active: true},
 				{ID: "u2", UserName: "b@co.com", Name: scimName{Formatted: "Bea Formatted", GivenName: "Bea", FamilyName: "Parts"}, Active: true},
@@ -221,7 +227,8 @@ func TestListUsersRoleFromNotionExtension(t *testing.T) {
 	  ]
 	}`
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(raw))
+		_, err := w.Write([]byte(raw))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -238,7 +245,7 @@ func TestListUsersRoleFromNotionExtension(t *testing.T) {
 
 func TestListUsersRoleEmptyExtensionFallsBack(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+		encodeTestJSON(w, httpclient.SCIMListResponse[scimUser]{
 			Resources: []scimUser{
 				{ID: "u1", UserName: "a@co.com", DisplayName: "A", Active: true, NotionExtension: &scimNotionExtension{}},
 			},
@@ -261,7 +268,7 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+			encodeTestJSON(w, httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "u-abc", UserName: "alice@co.com", DisplayName: "Alice", Emails: []scimEmail{{Value: "alice@co.com", Primary: true}}, Active: true},
 				},
@@ -286,7 +293,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+		encodeTestJSON(w, httpclient.SCIMListResponse[scimUser]{
 			Resources:    []scimUser{},
 			TotalResults: 0,
 			ItemsPerPage: 100,
@@ -304,7 +311,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"detail":"Unauthorized"}`))
+		_, err := w.Write([]byte(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"detail":"Unauthorized"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

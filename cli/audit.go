@@ -422,7 +422,7 @@ func runAuditInactive(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Read from what was observed, not recomputed. A provider constructed here
 	// has made no request, and GitHub only learns whether it can report activity

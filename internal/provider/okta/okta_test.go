@@ -34,7 +34,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v1/users", r.URL.Path)
 
-		json.NewEncoder(w).Encode([]oktaUser{
+		require.NoError(t, json.NewEncoder(w).Encode([]oktaUser{
 			{
 				ID:        "00u1",
 				Status:    "ACTIVE",
@@ -56,7 +56,7 @@ func TestListUsers(t *testing.T) {
 					LastName:  "Jones",
 				},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -87,15 +87,15 @@ func TestListUsersPagination(t *testing.T) {
 			// Set Link header pointing to second page.
 			nextURL := fmt.Sprintf("http://%s/api/v1/users?after=00u2&limit=200", r.Host)
 			w.Header().Set("Link", fmt.Sprintf(`<%s>; rel="next"`, nextURL))
-			json.NewEncoder(w).Encode([]oktaUser{
+			require.NoError(t, json.NewEncoder(w).Encode([]oktaUser{
 				{ID: "00u1", Status: "ACTIVE", Profile: oktaUserProfile{Email: "u1@co.com", FirstName: "User", LastName: "1"}},
 				{ID: "00u2", Status: "ACTIVE", Profile: oktaUserProfile{Email: "u2@co.com", FirstName: "User", LastName: "2"}},
-			})
+			}))
 		} else {
 			// No Link header = last page.
-			json.NewEncoder(w).Encode([]oktaUser{
+			require.NoError(t, json.NewEncoder(w).Encode([]oktaUser{
 				{ID: "00u3", Status: "ACTIVE", Profile: oktaUserProfile{Email: "u3@co.com", FirstName: "User", LastName: "3"}},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -112,9 +112,9 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode([]oktaUser{
+			require.NoError(t, json.NewEncoder(w).Encode([]oktaUser{
 				{ID: "00u1", Status: "ACTIVE", Profile: oktaUserProfile{Email: "alice@co.com", FirstName: "Alice", LastName: "Smith"}},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodPost, r.Method)
 			assert.Equal(t, "/api/v1/users/00u1/lifecycle/deactivate", r.URL.Path)
@@ -132,7 +132,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]oktaUser{})
+		require.NoError(t, json.NewEncoder(w).Encode([]oktaUser{}))
 	}))
 	defer server.Close()
 
@@ -145,7 +145,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"errorCode":"E0000011","errorSummary":"Invalid token provided"}`))
+		_, err := w.Write([]byte(`{"errorCode":"E0000011","errorSummary":"Invalid token provided"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

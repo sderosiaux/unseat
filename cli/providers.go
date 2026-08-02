@@ -52,7 +52,7 @@ func runProvidersList(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	states, err := db.ListSyncStates(cmd.Context())
 	if err != nil {
@@ -158,7 +158,7 @@ func runProvidersUsers(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	users, err := db.GetProviderUsers(cmd.Context(), name)
 	if err != nil {

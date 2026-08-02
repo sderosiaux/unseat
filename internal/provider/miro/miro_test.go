@@ -33,7 +33,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/v2/orgs/org-123/members", r.URL.Path)
 
-		json.NewEncoder(w).Encode(membersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(membersResponse{
 			Data: []member{
 				{ID: "m1", Email: "alice@co.com", Role: "admin", Active: true, License: "full", LastActivityAt: "2025-02-10T09:00:00Z"},
 				{ID: "m2", Email: "bob@co.com", Role: "member", Active: true, License: "full"},
@@ -43,7 +43,7 @@ func TestListUsers(t *testing.T) {
 			Limit:  100,
 			Size:   3,
 			Total:  3,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -76,7 +76,7 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Empty(t, r.URL.Query().Get("cursor"))
-			json.NewEncoder(w).Encode(membersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(membersResponse{
 				Data: []member{
 					{ID: "m1", Email: "alice@co.com", Role: "admin", Active: true, License: "full"},
 				},
@@ -84,10 +84,10 @@ func TestListUsersPagination(t *testing.T) {
 				Limit:  1,
 				Size:   1,
 				Total:  2,
-			})
+			}))
 		} else {
 			assert.Equal(t, "next-page", r.URL.Query().Get("cursor"))
-			json.NewEncoder(w).Encode(membersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(membersResponse{
 				Data: []member{
 					{ID: "m2", Email: "bob@co.com", Role: "member", Active: true, License: "full"},
 				},
@@ -95,7 +95,7 @@ func TestListUsersPagination(t *testing.T) {
 				Limit:  1,
 				Size:   1,
 				Total:  2,
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -115,11 +115,11 @@ func TestRemoveUser(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			// ListUsers call
-			json.NewEncoder(w).Encode(membersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(membersResponse{
 				Data: []member{
 					{ID: "m1", Email: "alice@co.com", Role: "admin", Active: true, License: "full"},
 				},
-			})
+			}))
 		} else {
 			// DELETE call
 			assert.Equal(t, http.MethodDelete, r.Method)
@@ -137,9 +137,9 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(membersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(membersResponse{
 			Data: []member{},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -152,7 +152,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestListUsersAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":401,"message":"Unauthorized"}`))
+		_, err := w.Write([]byte(`{"status":401,"message":"Unauthorized"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

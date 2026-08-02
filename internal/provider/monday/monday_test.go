@@ -33,10 +33,10 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 		var body gqlRequest
-		json.NewDecoder(r.Body).Decode(&body)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		assert.Contains(t, body.Query, "users")
 
-		json.NewEncoder(w).Encode(gqlResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(gqlResponse{
 			Data: mustMarshal(listUsersData{
 				Users: []mondayUser{
 					{ID: toJSONNumber("111"), Name: "Alice Smith", Email: "alice@co.com", IsAdmin: true, Enabled: true},
@@ -44,7 +44,7 @@ func TestListUsers(t *testing.T) {
 					{ID: toJSONNumber("333"), Name: "Charlie", Email: "charlie@co.com", Enabled: false},
 				},
 			}),
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -71,28 +71,28 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		var body gqlRequest
-		json.NewDecoder(r.Body).Decode(&body)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 
 		if callCount == 1 {
 			// ListUsers query
-			json.NewEncoder(w).Encode(gqlResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(gqlResponse{
 				Data: mustMarshal(listUsersData{
 					Users: []mondayUser{
 						{ID: toJSONNumber("111"), Name: "Alice", Email: "alice@co.com", Enabled: true},
 					},
 				}),
-			})
+			}))
 		} else {
 			// Deactivate mutation
 			assert.Contains(t, body.Query, "deactivate_users")
 			assert.Contains(t, body.Query, "111")
-			json.NewEncoder(w).Encode(gqlResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(gqlResponse{
 				Data: mustMarshal(map[string]any{
 					"deactivate_users": map[string]any{
 						"deactivated_users": []map[string]any{{"id": 111}},
 					},
 				}),
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -105,9 +105,9 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(gqlResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(gqlResponse{
 			Data: mustMarshal(listUsersData{Users: []mondayUser{}}),
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -120,7 +120,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error_message":"Not Authenticated"}`))
+		_, err := w.Write([]byte(`{"error_message":"Not Authenticated"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

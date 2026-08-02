@@ -34,13 +34,13 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "app-key", r.Header.Get("DD-APPLICATION-KEY"))
 		assert.Equal(t, "/api/v2/users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(listUsersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 			Data: []datadogUser{
 				{ID: "u1", Type: "users", Attributes: datadogUserAttributes{Name: "Alice Smith", Email: "alice@co.com", Status: "Active", Role: "admin"}},
 				{ID: "u2", Type: "users", Attributes: datadogUserAttributes{Name: "Bob Jones", Email: "bob@co.com", Status: "Pending", Role: "standard"}},
 				{ID: "u3", Type: "users", Attributes: datadogUserAttributes{Name: "Charlie", Email: "charlie@co.com", Disabled: true, Role: "standard"}},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -76,14 +76,14 @@ func TestListUsersPagination(t *testing.T) {
 					Attributes: datadogUserAttributes{Name: fmt.Sprintf("User %d", i), Email: fmt.Sprintf("u%d@co.com", i), Status: "Active", Role: "standard"},
 				}
 			}
-			json.NewEncoder(w).Encode(listUsersResponse{Data: users})
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{Data: users}))
 		} else {
 			assert.Equal(t, "1", r.URL.Query().Get("page[number]"))
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Data: []datadogUser{
 					{ID: "u100", Type: "users", Attributes: datadogUserAttributes{Name: "User 100", Email: "u100@co.com", Status: "Active", Role: "standard"}},
 				},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -100,11 +100,11 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Data: []datadogUser{
 					{ID: "u1", Type: "users", Attributes: datadogUserAttributes{Name: "Alice", Email: "alice@co.com", Status: "Active", Role: "standard"}},
 				},
-			})
+			}))
 			return
 		}
 		assert.Equal(t, http.MethodDelete, r.Method)
@@ -123,7 +123,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(listUsersResponse{Data: []datadogUser{}})
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{Data: []datadogUser{}}))
 	}))
 	defer server.Close()
 
@@ -136,7 +136,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"errors":["Forbidden"]}`))
+		_, err := w.Write([]byte(`{"errors":["Forbidden"]}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

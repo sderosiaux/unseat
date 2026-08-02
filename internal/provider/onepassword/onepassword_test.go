@@ -34,7 +34,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/scim/v2/Users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+		require.NoError(t, json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 			Resources: []scimUser{
 				{
 					ID:          "U001",
@@ -54,7 +54,7 @@ func TestListUsers(t *testing.T) {
 			TotalResults: 2,
 			ItemsPerPage: 100,
 			StartIndex:   1,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -79,7 +79,7 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "1", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+			require.NoError(t, json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "U1", UserName: "u1@co.com", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
 					{ID: "U2", UserName: "u2@co.com", DisplayName: "User 2", Emails: []scimEmail{{Value: "u2@co.com", Primary: true}}, Active: true},
@@ -87,17 +87,17 @@ func TestListUsersPagination(t *testing.T) {
 				TotalResults: 3,
 				ItemsPerPage: 2,
 				StartIndex:   1,
-			})
+			}))
 		} else {
 			assert.Equal(t, "3", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+			require.NoError(t, json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "U3", UserName: "u3@co.com", DisplayName: "User 3", Emails: []scimEmail{{Value: "u3@co.com", Primary: true}}, Active: true},
 				},
 				TotalResults: 3,
 				ItemsPerPage: 2,
 				StartIndex:   3,
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -114,22 +114,23 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+			require.NoError(t, json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 				Resources: []scimUser{
 					{ID: "U001", UserName: "alice@co.com", DisplayName: "Alice", Emails: []scimEmail{{Value: "alice@co.com", Primary: true}}, Active: true},
 				},
 				TotalResults: 1,
 				ItemsPerPage: 100,
 				StartIndex:   1,
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodPatch, r.Method)
 			assert.Equal(t, "/scim/v2/Users/U001", r.URL.Path)
 			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
-			body, _ := io.ReadAll(r.Body)
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
 			var patch scimPatchOp
-			json.Unmarshal(body, &patch)
+			require.NoError(t, json.Unmarshal(body, &patch))
 			assert.Equal(t, "replace", patch.Operations[0].Op)
 			assert.Equal(t, false, patch.Operations[0].Value["active"])
 
@@ -146,12 +147,12 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
+		require.NoError(t, json.NewEncoder(w).Encode(httpclient.SCIMListResponse[scimUser]{
 			Resources:    []scimUser{},
 			TotalResults: 0,
 			ItemsPerPage: 100,
 			StartIndex:   1,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -164,7 +165,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"detail":"invalid bearer token"}`))
+		_, err := w.Write([]byte(`{"detail":"invalid bearer token"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

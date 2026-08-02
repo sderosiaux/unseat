@@ -54,7 +54,7 @@ func RunOAuthFlow(ctx context.Context, cfg ProviderAuth, clientID, clientSecret 
 
 	state, err := randomState()
 	if err != nil {
-		listener.Close()
+		_ = listener.Close()
 		return nil, err
 	}
 
@@ -67,8 +67,12 @@ func RunOAuthFlow(ctx context.Context, cfg ProviderAuth, clientID, clientSecret 
 	mux.HandleFunc("/callback", makeCallbackHandler(ctx, oauthCfg, state, resultCh, errCh))
 
 	server := &http.Server{Handler: mux}
-	go server.Serve(listener)
-	defer server.Shutdown(context.Background())
+	go func() {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+	defer func() { _ = server.Shutdown(context.Background()) }()
 
 	authURL := oauthCfg.AuthCodeURL(state)
 	fmt.Printf("Opening browser for authorization...\n")
@@ -127,10 +131,10 @@ func makeCallbackHandler(ctx context.Context, oauthCfg *oauth2.Config, state str
 		}
 
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, `<html><body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">
-			<div style="text-align:center">
-				<h1>Connected!</h1>
-				<p>You can close this window and return to the terminal.</p>
+		_, _ = fmt.Fprint(w, `<html><body style="font-family:system-ui;display:flex;justify-content:center;align-items:center;height:100vh;margin:0">
+				<div style="text-align:center">
+					<h1>Connected!</h1>
+					<p>You can close this window and return to the terminal.</p>
 			</div>
 		</body></html>`)
 
@@ -161,6 +165,6 @@ func openBrowser(url string) {
 		cmd = exec.Command("cmd", "/c", "start", url)
 	}
 	if cmd != nil {
-		cmd.Start()
+		_ = cmd.Start()
 	}
 }

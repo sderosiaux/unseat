@@ -17,7 +17,7 @@ func newSafetyStore(t *testing.T) *store.SQLite {
 	t.Helper()
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	return db
 }
 

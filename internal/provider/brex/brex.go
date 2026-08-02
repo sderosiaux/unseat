@@ -83,7 +83,7 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 				displayName = u.Email
 			}
 
-			status := "active"
+			var status string
 			switch u.Status {
 			case "ACTIVE":
 				status = "active"

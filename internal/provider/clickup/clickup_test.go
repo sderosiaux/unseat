@@ -11,6 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func encodeTestJSON(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		panic(err)
+	}
+}
+
 func TestProviderName(t *testing.T) {
 	p := New("test-token", "team-1")
 	assert.Equal(t, "clickup", p.Name())
@@ -32,7 +38,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/api/v2/team/team-1", r.URL.Path)
 
-		json.NewEncoder(w).Encode(getTeamResponse{
+		encodeTestJSON(w, getTeamResponse{
 			Team: teamDetail{
 				ID:   "team-1",
 				Name: "My Workspace",
@@ -69,7 +75,7 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(getTeamResponse{
+			encodeTestJSON(w, getTeamResponse{
 				Team: teamDetail{
 					ID: "team-1",
 					Members: []teamMember{
@@ -84,7 +90,8 @@ func TestRemoveUser(t *testing.T) {
 		assert.Equal(t, "/api/v2/team/team-1/user/100", r.URL.Path)
 		assert.Equal(t, "test-token", r.Header.Get("Authorization"))
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{}`))
+		_, err := w.Write([]byte(`{}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -96,9 +103,9 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(getTeamResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(getTeamResponse{
 			Team: teamDetail{ID: "team-1", Members: []teamMember{}},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -111,7 +118,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"err":"Token invalid","ECODE":"OAUTH_025"}`))
+		_, err := w.Write([]byte(`{"err":"Token invalid","ECODE":"OAUTH_025"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

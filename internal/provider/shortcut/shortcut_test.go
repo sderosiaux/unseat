@@ -32,7 +32,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/v3/members", r.URL.Path)
 
-		json.NewEncoder(w).Encode([]apiMember{
+		require.NoError(t, json.NewEncoder(w).Encode([]apiMember{
 			{
 				ID:       "mem-1",
 				Profile:  apiProfile{Name: "Alice Smith", EmailAddress: "alice@co.com"},
@@ -45,7 +45,7 @@ func TestListUsers(t *testing.T) {
 				Role:     "member",
 				Disabled: false,
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -68,11 +68,11 @@ func TestListUsersPagination(t *testing.T) {
 	// Shortcut API returns all members in a single response (no pagination).
 	// This test verifies the provider handles a full response correctly.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]apiMember{
+		require.NoError(t, json.NewEncoder(w).Encode([]apiMember{
 			{ID: "mem-1", Profile: apiProfile{Name: "User 1", EmailAddress: "u1@co.com"}, Role: "member"},
 			{ID: "mem-2", Profile: apiProfile{Name: "User 2", EmailAddress: "u2@co.com"}, Role: "member"},
 			{ID: "mem-3", Profile: apiProfile{Name: "User 3", EmailAddress: "u3@co.com"}, Role: "admin"},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -90,9 +90,9 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode([]apiMember{
+			require.NoError(t, json.NewEncoder(w).Encode([]apiMember{
 				{ID: "mem-1", Profile: apiProfile{Name: "Alice", EmailAddress: "alice@co.com"}, Role: "member"},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/api/v3/members/mem-1", r.URL.Path)
@@ -110,7 +110,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]apiMember{})
+		require.NoError(t, json.NewEncoder(w).Encode([]apiMember{}))
 	}))
 	defer server.Close()
 
@@ -123,7 +123,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"message":"Sorry, the Shortcut-Token header was not found."}`))
+		_, err := w.Write([]byte(`{"message":"Sorry, the Shortcut-Token header was not found."}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

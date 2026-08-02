@@ -33,7 +33,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/v1/organizations/users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(listUsersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 			Data: []apiUser{
 				{ID: "user_1", Email: "alice@co.com", Name: "Alice Smith", Role: "developer", AddedAt: "2025-01-15T10:00:00Z", Type: "user"},
 				{ID: "user_2", Email: "bob@co.com", Name: "Bob Jones", Role: "admin", AddedAt: "2025-02-01T10:00:00Z", Type: "user"},
@@ -41,7 +41,7 @@ func TestListUsers(t *testing.T) {
 			HasMore: false,
 			FirstID: "user_1",
 			LastID:  "user_2",
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -69,24 +69,24 @@ func TestListUsersPagination(t *testing.T) {
 
 		if callCount == 1 {
 			assert.Empty(t, r.URL.Query().Get("after_id"))
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Data: []apiUser{
 					{ID: "user_1", Email: "alice@co.com", Name: "Alice", Role: "developer", Type: "user"},
 				},
 				HasMore: true,
 				FirstID: "user_1",
 				LastID:  "user_1",
-			})
+			}))
 		} else {
 			assert.Equal(t, "user_1", r.URL.Query().Get("after_id"))
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Data: []apiUser{
 					{ID: "user_2", Email: "bob@co.com", Name: "Bob", Role: "admin", Type: "user"},
 				},
 				HasMore: false,
 				FirstID: "user_2",
 				LastID:  "user_2",
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -112,20 +112,20 @@ func TestRemoveUser(t *testing.T) {
 			// ListUsers call
 			assert.Equal(t, http.MethodGet, r.Method)
 			assert.Equal(t, "/v1/organizations/users", r.URL.Path)
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Data: []apiUser{
 					{ID: "user_abc123", Email: "alice@co.com", Name: "Alice", Role: "developer", Type: "user"},
 				},
 				HasMore: false,
-			})
+			}))
 		} else {
 			// DELETE call
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/v1/organizations/users/user_abc123", r.URL.Path)
-			json.NewEncoder(w).Encode(map[string]string{
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]string{
 				"id":   "user_abc123",
 				"type": "user_deleted",
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -138,10 +138,10 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(listUsersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 			Data:    []apiUser{},
 			HasMore: false,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -154,10 +154,10 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(apiError{
+		require.NoError(t, json.NewEncoder(w).Encode(apiError{
 			Type:    "authentication_error",
 			Message: "invalid x-api-key",
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -185,7 +185,7 @@ func TestHeaders(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "my-admin-key", r.Header.Get("x-api-key"))
 		assert.Equal(t, "2023-06-01", r.Header.Get("anthropic-version"))
-		json.NewEncoder(w).Encode(listUsersResponse{Data: []apiUser{}, HasMore: false})
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{Data: []apiUser{}, HasMore: false}))
 	}))
 	defer server.Close()
 

@@ -34,12 +34,13 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "/2/team/members/list_v2", r.URL.Path)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		var req dropboxListRequest
-		json.Unmarshal(body, &req)
+		require.NoError(t, json.Unmarshal(body, &req))
 		assert.Equal(t, 100, req.Limit)
 
-		json.NewEncoder(w).Encode(dropboxListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(dropboxListResponse{
 			Members: []dropboxMember{
 				{Profile: dropboxProfile{
 					TeamMemberID: "tm1",
@@ -57,7 +58,7 @@ func TestListUsers(t *testing.T) {
 				}},
 			},
 			HasMore: false,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -82,25 +83,26 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "/2/team/members/list_v2", r.URL.Path)
-			json.NewEncoder(w).Encode(dropboxListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(dropboxListResponse{
 				Members: []dropboxMember{
 					{Profile: dropboxProfile{TeamMemberID: "tm1", Email: "u1@co.com", Name: dropboxName{DisplayName: "User 1"}, Status: dropboxTag{Tag: "active"}}},
 				},
 				Cursor:  "cursor-xyz",
 				HasMore: true,
-			})
+			}))
 		} else {
 			assert.Equal(t, "/2/team/members/list/continue_v2", r.URL.Path)
-			body, _ := io.ReadAll(r.Body)
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
 			var req dropboxContinueRequest
-			json.Unmarshal(body, &req)
+			require.NoError(t, json.Unmarshal(body, &req))
 			assert.Equal(t, "cursor-xyz", req.Cursor)
-			json.NewEncoder(w).Encode(dropboxListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(dropboxListResponse{
 				Members: []dropboxMember{
 					{Profile: dropboxProfile{TeamMemberID: "tm2", Email: "u2@co.com", Name: dropboxName{DisplayName: "User 2"}, Status: dropboxTag{Tag: "active"}}},
 				},
 				HasMore: false,
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -120,14 +122,16 @@ func TestRemoveUser(t *testing.T) {
 		assert.Equal(t, "/2/team/members/remove", r.URL.Path)
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		var req dropboxRemoveRequest
-		json.Unmarshal(body, &req)
+		require.NoError(t, json.Unmarshal(body, &req))
 		assert.Equal(t, "email", req.User.Tag)
 		assert.Equal(t, "alice@co.com", req.User.Email)
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{}`))
+		_, err = w.Write([]byte(`{}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -139,7 +143,8 @@ func TestRemoveUser(t *testing.T) {
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)
-		w.Write([]byte(`{"error_summary":"member_not_found/..","error":{".tag":"member_not_found"}}`))
+		_, err := w.Write([]byte(`{"error_summary":"member_not_found/..","error":{".tag":"member_not_found"}}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -152,7 +157,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error_summary":"invalid_access_token/..","error":{".tag":"invalid_access_token"}}`))
+		_, err := w.Write([]byte(`{"error_summary":"invalid_access_token/..","error":{".tag":"invalid_access_token"}}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

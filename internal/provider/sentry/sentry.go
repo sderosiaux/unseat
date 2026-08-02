@@ -69,7 +69,10 @@ func (p *Provider) fetchMemberPage(ctx context.Context, url string) ([]sentryUse
 	if err != nil {
 		return nil, "", fmt.Errorf("sentry: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))

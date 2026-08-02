@@ -32,10 +32,10 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/v1/org/org-123/members", r.URL.Path)
 
-		json.NewEncoder(w).Encode([]snykMember{
+		require.NoError(t, json.NewEncoder(w).Encode([]snykMember{
 			{ID: "uid-1", Username: "alice", Email: "alice@co.com", Role: "admin"},
 			{ID: "uid-2", Username: "bob", Email: "bob@co.com", Role: "collaborator"},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -59,9 +59,9 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode([]snykMember{
+			require.NoError(t, json.NewEncoder(w).Encode([]snykMember{
 				{ID: "uid-1", Username: "alice", Email: "alice@co.com", Role: "admin"},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/v1/org/org-123/members/update/uid-1", r.URL.Path)
@@ -79,7 +79,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]snykMember{})
+		require.NoError(t, json.NewEncoder(w).Encode([]snykMember{}))
 	}))
 	defer server.Close()
 
@@ -92,7 +92,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"code":401,"message":"Invalid auth token provided"}`))
+		_, err := w.Write([]byte(`{"code":401,"message":"Invalid auth token provided"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

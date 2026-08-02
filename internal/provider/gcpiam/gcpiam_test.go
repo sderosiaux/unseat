@@ -33,7 +33,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "/admin/directory/v1/users", r.URL.Path)
 		assert.Equal(t, "C01234abc", r.URL.Query().Get("customer"))
 
-		json.NewEncoder(w).Encode(listUsersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 			Users: []gcpUser{
 				{
 					ID:           "100",
@@ -50,7 +50,7 @@ func TestListUsers(t *testing.T) {
 					IsAdmin:      false,
 				},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -76,20 +76,20 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Empty(t, r.URL.Query().Get("pageToken"))
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []gcpUser{
 					{ID: "1", PrimaryEmail: "u1@co.com", Name: userName{FullName: "User 1"}},
 					{ID: "2", PrimaryEmail: "u2@co.com", Name: userName{FullName: "User 2"}},
 				},
 				NextPageToken: "next-page",
-			})
+			}))
 		} else {
 			assert.Equal(t, "next-page", r.URL.Query().Get("pageToken"))
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []gcpUser{
 					{ID: "3", PrimaryEmail: "u3@co.com", Name: userName{FullName: "User 3"}},
 				},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -106,11 +106,11 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []gcpUser{
 					{ID: "100", PrimaryEmail: "alice@co.com", Name: userName{FullName: "Alice"}},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/admin/directory/v1/users/100", r.URL.Path)
@@ -128,7 +128,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(listUsersResponse{Users: []gcpUser{}})
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{Users: []gcpUser{}}))
 	}))
 	defer server.Close()
 
@@ -141,7 +141,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error":{"code":403,"message":"insufficient permission"}}`))
+		_, err := w.Write([]byte(`{"error":{"code":403,"message":"insufficient permission"}}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

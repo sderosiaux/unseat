@@ -44,7 +44,8 @@ func TestListUsers(t *testing.T) {
 		// Deactivation state lives on the owner record, so ListUsers consults
 		// both endpoints. Nobody is archived here.
 		if strings.HasPrefix(r.URL.Path, "/crm/v3/owners") {
-			fmt.Fprint(w, `{"results":[]}`)
+			_, err := fmt.Fprint(w, `{"results":[]}`)
+			require.NoError(t, err)
 			return
 		}
 		assert.Equal(t, "/settings/v3/users/", r.URL.Path)
@@ -53,12 +54,13 @@ func TestListUsers(t *testing.T) {
 		// would round-trip whatever we declared and hide a field that the API
 		// does not actually send — which is how a non-existent lastActiveTime
 		// came to flag an entire portal as inactive.
-		fmt.Fprint(w, `{"results":[
+		_, err := fmt.Fprint(w, `{"results":[
 		  {"id":"1","email":"alice@co.com","firstName":"Alice","lastName":"Smith",
 		   "roleIds":[],"seatNames":["sales-enterprise"],"superAdmin":true},
 		  {"id":"2","email":"bob@co.com","roleIds":[],"seatNames":["core"],"superAdmin":false},
 		  {"id":"3","email":"carol@co.com","firstName":"Carol","roleIds":[],"seatNames":[],"superAdmin":false}
 		]}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -94,16 +96,19 @@ func TestListUsersPagination(t *testing.T) {
 	userCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/crm/v3/owners") {
-			fmt.Fprint(w, `{"results":[]}`)
+			_, err := fmt.Fprint(w, `{"results":[]}`)
+			require.NoError(t, err)
 			return
 		}
 		userCalls++
 		if r.URL.Query().Get("after") == "" {
-			fmt.Fprint(w, `{"results":[{"id":"1","email":"alice@co.com"}],"paging":{"next":{"after":"100"}}}`)
+			_, err := fmt.Fprint(w, `{"results":[{"id":"1","email":"alice@co.com"}],"paging":{"next":{"after":"100"}}}`)
+			require.NoError(t, err)
 			return
 		}
 		assert.Equal(t, "100", r.URL.Query().Get("after"))
-		fmt.Fprint(w, `{"results":[{"id":"2","email":"bob@co.com"}]}`)
+		_, err := fmt.Fprint(w, `{"results":[{"id":"2","email":"bob@co.com"}]}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -123,13 +128,15 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/crm/v3/owners"):
-			fmt.Fprint(w, `{"results":[]}`)
+			_, err := fmt.Fprint(w, `{"results":[]}`)
+			require.NoError(t, err)
 		case r.Method == http.MethodDelete:
 			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 			deleted = r.URL.Path
 			w.WriteHeader(http.StatusNoContent)
 		default:
-			fmt.Fprint(w, `{"results":[{"id":"42","email":"alice@co.com"}]}`)
+			_, err := fmt.Fprint(w, `{"results":[{"id":"42","email":"alice@co.com"}]}`)
+			require.NoError(t, err)
 		}
 	}))
 	defer server.Close()
@@ -142,7 +149,8 @@ func TestRemoveUser(t *testing.T) {
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.NotEqual(t, http.MethodDelete, r.Method, "an unknown user must not trigger a deletion")
-		fmt.Fprint(w, `{"results":[]}`)
+		_, err := fmt.Fprint(w, `{"results":[]}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -155,7 +163,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestListUsersAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"status":"error","message":"Authentication credentials not found"}`))
+		_, err := w.Write([]byte(`{"status":"error","message":"Authentication credentials not found"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -188,12 +197,14 @@ func TestListUsersMarksDeactivatedFromArchivedOwners(t *testing.T) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/crm/v3/owners"):
 			assert.Equal(t, "true", r.URL.Query().Get("archived"))
-			fmt.Fprint(w, `{"results":[{"email":"Gone@Co.com","archived":true}]}`)
+			_, err := fmt.Fprint(w, `{"results":[{"email":"Gone@Co.com","archived":true}]}`)
+			require.NoError(t, err)
 		default:
-			fmt.Fprint(w, `{"results":[
+			_, err := fmt.Fprint(w, `{"results":[
 			  {"id":"1","email":"alice@co.com","seatNames":["core"]},
 			  {"id":"2","email":"gone@co.com","seatNames":["sales-enterprise"]}
 			]}`)
+			require.NoError(t, err)
 		}
 	}))
 	defer server.Close()
@@ -217,14 +228,17 @@ func TestListUsersPaginatesArchivedOwners(t *testing.T) {
 		if strings.HasPrefix(r.URL.Path, "/crm/v3/owners") {
 			ownerCalls++
 			if r.URL.Query().Get("after") == "" {
-				fmt.Fprint(w, `{"results":[{"email":"a@co.com"}],"paging":{"next":{"after":"P2"}}}`)
+				_, err := fmt.Fprint(w, `{"results":[{"email":"a@co.com"}],"paging":{"next":{"after":"P2"}}}`)
+				require.NoError(t, err)
 				return
 			}
 			assert.Equal(t, "P2", r.URL.Query().Get("after"))
-			fmt.Fprint(w, `{"results":[{"email":"b@co.com"}]}`)
+			_, err := fmt.Fprint(w, `{"results":[{"email":"b@co.com"}]}`)
+			require.NoError(t, err)
 			return
 		}
-		fmt.Fprint(w, `{"results":[{"id":"1","email":"a@co.com"},{"id":"2","email":"b@co.com"}]}`)
+		_, err := fmt.Fprint(w, `{"results":[{"id":"1","email":"a@co.com"},{"id":"2","email":"b@co.com"}]}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -242,10 +256,12 @@ func TestListUsersRequiresOwnersScope(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/crm/v3/owners") {
 			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, `{"category":"MISSING_SCOPES"}`)
+			_, err := fmt.Fprint(w, `{"category":"MISSING_SCOPES"}`)
+			require.NoError(t, err)
 			return
 		}
-		fmt.Fprint(w, `{"results":[{"id":"1","email":"a@co.com"}]}`)
+		_, err := fmt.Fprint(w, `{"results":[{"id":"1","email":"a@co.com"}]}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -276,11 +292,13 @@ func TestListUsersGoldenShape(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasPrefix(r.URL.Path, "/crm/v3/owners") {
-			w.Write(ownersBody)
+			_, err := w.Write(ownersBody)
+			require.NoError(t, err)
 			return
 		}
 		assert.Equal(t, "/settings/v3/users/", r.URL.Path)
-		w.Write(usersBody)
+		_, err := w.Write(usersBody)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

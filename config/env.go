@@ -53,7 +53,7 @@ func LoadDotEnv(path string) error {
 		}
 		return fmt.Errorf("read %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	lineNo := 0

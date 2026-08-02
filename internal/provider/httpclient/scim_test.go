@@ -223,7 +223,7 @@ func TestListSCIMAppliesDecorate(t *testing.T) {
 	var gotAuth string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		json.NewEncoder(w).Encode(SCIMListResponse[scimTestUser]{TotalResults: 0})
+		require.NoError(t, json.NewEncoder(w).Encode(SCIMListResponse[scimTestUser]{TotalResults: 0}))
 	}))
 	defer srv.Close()
 
@@ -252,7 +252,7 @@ func TestListSCIMPreservesExistingQueryParams(t *testing.T) {
 	var gotFilter string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotFilter = r.URL.Query().Get("filter")
-		json.NewEncoder(w).Encode(SCIMListResponse[scimTestUser]{TotalResults: 0})
+		require.NoError(t, json.NewEncoder(w).Encode(SCIMListResponse[scimTestUser]{TotalResults: 0}))
 	}))
 	defer srv.Close()
 

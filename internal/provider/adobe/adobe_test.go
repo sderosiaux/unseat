@@ -33,7 +33,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/v2/usermanagement/users/12345@AdobeOrg/0", r.URL.Path)
 
-		json.NewEncoder(w).Encode(usersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 			LastPage: true,
 			Result:   "success",
 			Users: []adobeUser{
@@ -41,7 +41,7 @@ func TestListUsers(t *testing.T) {
 				{ID: "a2", Email: "bob@co.com", FirstName: "Bob", LastName: "Jones", Status: "active", Type: "federatedID"},
 				{ID: "a3", Email: "carol@co.com", FirstName: "Carol", LastName: "", Status: "disabled", Type: "adobeID"},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -67,22 +67,22 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "/v2/usermanagement/users/12345@AdobeOrg/0", r.URL.Path)
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				LastPage: false,
 				Result:   "success",
 				Users: []adobeUser{
 					{ID: "a1", Email: "alice@co.com", FirstName: "Alice", Status: "active", Type: "enterpriseID"},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, "/v2/usermanagement/users/12345@AdobeOrg/1", r.URL.Path)
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				LastPage: true,
 				Result:   "success",
 				Users: []adobeUser{
 					{ID: "a2", Email: "bob@co.com", FirstName: "Bob", Status: "active", Type: "enterpriseID"},
 				},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -101,13 +101,13 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				LastPage: true,
 				Result:   "success",
 				Users: []adobeUser{
 					{ID: "a1", Email: "alice@co.com", FirstName: "Alice", Status: "active", Type: "enterpriseID"},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodPost, r.Method)
 			assert.Equal(t, "/v2/usermanagement/action/12345@AdobeOrg", r.URL.Path)
@@ -123,7 +123,8 @@ func TestRemoveUser(t *testing.T) {
 			assert.NotNil(t, commands[0].Do[0].RemoveFromOrg)
 
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"result":"success"}`))
+			_, err = w.Write([]byte(`{"result":"success"}`))
+			require.NoError(t, err)
 		}
 	}))
 	defer server.Close()
@@ -136,11 +137,11 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(usersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 			LastPage: true,
 			Result:   "success",
 			Users:    []adobeUser{},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -153,7 +154,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestListUsersAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error_code":"403003","message":"Api Key is invalid"}`))
+		_, err := w.Write([]byte(`{"error_code":"403003","message":"Api Key is invalid"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

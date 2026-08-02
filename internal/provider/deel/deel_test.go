@@ -32,13 +32,13 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/rest/v2/people", r.URL.Path)
 
-		json.NewEncoder(w).Encode(deelListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(deelListResponse{
 			Data: []deelPerson{
 				{ID: "D1", FullName: "Alice Smith", WorkEmail: "alice@co.com", State: "active"},
 				{ID: "D2", FullName: "Bob Jones", WorkEmail: "bob@co.com", State: "invited"},
 			},
 			Page: deelPage{Offset: 0, Limit: 100, TotalRows: 2},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -63,21 +63,21 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "0", r.URL.Query().Get("offset"))
-			json.NewEncoder(w).Encode(deelListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(deelListResponse{
 				Data: []deelPerson{
 					{ID: "D1", FullName: "User 1", WorkEmail: "u1@co.com", State: "active"},
 					{ID: "D2", FullName: "User 2", WorkEmail: "u2@co.com", State: "active"},
 				},
 				Page: deelPage{Offset: 0, Limit: 2, TotalRows: 3},
-			})
+			}))
 		} else {
 			assert.Equal(t, "2", r.URL.Query().Get("offset"))
-			json.NewEncoder(w).Encode(deelListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(deelListResponse{
 				Data: []deelPerson{
 					{ID: "D3", FullName: "User 3", WorkEmail: "u3@co.com", State: "active"},
 				},
 				Page: deelPage{Offset: 2, Limit: 2, TotalRows: 3},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -97,12 +97,12 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(deelListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(deelListResponse{
 				Data: []deelPerson{
 					{ID: "D1", FullName: "Alice", WorkEmail: "alice@co.com", State: "active"},
 				},
 				Page: deelPage{Offset: 0, Limit: 100, TotalRows: 1},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodPost, r.Method)
 			assert.Equal(t, "/rest/v2/people/D1/terminate", r.URL.Path)
@@ -120,10 +120,10 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(deelListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(deelListResponse{
 			Data: []deelPerson{},
 			Page: deelPage{Offset: 0, Limit: 100, TotalRows: 0},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -136,7 +136,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error":"forbidden"}`))
+		_, err := w.Write([]byte(`{"error":"forbidden"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

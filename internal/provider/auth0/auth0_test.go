@@ -35,7 +35,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "/api/v2/users", r.URL.Path)
 		assert.Equal(t, "true", r.URL.Query().Get("include_totals"))
 
-		json.NewEncoder(w).Encode(listUsersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 			Users: []auth0User{
 				{UserID: "auth0|001", Email: "alice@co.com", Name: "Alice Smith", Blocked: false, LastLogin: "2025-02-01T16:45:00Z"},
 				{UserID: "auth0|002", Email: "bob@co.com", Name: "Bob Jones", Blocked: true},
@@ -43,7 +43,7 @@ func TestListUsers(t *testing.T) {
 			Start: 0,
 			Limit: 100,
 			Total: 2,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -75,9 +75,10 @@ func TestListUsersPagination(t *testing.T) {
 			// Return full page to trigger pagination (len == perPage and len < total).
 			pp := 100
 			if perPage != "" {
-				fmt.Sscanf(perPage, "%d", &pp)
+				_, err := fmt.Sscanf(perPage, "%d", &pp)
+				require.NoError(t, err)
 			}
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []auth0User{
 					{UserID: "auth0|001", Email: "u1@co.com", Name: "User 1"},
 					{UserID: "auth0|002", Email: "u2@co.com", Name: "User 2"},
@@ -85,16 +86,16 @@ func TestListUsersPagination(t *testing.T) {
 				Start: 0,
 				Limit: pp,
 				Total: 3,
-			})
+			}))
 		} else {
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []auth0User{
 					{UserID: "auth0|003", Email: "u3@co.com", Name: "User 3"},
 				},
 				Start: 2,
 				Limit: 100,
 				Total: 3,
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -111,12 +112,12 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []auth0User{
 					{UserID: "auth0|001", Email: "alice@co.com", Name: "Alice Smith"},
 				},
 				Total: 1,
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Contains(t, r.URL.Path, "/api/v2/users/auth0")
@@ -134,10 +135,10 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(listUsersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 			Users: []auth0User{},
 			Total: 0,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -150,7 +151,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"statusCode":401,"error":"Unauthorized","message":"Invalid token"}`))
+		_, err := w.Write([]byte(`{"statusCode":401,"error":"Unauthorized","message":"Invalid token"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

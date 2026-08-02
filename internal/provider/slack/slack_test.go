@@ -11,6 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func encodeTestJSON(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		panic(err)
+	}
+}
+
 func TestProviderName(t *testing.T) {
 	p := New("test-token")
 	assert.Equal(t, "slack", p.Name())
@@ -32,7 +38,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/scim/v2/Users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(scimListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 			Resources: []scimUser{
 				{
 					ID:          "U123",
@@ -54,7 +60,7 @@ func TestListUsers(t *testing.T) {
 			TotalResults: 2,
 			ItemsPerPage: 100,
 			StartIndex:   1,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -79,7 +85,7 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "1", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(scimListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 				Resources: []scimUser{
 					{ID: "U1", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
 					{ID: "U2", DisplayName: "User 2", Emails: []scimEmail{{Value: "u2@co.com", Primary: true}}, Active: true},
@@ -87,17 +93,17 @@ func TestListUsersPagination(t *testing.T) {
 				TotalResults: 3,
 				ItemsPerPage: 2,
 				StartIndex:   1,
-			})
+			}))
 		} else {
 			assert.Equal(t, "3", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(scimListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 				Resources: []scimUser{
 					{ID: "U3", DisplayName: "User 3", Emails: []scimEmail{{Value: "u3@co.com", Primary: true}}, Active: true},
 				},
 				TotalResults: 3,
 				ItemsPerPage: 2,
 				StartIndex:   3,
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -119,12 +125,12 @@ func TestListUsersPaginationNoItemsPerPage(t *testing.T) {
 		callCount++
 		// Safety net: a regressed loop must fail the assertion below, not spin forever.
 		if callCount > 5 {
-			json.NewEncoder(w).Encode(scimListResponse{TotalResults: 3})
+			encodeTestJSON(w, scimListResponse{TotalResults: 3})
 			return
 		}
 		switch r.URL.Query().Get("startIndex") {
 		case "1":
-			json.NewEncoder(w).Encode(scimListResponse{
+			encodeTestJSON(w, scimListResponse{
 				Resources: []scimUser{
 					{ID: "U1", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
 					{ID: "U2", DisplayName: "User 2", Emails: []scimEmail{{Value: "u2@co.com", Primary: true}}, Active: true},
@@ -132,7 +138,7 @@ func TestListUsersPaginationNoItemsPerPage(t *testing.T) {
 				TotalResults: 3,
 			})
 		case "3":
-			json.NewEncoder(w).Encode(scimListResponse{
+			encodeTestJSON(w, scimListResponse{
 				Resources: []scimUser{
 					{ID: "U3", DisplayName: "User 3", Emails: []scimEmail{{Value: "u3@co.com", Primary: true}}, Active: true},
 				},
@@ -140,7 +146,7 @@ func TestListUsersPaginationNoItemsPerPage(t *testing.T) {
 			})
 		default:
 			t.Errorf("unexpected startIndex %q", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(scimListResponse{TotalResults: 3})
+			encodeTestJSON(w, scimListResponse{TotalResults: 3})
 		}
 	}))
 	defer server.Close()
@@ -161,7 +167,7 @@ func TestListUsersStopsOnEmptyPage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(scimListResponse{
+			encodeTestJSON(w, scimListResponse{
 				Resources: []scimUser{
 					{ID: "U1", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
 				},
@@ -169,7 +175,7 @@ func TestListUsersStopsOnEmptyPage(t *testing.T) {
 			})
 			return
 		}
-		json.NewEncoder(w).Encode(scimListResponse{Resources: []scimUser{}, TotalResults: 99})
+		encodeTestJSON(w, scimListResponse{Resources: []scimUser{}, TotalResults: 99})
 	}))
 	defer server.Close()
 
@@ -183,7 +189,7 @@ func TestListUsersStopsOnEmptyPage(t *testing.T) {
 
 func TestListUsersDisplayNameFallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(scimListResponse{
+		encodeTestJSON(w, scimListResponse{
 			Resources: []scimUser{
 				{ID: "U1", UserName: "alice", DisplayName: "Alice Smith", Name: scimName{GivenName: "Alice", FamilyName: "Smith"}, Emails: []scimEmail{{Value: "alice@co.com"}}, Active: true},
 				{ID: "U2", UserName: "bob", Name: scimName{GivenName: "Bob", FamilyName: "Jones"}, Emails: []scimEmail{{Value: "bob@co.com"}}, Active: true},
@@ -213,7 +219,7 @@ func TestRemoveUser(t *testing.T) {
 		if r.Method == http.MethodGet {
 			assert.Equal(t, `email eq "alice@co.com"`, r.URL.Query().Get("filter"))
 			assert.Equal(t, "1", r.URL.Query().Get("count"))
-			json.NewEncoder(w).Encode(scimListResponse{
+			encodeTestJSON(w, scimListResponse{
 				Resources: []scimUser{
 					{ID: "U123", DisplayName: "Alice", Emails: []scimEmail{{Value: "alice@co.com", Primary: true}}, Active: true},
 				},
@@ -238,7 +244,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(scimListResponse{
+		encodeTestJSON(w, scimListResponse{
 			Resources:    []scimUser{},
 			TotalResults: 0,
 			ItemsPerPage: 100,
@@ -256,7 +262,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"Errors":{"description":"invalid_authentication","code":401}}`))
+		_, err := w.Write([]byte(`{"Errors":{"description":"invalid_authentication","code":401}}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -279,10 +286,11 @@ func TestRemoveUserFallsBackToFullCrawlWhenFilterFails(t *testing.T) {
 		gets++
 		if r.URL.Query().Get("filter") != "" {
 			w.WriteHeader(http.StatusBadRequest)
-			w.Write([]byte(`{"Errors":{"description":"invalid_filter","code":400}}`))
+			_, err := w.Write([]byte(`{"Errors":{"description":"invalid_filter","code":400}}`))
+			require.NoError(t, err)
 			return
 		}
-		json.NewEncoder(w).Encode(scimListResponse{
+		encodeTestJSON(w, scimListResponse{
 			Resources: []scimUser{
 				{ID: "U456", DisplayName: "Bob", Emails: []scimEmail{{Value: "bob@co.com", Primary: true}}, Active: true},
 			},
@@ -300,7 +308,8 @@ func TestRemoveUserFallsBackToFullCrawlWhenFilterFails(t *testing.T) {
 func TestRemoveUserSurfacesCrawlError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"Errors":{"description":"not_allowed_token_type","code":403}}`))
+		_, err := w.Write([]byte(`{"Errors":{"description":"not_allowed_token_type","code":403}}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -315,7 +324,8 @@ func TestPlanGateErrorMessage(t *testing.T) {
 	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(status)
-			w.Write([]byte(`{"Errors":{"description":"nope"}}`))
+			_, err := w.Write([]byte(`{"Errors":{"description":"nope"}}`))
+			require.NoError(t, err)
 		}))
 
 		p := New("test-token").WithBaseURL(server.URL)
@@ -331,7 +341,8 @@ func TestPlanGateErrorMessage(t *testing.T) {
 func TestNonPlanGateErrorStaysRaw(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
-		w.Write([]byte(`{"Errors":{"description":"ratelimited"}}`))
+		_, err := w.Write([]byte(`{"Errors":{"description":"ratelimited"}}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

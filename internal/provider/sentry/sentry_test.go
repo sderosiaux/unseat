@@ -32,13 +32,13 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/api/0/organizations/my-org/members/", r.URL.Path)
 
-		json.NewEncoder(w).Encode([]sentryUser{
+		require.NoError(t, json.NewEncoder(w).Encode([]sentryUser{
 			{ID: "1", Email: "alice@co.com", Name: "Alice", Role: "owner", User: &struct {
 				Email string `json:"email"`
 				Name  string `json:"name"`
 			}{Email: "alice@co.com", Name: "Alice A"}},
 			{ID: "2", Email: "bob@co.com", Name: "Bob", Role: "member", Pending: true},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -65,15 +65,15 @@ func TestListUsersPagination(t *testing.T) {
 		if callCount == 1 {
 			assert.Empty(t, r.URL.Query().Get("cursor"))
 			w.Header().Set("Link", `<http://example.com>; rel="previous"; results="false"; cursor="prev123", <http://example.com>; rel="next"; results="true"; cursor="next456"`)
-			json.NewEncoder(w).Encode([]sentryUser{
+			require.NoError(t, json.NewEncoder(w).Encode([]sentryUser{
 				{ID: "1", Email: "alice@co.com", Role: "member"},
-			})
+			}))
 		} else {
 			assert.Equal(t, "next456", r.URL.Query().Get("cursor"))
 			w.Header().Set("Link", `<http://example.com>; rel="previous"; results="true"; cursor="prev789", <http://example.com>; rel="next"; results="false"; cursor="next000"`)
-			json.NewEncoder(w).Encode([]sentryUser{
+			require.NoError(t, json.NewEncoder(w).Encode([]sentryUser{
 				{ID: "2", Email: "bob@co.com", Role: "admin"},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -92,9 +92,9 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode([]sentryUser{
+			require.NoError(t, json.NewEncoder(w).Encode([]sentryUser{
 				{ID: "42", Email: "alice@co.com", Role: "member"},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/api/0/organizations/my-org/members/42/", r.URL.Path)
@@ -112,7 +112,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]sentryUser{})
+		require.NoError(t, json.NewEncoder(w).Encode([]sentryUser{}))
 	}))
 	defer server.Close()
 
@@ -125,7 +125,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestListUsersAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"detail":"Authentication credentials were not provided."}`))
+		_, err := w.Write([]byte(`{"detail":"Authentication credentials were not provided."}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

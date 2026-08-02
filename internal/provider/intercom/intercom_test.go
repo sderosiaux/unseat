@@ -43,13 +43,14 @@ func TestListUsers(t *testing.T) {
 		// encoding our own intercomAdmin struct would have round-tripped both
 		// and hidden that the live API never sends them, exactly how
 		// last_request_at stayed invisible on three other connectors.
-		fmt.Fprint(w, `{
+		_, err := fmt.Fprint(w, `{
 		  "type": "admin.list",
 		  "admins": [
 		    {"type":"admin","id":"1","name":"Alice","email":"alice@co.com","job_title":"Support Lead","away_mode_enabled":false,"away_mode_reassign":false,"has_inbox_seat":true,"team_ids":[]},
 		    {"type":"admin","id":"2","name":"Bob","email":"bob@co.com","job_title":"","away_mode_enabled":true,"away_mode_reassign":false,"has_inbox_seat":true,"team_ids":[]}
 		  ]
 		}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -87,18 +88,19 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(adminsResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(adminsResponse{
 				Type: "admin.list",
 				Admins: []intercomAdmin{
 					{ID: "42", Name: "Alice", Email: "alice@co.com"},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodPut, r.Method)
 			assert.Equal(t, "/admins/42/away", r.URL.Path)
 			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{}`))
+			_, err := w.Write([]byte(`{}`))
+			require.NoError(t, err)
 		}
 	}))
 	defer server.Close()
@@ -111,7 +113,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(adminsResponse{Type: "admin.list", Admins: []intercomAdmin{}})
+		require.NoError(t, json.NewEncoder(w).Encode(adminsResponse{Type: "admin.list", Admins: []intercomAdmin{}}))
 	}))
 	defer server.Close()
 
@@ -124,7 +126,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestListUsersAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"type":"error.list","errors":[{"code":"token_unauthorized"}]}`))
+		_, err := w.Write([]byte(`{"type":"error.list","errors":[{"code":"token_unauthorized"}]}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

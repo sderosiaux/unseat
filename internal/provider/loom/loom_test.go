@@ -32,12 +32,12 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/v1/spaces/space-abc/members", r.URL.Path)
 
-		json.NewEncoder(w).Encode(loomListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(loomListResponse{
 			Members: []loomMember{
 				{ID: "m1", Email: "alice@co.com", DisplayName: "Alice Smith", Role: "admin", Status: "active"},
 				{ID: "m2", Email: "bob@co.com", DisplayName: "Bob Jones", Role: "member", Status: "active"},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -62,15 +62,15 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Empty(t, r.URL.Query().Get("page_token"))
-			json.NewEncoder(w).Encode(loomListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(loomListResponse{
 				Members:       []loomMember{{ID: "m1", Email: "u1@co.com", DisplayName: "User 1"}},
 				NextPageToken: "cursor-abc",
-			})
+			}))
 		} else {
 			assert.Equal(t, "cursor-abc", r.URL.Query().Get("page_token"))
-			json.NewEncoder(w).Encode(loomListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(loomListResponse{
 				Members: []loomMember{{ID: "m2", Email: "u2@co.com", DisplayName: "User 2"}},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -89,11 +89,11 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(loomListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(loomListResponse{
 				Members: []loomMember{
 					{ID: "m1", Email: "alice@co.com", DisplayName: "Alice"},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/v1/spaces/space-abc/members/m1", r.URL.Path)
@@ -111,7 +111,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(loomListResponse{Members: []loomMember{}})
+		require.NoError(t, json.NewEncoder(w).Encode(loomListResponse{Members: []loomMember{}}))
 	}))
 	defer server.Close()
 
@@ -124,7 +124,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"unauthorized"}`))
+		_, err := w.Write([]byte(`{"error":"unauthorized"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

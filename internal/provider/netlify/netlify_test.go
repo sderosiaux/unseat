@@ -33,10 +33,10 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/api/v1/my-team/members", r.URL.Path)
 
-		json.NewEncoder(w).Encode([]netlifyMember{
+		require.NoError(t, json.NewEncoder(w).Encode([]netlifyMember{
 			{ID: "m1", FullName: "Alice Smith", Email: "alice@co.com", Role: "Owner"},
 			{ID: "m2", FullName: "Bob Jones", Email: "bob@co.com", Role: "Collaborator"},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -70,12 +70,12 @@ func TestListUsersPagination(t *testing.T) {
 					Role:     "Collaborator",
 				}
 			}
-			json.NewEncoder(w).Encode(members)
+			require.NoError(t, json.NewEncoder(w).Encode(members))
 		} else {
 			assert.Equal(t, "2", r.URL.Query().Get("page"))
-			json.NewEncoder(w).Encode([]netlifyMember{
+			require.NoError(t, json.NewEncoder(w).Encode([]netlifyMember{
 				{ID: "m100", FullName: "User 100", Email: "u100@co.com", Role: "Collaborator"},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -92,9 +92,9 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode([]netlifyMember{
+			require.NoError(t, json.NewEncoder(w).Encode([]netlifyMember{
 				{ID: "m1", FullName: "Alice", Email: "alice@co.com", Role: "Collaborator"},
-			})
+			}))
 			return
 		}
 		assert.Equal(t, http.MethodDelete, r.Method)
@@ -112,7 +112,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]netlifyMember{})
+		require.NoError(t, json.NewEncoder(w).Encode([]netlifyMember{}))
 	}))
 	defer server.Close()
 
@@ -125,7 +125,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"code":403,"message":"Access denied"}`))
+		_, err := w.Write([]byte(`{"code":403,"message":"Access denied"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

@@ -32,13 +32,13 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/v3/teams/team-1/members", r.URL.Path)
 
-		json.NewEncoder(w).Encode(listMembersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(listMembersResponse{
 			Members: []vercelMember{
 				{UID: "u1", Email: "alice@co.com", Username: "alice", Name: "Alice Smith", Role: "OWNER", Confirmed: true, CreatedAt: 1700000000000},
 				{UID: "u2", Email: "bob@co.com", Username: "bob", Name: "Bob Jones", Role: "MEMBER", Confirmed: false, CreatedAt: 1700000001000},
 			},
 			Pagination: pagination{HasNext: false, Count: 2},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -64,21 +64,21 @@ func TestListUsersPagination(t *testing.T) {
 		if callCount == 1 {
 			assert.Empty(t, r.URL.Query().Get("until"))
 			next := int64(1700000001000)
-			json.NewEncoder(w).Encode(listMembersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listMembersResponse{
 				Members: []vercelMember{
 					{UID: "u1", Email: "u1@co.com", Username: "u1", Name: "User 1", Role: "MEMBER", Confirmed: true},
 					{UID: "u2", Email: "u2@co.com", Username: "u2", Name: "User 2", Role: "MEMBER", Confirmed: true},
 				},
 				Pagination: pagination{HasNext: true, Count: 2, Next: &next},
-			})
+			}))
 		} else {
 			assert.Equal(t, "1700000001000", r.URL.Query().Get("until"))
-			json.NewEncoder(w).Encode(listMembersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listMembersResponse{
 				Members: []vercelMember{
 					{UID: "u3", Email: "u3@co.com", Username: "u3", Name: "User 3", Role: "MEMBER", Confirmed: true},
 				},
 				Pagination: pagination{HasNext: false, Count: 1},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -97,12 +97,12 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(listMembersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listMembersResponse{
 				Members: []vercelMember{
 					{UID: "u1", Email: "alice@co.com", Username: "alice", Name: "Alice", Role: "MEMBER", Confirmed: true},
 				},
 				Pagination: pagination{HasNext: false, Count: 1},
-			})
+			}))
 			return
 		}
 
@@ -110,7 +110,7 @@ func TestRemoveUser(t *testing.T) {
 		assert.Equal(t, "/v1/teams/team-1/members/u1", r.URL.Path)
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"id": "team-1"})
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"id": "team-1"}))
 	}))
 	defer server.Close()
 
@@ -122,10 +122,10 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(listMembersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(listMembersResponse{
 			Members:    []vercelMember{},
 			Pagination: pagination{HasNext: false, Count: 0},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -138,7 +138,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error":{"code":"forbidden","message":"Not authorized"}}`))
+		_, err := w.Write([]byte(`{"error":{"code":"forbidden","message":"Not authorized"}}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

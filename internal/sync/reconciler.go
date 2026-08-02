@@ -127,7 +127,9 @@ func (r *Reconciler) reconcileProvider(ctx context.Context, name string, aliasIn
 	if err := r.store.UpsertProviderUsers(ctx, name, actualUsers); err != nil {
 		slog.Error("failed to cache users", "provider", name, "error", err)
 	}
-	r.store.UpdateSyncState(ctx, name, len(actualUsers), p.Capabilities().ReportsActivity)
+	if err := r.store.UpdateSyncState(ctx, name, len(actualUsers), p.Capabilities().ReportsActivity); err != nil {
+		slog.Error("failed to update sync state", "provider", name, "error", err)
+	}
 
 	// Build group mappings for this provider.
 	groupMappings := r.config.GroupsForProvider(name)
@@ -173,13 +175,15 @@ func (r *Reconciler) reconcileProvider(ctx context.Context, name string, aliasIn
 	}
 
 	// Log sync completed.
-	r.store.InsertEvent(ctx, core.Event{
+	if err := r.store.InsertEvent(ctx, core.Event{
 		Type:       core.EventSyncCompleted,
 		Provider:   name,
 		Details:    fmt.Sprintf("add=%d remove=%d unchanged=%d", len(plan.ToAdd), len(plan.ToRemove), plan.Unchanged),
 		Trigger:    "sync",
 		OccurredAt: time.Now(),
-	})
+	}); err != nil {
+		slog.Error("failed to insert sync event", "provider", name, "error", err)
+	}
 
 	return plan, nil
 }
@@ -195,15 +199,19 @@ func (r *Reconciler) executeActions(ctx context.Context, name string, p provider
 			slog.Error("add user failed", "provider", name, "email", ua.Email, "error", err)
 			continue
 		}
-		r.store.InsertEvent(ctx, core.Event{
+		if err := r.store.InsertEvent(ctx, core.Event{
 			Type: core.EventUserAdded, Provider: name, Email: ua.Email,
 			Trigger: "sync", OccurredAt: time.Now(),
-		})
+		}); err != nil {
+			slog.Error("failed to insert add event", "provider", name, "email", ua.Email, "error", err)
+		}
 	}
 
 	for _, ua := range plan.ToRemove {
 		if r.config.Policies.GracePeriod > 0 {
-			r.store.InsertPendingRemoval(ctx, name, ua.Email, time.Now().Add(r.config.Policies.GracePeriod))
+			if err := r.store.InsertPendingRemoval(ctx, name, ua.Email, time.Now().Add(r.config.Policies.GracePeriod)); err != nil {
+				slog.Error("failed to insert pending removal", "provider", name, "email", ua.Email, "error", err)
+			}
 			r.sendNotification(ctx, name, ua.Email, "pending_removal")
 			continue
 		}
@@ -223,10 +231,12 @@ func (r *Reconciler) removeSeat(ctx context.Context, name string, p provider.Pro
 		slog.Error("remove user failed", "provider", name, "email", email, "target", target, "error", err)
 		return
 	}
-	r.store.InsertEvent(ctx, core.Event{
+	if err := r.store.InsertEvent(ctx, core.Event{
 		Type: core.EventUserRemoved, Provider: name, Email: email,
 		Trigger: "sync", OccurredAt: time.Now(),
-	})
+	}); err != nil {
+		slog.Error("failed to insert removal event", "provider", name, "email", email, "error", err)
+	}
 	r.sendNotification(ctx, name, email, "removed")
 }
 

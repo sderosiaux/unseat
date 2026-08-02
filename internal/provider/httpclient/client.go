@@ -267,7 +267,7 @@ func (c *Client) DoJSON(ctx context.Context, provider string, req *http.Request,
 	if err != nil {
 		return fmt.Errorf("%s: %w", provider, err)
 	}
-	defer resp.Body.Close()
+	defer drainAndClose(resp.Body)
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
@@ -280,7 +280,6 @@ func (c *Client) DoJSON(ctx context.Context, provider string, req *http.Request,
 	}
 
 	if out == nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
 

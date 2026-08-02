@@ -32,21 +32,22 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/enterpriseapi.php", r.URL.Path)
 
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		var req apiRequest
-		json.Unmarshal(body, &req)
+		require.NoError(t, json.Unmarshal(body, &req))
 		assert.Equal(t, "test-cid", req.CID)
 		assert.Equal(t, "test-hash", req.ProvHash)
 		assert.Equal(t, "getuserdata", req.Cmd)
 
-		json.NewEncoder(w).Encode(getUserDataResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(getUserDataResponse{
 			Users: map[string]userData{
 				"101": {UserName: "alice@co.com", FullName: "Alice Smith", Admin: true, Disabled: false},
 				"102": {UserName: "bob@co.com", FullName: "Bob Jones", Admin: false, Disabled: true},
 				"103": {UserName: "carol@co.com", FullName: "Carol White", Admin: false, Invited: true},
 			},
 			Total: 3,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -73,16 +74,17 @@ func TestRemoveUser(t *testing.T) {
 		assert.Equal(t, http.MethodPost, r.Method)
 		assert.Equal(t, "/enterpriseapi.php", r.URL.Path)
 
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
 		var req apiRequest
-		json.Unmarshal(body, &req)
+		require.NoError(t, json.Unmarshal(body, &req))
 		assert.Equal(t, "deluser", req.Cmd)
 
 		dataMap, ok := req.Data.(map[string]any)
 		require.True(t, ok)
 		assert.Equal(t, "alice@co.com", dataMap["username"])
 
-		json.NewEncoder(w).Encode(map[string]string{"status": "OK"})
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"status": "OK"}))
 	}))
 	defer server.Close()
 
@@ -93,7 +95,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"status": "FAIL"})
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"status": "FAIL"}))
 	}))
 	defer server.Close()
 
@@ -106,7 +108,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error":"invalid provisioning hash"}`))
+		_, err := w.Write([]byte(`{"error":"invalid provisioning hash"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

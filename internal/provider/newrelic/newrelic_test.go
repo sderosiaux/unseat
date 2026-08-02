@@ -35,14 +35,14 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "/v2/users.json", r.URL.Path)
 
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []newrelicUser{
 					{ID: 1001, Email: "alice@co.com", Name: "Alice", Last: "Smith", Role: "admin"},
 					{ID: 1002, Email: "bob@co.com", Name: "Bob", Last: "Jones", Role: "user"},
 				},
-			})
+			}))
 		} else {
-			json.NewEncoder(w).Encode(listUsersResponse{Users: []newrelicUser{}})
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{Users: []newrelicUser{}}))
 		}
 	}))
 	defer server.Close()
@@ -66,24 +66,25 @@ func TestListUsersPagination(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		if callCount == 1 {
+		switch callCount {
+		case 1:
 			assert.Equal(t, "1", r.URL.Query().Get("page"))
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []newrelicUser{
 					{ID: 1, Email: "u1@co.com", Name: "User", Last: "1", Role: "user"},
 					{ID: 2, Email: "u2@co.com", Name: "User", Last: "2", Role: "user"},
 				},
-			})
-		} else if callCount == 2 {
+			}))
+		case 2:
 			assert.Equal(t, "2", r.URL.Query().Get("page"))
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []newrelicUser{
 					{ID: 3, Email: "u3@co.com", Name: "User", Last: "3", Role: "user"},
 				},
-			})
-		} else {
+			}))
+		default:
 			assert.Equal(t, "3", r.URL.Query().Get("page"))
-			json.NewEncoder(w).Encode(listUsersResponse{Users: []newrelicUser{}})
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{Users: []newrelicUser{}}))
 		}
 	}))
 	defer server.Close()
@@ -103,13 +104,13 @@ func TestRemoveUser(t *testing.T) {
 		callCount++
 		if r.Method == http.MethodGet {
 			if callCount == 1 {
-				json.NewEncoder(w).Encode(listUsersResponse{
+				require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 					Users: []newrelicUser{
 						{ID: 1001, Email: "alice@co.com", Name: "Alice", Last: "Smith", Role: "user"},
 					},
-				})
+				}))
 			} else {
-				json.NewEncoder(w).Encode(listUsersResponse{Users: []newrelicUser{}})
+				require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{Users: []newrelicUser{}}))
 			}
 			return
 		}
@@ -129,7 +130,7 @@ func TestRemoveUserNotFound(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		json.NewEncoder(w).Encode(listUsersResponse{Users: []newrelicUser{}})
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{Users: []newrelicUser{}}))
 	}))
 	defer server.Close()
 
@@ -142,7 +143,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error":{"title":"Forbidden"}}`))
+		_, err := w.Write([]byte(`{"error":{"title":"Forbidden"}}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

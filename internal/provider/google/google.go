@@ -56,12 +56,13 @@ func New(ctx context.Context, credentialsFile, domain string, opts ...Option) (*
 	var svc *admin.Service
 	var err error
 
+	data, readErr := os.ReadFile(credentialsFile)
+	if readErr != nil {
+		return nil, fmt.Errorf("read credentials: %w", readErr)
+	}
+
 	if o.adminEmail != "" {
 		// Domain-wide delegation: impersonate an admin user.
-		data, readErr := os.ReadFile(credentialsFile)
-		if readErr != nil {
-			return nil, fmt.Errorf("read credentials: %w", readErr)
-		}
 		conf, jwtErr := google.JWTConfigFromJSON(data, scopesFor(o.allowWrite)...)
 		if jwtErr != nil {
 			return nil, fmt.Errorf("parse credentials: %w", jwtErr)
@@ -70,7 +71,7 @@ func New(ctx context.Context, credentialsFile, domain string, opts ...Option) (*
 		client := conf.Client(ctx)
 		svc, err = admin.NewService(ctx, option.WithHTTPClient(client))
 	} else {
-		svc, err = admin.NewService(ctx, option.WithCredentialsFile(credentialsFile))
+		svc, err = admin.NewService(ctx, option.WithAuthCredentialsJSON(option.ServiceAccount, data))
 	}
 
 	if err != nil {

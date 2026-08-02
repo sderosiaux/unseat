@@ -32,7 +32,7 @@ func TestListUsersFiltersOnlyClaudeCodeUsers(t *testing.T) {
 		assert.Equal(t, "2023-06-01", r.Header.Get("anthropic-version"))
 		assert.Equal(t, "/v1/organizations/users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(apiListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(apiListResponse{
 			Data: []apiUser{
 				{ID: "user_abc123", Email: "alice@co.com", Name: "Alice Smith", Role: "claude_code_user", AddedAt: "2025-01-15T10:00:00Z"},
 				{ID: "user_def456", Email: "bob@co.com", Name: "Bob Jones", Role: "developer", AddedAt: "2025-02-10T10:00:00Z"},
@@ -42,7 +42,7 @@ func TestListUsersFiltersOnlyClaudeCodeUsers(t *testing.T) {
 			HasMore: false,
 			FirstID: "user_abc123",
 			LastID:  "user_jkl012",
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -65,13 +65,13 @@ func TestListUsersFiltersOnlyClaudeCodeUsers(t *testing.T) {
 
 func TestListUsersEmptyWhenNoClaudeCodeUsers(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(apiListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(apiListResponse{
 			Data: []apiUser{
 				{ID: "user_1", Email: "dev@co.com", Name: "Dev", Role: "developer"},
 				{ID: "user_2", Email: "admin@co.com", Name: "Admin", Role: "admin"},
 			},
 			HasMore: false,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -87,24 +87,24 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Empty(t, r.URL.Query().Get("after_id"))
-			json.NewEncoder(w).Encode(apiListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(apiListResponse{
 				Data: []apiUser{
 					{ID: "user_1", Email: "dev@co.com", Name: "Dev", Role: "developer"},
 					{ID: "user_2", Email: "alice@co.com", Name: "Alice", Role: "claude_code_user"},
 				},
 				HasMore: true,
 				LastID:  "user_2",
-			})
+			}))
 		} else {
 			assert.Equal(t, "user_2", r.URL.Query().Get("after_id"))
-			json.NewEncoder(w).Encode(apiListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(apiListResponse{
 				Data: []apiUser{
 					{ID: "user_3", Email: "bob@co.com", Name: "Bob", Role: "claude_code_user"},
 					{ID: "user_4", Email: "admin@co.com", Name: "Admin", Role: "admin"},
 				},
 				HasMore: false,
 				LastID:  "user_4",
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -124,15 +124,16 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 
-		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(apiListResponse{
+		switch r.Method {
+		case http.MethodGet:
+			require.NoError(t, json.NewEncoder(w).Encode(apiListResponse{
 				Data: []apiUser{
 					{ID: "user_cc1", Email: "alice@co.com", Name: "Alice", Role: "claude_code_user"},
 					{ID: "user_dev1", Email: "bob@co.com", Name: "Bob", Role: "developer"},
 				},
 				HasMore: false,
-			})
-		} else if r.Method == http.MethodDelete {
+			}))
+		case http.MethodDelete:
 			assert.Equal(t, "/v1/organizations/users/user_cc1", r.URL.Path)
 			w.WriteHeader(http.StatusNoContent)
 		}
@@ -151,12 +152,12 @@ func TestRemoveUser(t *testing.T) {
 func TestRemoveUserNotFoundWrongRole(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// User exists in org but is a developer, not a claude_code_user
-		json.NewEncoder(w).Encode(apiListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(apiListResponse{
 			Data: []apiUser{
 				{ID: "user_dev1", Email: "bob@co.com", Name: "Bob", Role: "developer"},
 			},
 			HasMore: false,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -168,10 +169,10 @@ func TestRemoveUserNotFoundWrongRole(t *testing.T) {
 
 func TestRemoveUserNotFoundAtAll(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(apiListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(apiListResponse{
 			Data:    []apiUser{},
 			HasMore: false,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -184,12 +185,12 @@ func TestRemoveUserNotFoundAtAll(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		json.NewEncoder(w).Encode(map[string]any{
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 			"error": map[string]any{
 				"type":    "authentication_error",
 				"message": "invalid api key",
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 

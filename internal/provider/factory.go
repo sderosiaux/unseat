@@ -282,12 +282,6 @@ func buildProvider(name string, pcfg config.ProviderConfig) (Provider, error) {
 	}
 }
 
-// optBase is a helper that applies WithBaseURL if baseURL is non-empty.
-// It uses an interface to avoid repeating the pattern for every provider.
-type withBaseURL interface {
-	WithBaseURL(string)
-}
-
 // We use a generic approach since each provider's WithBaseURL returns its own *Provider type.
 func optBase[T interface{ WithBaseURL(string) T }](p T, baseURL string) T {
 	if baseURL != "" {

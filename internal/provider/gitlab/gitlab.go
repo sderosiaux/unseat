@@ -80,7 +80,10 @@ func (p *Provider) listPage(ctx context.Context, url string) ([]apiUser, string,
 	if err != nil {
 		return nil, "", fmt.Errorf("gitlab: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))

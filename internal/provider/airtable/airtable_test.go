@@ -32,12 +32,12 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/v0/meta/enterpriseAccount/ent123/users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(airtableListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(airtableListResponse{
 			Users: []airtableUser{
 				{ID: "usr1", Email: "alice@co.com", Name: "Alice Smith", State: "active"},
 				{ID: "usr2", Email: "bob@co.com", Name: "Bob Jones", State: "deactivated"},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -62,20 +62,20 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Empty(t, r.URL.Query().Get("offset"))
-			json.NewEncoder(w).Encode(airtableListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(airtableListResponse{
 				Users: []airtableUser{
 					{ID: "usr1", Email: "u1@co.com", Name: "User 1", State: "active"},
 					{ID: "usr2", Email: "u2@co.com", Name: "User 2", State: "active"},
 				},
 				Offset: "page2cursor",
-			})
+			}))
 		} else {
 			assert.Equal(t, "page2cursor", r.URL.Query().Get("offset"))
-			json.NewEncoder(w).Encode(airtableListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(airtableListResponse{
 				Users: []airtableUser{
 					{ID: "usr3", Email: "u3@co.com", Name: "User 3", State: "active"},
 				},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -95,11 +95,11 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(airtableListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(airtableListResponse{
 				Users: []airtableUser{
 					{ID: "usr1", Email: "alice@co.com", Name: "Alice", State: "active"},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/v0/meta/enterpriseAccount/ent123/users/usr1", r.URL.Path)
@@ -117,9 +117,9 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(airtableListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(airtableListResponse{
 			Users: []airtableUser{},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -132,7 +132,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error":"AUTHENTICATION_REQUIRED"}`))
+		_, err := w.Write([]byte(`{"error":"AUTHENTICATION_REQUIRED"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

@@ -43,7 +43,7 @@ func TestListUsers(t *testing.T) {
 		// freshdeskAgent. Marshalling our own struct round-trips perfectly and
 		// would hide a misplaced field — which is exactly how `active` and
 		// `last_login_at` sat on the wrong struct without a test noticing.
-		fmt.Fprint(w, `[
+		_, err := fmt.Fprint(w, `[
 		  {"id":100,"occasional":false,"available":true,
 		   "contact":{"name":"Alice Smith","email":"alice@co.com","active":true,"last_login_at":"2025-02-28T15:00:00Z"}},
 		  {"id":200,"occasional":true,"available":false,
@@ -51,6 +51,7 @@ func TestListUsers(t *testing.T) {
 		  {"id":300,"occasional":false,"available":false,
 		   "contact":{"name":"Carol Diaz","email":"carol@co.com","active":false}}
 		]`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -85,7 +86,8 @@ func TestListUsers(t *testing.T) {
 // as suspended, which reconciliation reads as "already deprovisioned".
 func TestListUsersMissingActiveDefaultsToActive(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `[{"id":1,"available":true,"contact":{"name":"Dana","email":"dana@co.com"}}]`)
+		_, err := fmt.Fprint(w, `[{"id":1,"available":true,"contact":{"name":"Dana","email":"dana@co.com"}}]`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -109,12 +111,12 @@ func TestListUsersPagination(t *testing.T) {
 					Available: true,
 				}
 			}
-			json.NewEncoder(w).Encode(agents)
+			require.NoError(t, json.NewEncoder(w).Encode(agents))
 		} else {
 			assert.Equal(t, "2", r.URL.Query().Get("page"))
-			json.NewEncoder(w).Encode([]freshdeskAgent{
+			require.NoError(t, json.NewEncoder(w).Encode([]freshdeskAgent{
 				{ID: 101, Contact: freshdeskContact{Email: "last@co.com", Name: "Last User"}, Available: true},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -131,9 +133,9 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode([]freshdeskAgent{
+			require.NoError(t, json.NewEncoder(w).Encode([]freshdeskAgent{
 				{ID: 42, Contact: freshdeskContact{Email: "alice@co.com", Name: "Alice"}, Available: true},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/api/v2/agents/42", r.URL.Path)
@@ -154,7 +156,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]freshdeskAgent{})
+		require.NoError(t, json.NewEncoder(w).Encode([]freshdeskAgent{}))
 	}))
 	defer server.Close()
 
@@ -167,7 +169,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestListUsersAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"code":"invalid_credentials","message":"You have to be logged in to perform this action."}`))
+		_, err := w.Write([]byte(`{"code":"invalid_credentials","message":"You have to be logged in to perform this action."}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

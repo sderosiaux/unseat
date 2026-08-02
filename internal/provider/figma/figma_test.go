@@ -32,14 +32,14 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/Users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(scimListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 			Schemas:      []string{"urn:ietf:params:scim:api:messages:2.0:ListResponse"},
 			TotalResults: 2,
 			Resources: []scimUser{
 				{ID: "1001", UserName: "alice@co.com", DisplayName: "Alice Smith", Active: true, Emails: []scimEmail{{Value: "alice@co.com", Primary: true}}, Title: "Designer"},
 				{ID: "1002", UserName: "bob@co.com", DisplayName: "Bob Jones", Active: false, Emails: []scimEmail{{Value: "bob@co.com", Primary: true}}, Title: "Engineer"},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -65,20 +65,20 @@ func TestListUsersPagination(t *testing.T) {
 		startIndex := r.URL.Query().Get("startIndex")
 
 		if startIndex == "" || startIndex == "1" {
-			json.NewEncoder(w).Encode(scimListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 				TotalResults: 3,
 				Resources: []scimUser{
 					{ID: "1", UserName: "a@co.com", DisplayName: "A", Active: true, Emails: []scimEmail{{Value: "a@co.com", Primary: true}}},
 					{ID: "2", UserName: "b@co.com", DisplayName: "B", Active: true, Emails: []scimEmail{{Value: "b@co.com", Primary: true}}},
 				},
-			})
+			}))
 		} else {
-			json.NewEncoder(w).Encode(scimListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 				TotalResults: 3,
 				Resources: []scimUser{
 					{ID: "3", UserName: "c@co.com", DisplayName: "C", Active: true, Emails: []scimEmail{{Value: "c@co.com", Primary: true}}},
 				},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -97,15 +97,15 @@ func TestListUsersStalledPagination(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.URL.Query().Get("startIndex") == "1" {
-			json.NewEncoder(w).Encode(scimListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 				TotalResults: 10,
 				Resources: []scimUser{
 					{ID: "1", UserName: "a@co.com", DisplayName: "A", Active: true},
 				},
-			})
+			}))
 			return
 		}
-		json.NewEncoder(w).Encode(scimListResponse{TotalResults: 10, Resources: []scimUser{}})
+		require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{TotalResults: 10, Resources: []scimUser{}}))
 	}))
 	defer server.Close()
 
@@ -122,12 +122,12 @@ func TestRemoveUser(t *testing.T) {
 		callCount++
 
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(scimListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 				TotalResults: 1,
 				Resources: []scimUser{
 					{ID: "u42", UserName: "alice@co.com", DisplayName: "Alice", Active: true, Emails: []scimEmail{{Value: "alice@co.com", Primary: true}}},
 				},
-			})
+			}))
 			return
 		}
 
@@ -136,12 +136,12 @@ func TestRemoveUser(t *testing.T) {
 		assert.Equal(t, "/Users/u42", r.URL.Path)
 
 		var body scimPatchOp
-		json.NewDecoder(r.Body).Decode(&body)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		require.Len(t, body.Operations, 1)
 		assert.Equal(t, "replace", body.Operations[0].Op)
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"id": "u42", "active": false})
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": "u42", "active": false}))
 	}))
 	defer server.Close()
 
@@ -153,7 +153,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(scimListResponse{TotalResults: 0, Resources: []scimUser{}})
+		require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{TotalResults: 0, Resources: []scimUser{}}))
 	}))
 	defer server.Close()
 
@@ -166,7 +166,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		fmt.Fprint(w, `{"detail":"Invalid token"}`)
+		_, err := fmt.Fprint(w, `{"detail":"Invalid token"}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

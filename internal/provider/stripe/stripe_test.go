@@ -33,7 +33,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/scim/v2/Users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(scimListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 			Resources: []scimUser{
 				{
 					ID:          "usr_1",
@@ -53,7 +53,7 @@ func TestListUsers(t *testing.T) {
 			TotalResults: 2,
 			ItemsPerPage: 100,
 			StartIndex:   1,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -78,7 +78,7 @@ func TestListUsers_Pagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "1", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(scimListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 				Resources: []scimUser{
 					{ID: "U1", DisplayName: "User 1", Emails: []scimEmail{{Value: "u1@co.com", Primary: true}}, Active: true},
 					{ID: "U2", DisplayName: "User 2", Emails: []scimEmail{{Value: "u2@co.com", Primary: true}}, Active: true},
@@ -86,17 +86,17 @@ func TestListUsers_Pagination(t *testing.T) {
 				TotalResults: 3,
 				ItemsPerPage: 2,
 				StartIndex:   1,
-			})
+			}))
 		} else {
 			assert.Equal(t, "3", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(scimListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 				Resources: []scimUser{
 					{ID: "U3", DisplayName: "User 3", Emails: []scimEmail{{Value: "u3@co.com", Primary: true}}, Active: true},
 				},
 				TotalResults: 3,
 				ItemsPerPage: 2,
 				StartIndex:   3,
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -133,7 +133,7 @@ func TestAddUser(t *testing.T) {
 		assert.Contains(t, req.Schemas, "urn:ietf:params:scim:schemas:core:2.0:User")
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]string{"id": "usr_new"})
+		require.NoError(t, json.NewEncoder(w).Encode(map[string]string{"id": "usr_new"}))
 	}))
 	defer server.Close()
 
@@ -147,14 +147,14 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(scimListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 				Resources: []scimUser{
 					{ID: "usr_123", DisplayName: "Alice", Emails: []scimEmail{{Value: "alice@co.com", Primary: true}}, Active: true},
 				},
 				TotalResults: 1,
 				ItemsPerPage: 100,
 				StartIndex:   1,
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/scim/v2/Users/usr_123", r.URL.Path)
@@ -180,7 +180,8 @@ func TestSetRoleNotSupported(t *testing.T) {
 func TestListUsers_Error(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"detail":"invalid token"}`))
+		_, err := w.Write([]byte(`{"detail":"invalid token"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

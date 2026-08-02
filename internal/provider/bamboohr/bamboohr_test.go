@@ -35,12 +35,12 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, http.MethodGet, r.Method)
 		assert.Equal(t, "/api/gateway.php/acme/v1/employees/directory", r.URL.Path)
 
-		json.NewEncoder(w).Encode(directoryResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(directoryResponse{
 			Employees: []directoryEmployee{
 				{ID: "101", DisplayName: "Alice Smith", WorkEmail: "alice@co.com", JobTitle: "Engineer"},
 				{ID: "102", DisplayName: "Bob Jones", WorkEmail: "bob@co.com", JobTitle: "Designer"},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -64,11 +64,11 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(directoryResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(directoryResponse{
 				Employees: []directoryEmployee{
 					{ID: "101", DisplayName: "Alice", WorkEmail: "alice@co.com"},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodPost, r.Method)
 			assert.Equal(t, "/api/gateway.php/acme/v1/employees/101", r.URL.Path)
@@ -89,9 +89,9 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(directoryResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(directoryResponse{
 			Employees: []directoryEmployee{},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -104,7 +104,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"message":"Unauthorized"}`))
+		_, err := w.Write([]byte(`{"message":"Unauthorized"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

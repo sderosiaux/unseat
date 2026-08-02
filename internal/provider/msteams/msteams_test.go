@@ -34,7 +34,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "/v1.0/users", r.URL.Path)
 		assert.Contains(t, r.URL.Query().Get("$filter"), teamsServicePlanID)
 
-		json.NewEncoder(w).Encode(graphListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(graphListResponse{
 			Value: []graphUser{
 				{
 					ID:                "t-001",
@@ -51,7 +51,7 @@ func TestListUsers(t *testing.T) {
 					AccountEnabled:    false,
 				},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -76,19 +76,19 @@ func TestListUsersPagination(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(graphListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(graphListResponse{
 				Value: []graphUser{
 					{ID: "1", DisplayName: "User 1", Mail: "u1@co.com", AccountEnabled: true},
 					{ID: "2", DisplayName: "User 2", Mail: "u2@co.com", AccountEnabled: true},
 				},
 				NextLink: serverURL + "/v1.0/users?$skiptoken=page2",
-			})
+			}))
 		} else {
-			json.NewEncoder(w).Encode(graphListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(graphListResponse{
 				Value: []graphUser{
 					{ID: "3", DisplayName: "User 3", Mail: "u3@co.com", AccountEnabled: true},
 				},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -106,11 +106,11 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(graphListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(graphListResponse{
 				Value: []graphUser{
 					{ID: "t-001", DisplayName: "Alice", Mail: "alice@co.com", AccountEnabled: true},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/v1.0/users/t-001", r.URL.Path)
@@ -128,7 +128,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(graphListResponse{Value: []graphUser{}})
+		require.NoError(t, json.NewEncoder(w).Encode(graphListResponse{Value: []graphUser{}}))
 	}))
 	defer server.Close()
 
@@ -141,7 +141,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":{"code":"InvalidAuthenticationToken","message":"token expired"}}`))
+		_, err := w.Write([]byte(`{"error":{"code":"InvalidAuthenticationToken","message":"token expired"}}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

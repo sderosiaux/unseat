@@ -33,14 +33,14 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/v2/users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(usersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 			Items: []brexUser{
 				{ID: "b1", FirstName: "Alice", LastName: "Smith", Email: "alice@co.com", Status: "ACTIVE"},
 				{ID: "b2", FirstName: "Bob", LastName: "Jones", Email: "bob@co.com", Status: "INVITED"},
 				{ID: "b3", FirstName: "Carol", LastName: "White", Email: "carol@co.com", Status: "DISABLED"},
 			},
 			NextCursor: nil,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -68,20 +68,20 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Empty(t, r.URL.Query().Get("cursor"))
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				Items: []brexUser{
 					{ID: "b1", FirstName: "Alice", LastName: "Smith", Email: "alice@co.com", Status: "ACTIVE"},
 				},
 				NextCursor: &nextCur,
-			})
+			}))
 		} else {
 			assert.Equal(t, "page2cursor", r.URL.Query().Get("cursor"))
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				Items: []brexUser{
 					{ID: "b2", FirstName: "Bob", LastName: "Jones", Email: "bob@co.com", Status: "ACTIVE"},
 				},
 				NextCursor: nil,
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -100,12 +100,12 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				Items: []brexUser{
 					{ID: "b1", FirstName: "Alice", LastName: "Smith", Email: "alice@co.com", Status: "ACTIVE"},
 				},
 				NextCursor: nil,
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodPut, r.Method)
 			assert.Equal(t, "/v2/users/b1/status", r.URL.Path)
@@ -117,7 +117,8 @@ func TestRemoveUser(t *testing.T) {
 			assert.Equal(t, "DISABLED", status.Status)
 
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"status":"DISABLED"}`))
+			_, err = w.Write([]byte(`{"status":"DISABLED"}`))
+			require.NoError(t, err)
 		}
 	}))
 	defer server.Close()
@@ -130,10 +131,10 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(usersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 			Items:      []brexUser{},
 			NextCursor: nil,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -146,7 +147,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestListUsersAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"unauthorized"}`))
+		_, err := w.Write([]byte(`{"error":"unauthorized"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

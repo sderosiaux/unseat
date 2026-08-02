@@ -37,7 +37,8 @@ func get(t *testing.T, url string) *http.Request {
 
 func TestDoJSONDecodesSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"name":"alice"}`)
+		_, err := fmt.Fprint(w, `{"name":"alice"}`)
+		require.NoError(t, err)
 	}))
 	defer srv.Close()
 
@@ -52,7 +53,8 @@ func TestDoJSONDecodesSuccess(t *testing.T) {
 func TestDoJSONReturnsAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		fmt.Fprint(w, `{"error":"plan does not include SCIM"}`)
+		_, err := fmt.Fprint(w, `{"error":"plan does not include SCIM"}`)
+		require.NoError(t, err)
 	}))
 	defer srv.Close()
 
@@ -76,7 +78,8 @@ func TestRetriesOn429ForAnyMethod(t *testing.T) {
 					w.WriteHeader(http.StatusTooManyRequests)
 					return
 				}
-				fmt.Fprint(w, `{}`)
+				_, err := fmt.Fprint(w, `{}`)
+				require.NoError(t, err)
 			}))
 			defer srv.Close()
 
@@ -118,7 +121,8 @@ func TestRetries5xxOnGet(t *testing.T) {
 			w.WriteHeader(http.StatusBadGateway)
 			return
 		}
-		fmt.Fprint(w, `{}`)
+		_, err := fmt.Fprint(w, `{}`)
+		require.NoError(t, err)
 	}))
 	defer srv.Close()
 
@@ -149,7 +153,8 @@ func TestHonoursRetryAfterHeader(t *testing.T) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
-		fmt.Fprint(w, `{}`)
+		_, err := fmt.Fprint(w, `{}`)
+		require.NoError(t, err)
 	}))
 	defer srv.Close()
 
@@ -167,7 +172,8 @@ func TestRetryAfterIsCapped(t *testing.T) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
-		fmt.Fprint(w, `{}`)
+		_, err := fmt.Fprint(w, `{}`)
+		require.NoError(t, err)
 	}))
 	defer srv.Close()
 
@@ -188,7 +194,8 @@ func TestRetryReplaysRequestBody(t *testing.T) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
-		fmt.Fprint(w, `{}`)
+		_, err := fmt.Fprint(w, `{}`)
+		require.NoError(t, err)
 	}))
 	defer srv.Close()
 

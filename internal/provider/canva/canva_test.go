@@ -38,7 +38,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Equal(t, "/_scim/v2/Users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(scimListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 			TotalResults: 3,
 			StartIndex:   1,
 			ItemsPerPage: 10,
@@ -66,7 +66,7 @@ func TestListUsers(t *testing.T) {
 					Active:   false,
 				},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -106,10 +106,10 @@ func TestListUsersPagination(t *testing.T) {
 		assert.Equal(t, "10", r.URL.Query().Get("count"))
 		if callCount == 1 {
 			assert.Equal(t, "1", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(page(1, 10, 12))
+			require.NoError(t, json.NewEncoder(w).Encode(page(1, 10, 12)))
 		} else {
 			assert.Equal(t, "11", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(page(11, 2, 12))
+			require.NoError(t, json.NewEncoder(w).Encode(page(11, 2, 12)))
 		}
 	}))
 	defer server.Close()
@@ -132,10 +132,10 @@ func TestListUsersShortPage(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "1", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(page(1, 3, 5))
+			require.NoError(t, json.NewEncoder(w).Encode(page(1, 3, 5)))
 		} else {
 			assert.Equal(t, "4", r.URL.Query().Get("startIndex"))
-			json.NewEncoder(w).Encode(page(4, 2, 5))
+			require.NoError(t, json.NewEncoder(w).Encode(page(4, 2, 5)))
 		}
 	}))
 	defer server.Close()
@@ -154,9 +154,9 @@ func TestListUsersStalledPagination(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(page(1, 1, 50))
+			require.NoError(t, json.NewEncoder(w).Encode(page(1, 1, 50)))
 		} else {
-			json.NewEncoder(w).Encode(scimListResponse{TotalResults: 50, StartIndex: 2, Resources: []scimUser{}})
+			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{TotalResults: 50, StartIndex: 2, Resources: []scimUser{}}))
 		}
 	}))
 	defer server.Close()
@@ -173,14 +173,14 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(scimListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 				TotalResults: 1,
 				StartIndex:   1,
 				ItemsPerPage: 10,
 				Resources: []scimUser{
 					{ID: "s1", UserName: "alice@co.com", Emails: []scimEmail{{Value: "alice@co.com"}}, Active: true},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/_scim/v2/Users/s1", r.URL.Path)
@@ -197,12 +197,12 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(scimListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
 			TotalResults: 0,
 			StartIndex:   1,
 			ItemsPerPage: 10,
 			Resources:    []scimUser{},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -215,7 +215,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestListUsersAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"detail":"Invalid token"}`))
+		_, err := w.Write([]byte(`{"detail":"Invalid token"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

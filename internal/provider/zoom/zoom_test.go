@@ -35,14 +35,14 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "active", r.URL.Query().Get("status"))
 		assert.Equal(t, "300", r.URL.Query().Get("page_size"))
 
-		json.NewEncoder(w).Encode(zoomListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(zoomListResponse{
 			PageSize:      300,
 			NextPageToken: "",
 			Users: []zoomUser{
 				{ID: "abc123", Email: "alice@co.com", DisplayName: "Alice Smith", Type: 1, Status: "active", RoleName: "admin", LastLoginTime: "2025-01-30T07:00:00Z"},
 				{ID: "def456", Email: "bob@co.com", FirstName: "Bob", LastName: "Jones", Type: 2, Status: "active"},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -71,22 +71,22 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Empty(t, r.URL.Query().Get("next_page_token"))
-			json.NewEncoder(w).Encode(zoomListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(zoomListResponse{
 				PageSize:      300,
 				NextPageToken: "page2token",
 				Users: []zoomUser{
 					{ID: "U1", Email: "u1@co.com", DisplayName: "User 1"},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, "page2token", r.URL.Query().Get("next_page_token"))
-			json.NewEncoder(w).Encode(zoomListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(zoomListResponse{
 				PageSize:      300,
 				NextPageToken: "",
 				Users: []zoomUser{
 					{ID: "U2", Email: "u2@co.com", DisplayName: "User 2"},
 				},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -105,11 +105,11 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(zoomListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(zoomListResponse{
 				Users: []zoomUser{
 					{ID: "abc123", Email: "alice@co.com", DisplayName: "Alice"},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/v2/users/abc123", r.URL.Path)
@@ -128,7 +128,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(zoomListResponse{Users: []zoomUser{}})
+		require.NoError(t, json.NewEncoder(w).Encode(zoomListResponse{Users: []zoomUser{}}))
 	}))
 	defer server.Close()
 
@@ -141,7 +141,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"code":124,"message":"Invalid access token"}`))
+		_, err := w.Write([]byte(`{"code":124,"message":"Invalid access token"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

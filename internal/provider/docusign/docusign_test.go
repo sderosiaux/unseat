@@ -34,7 +34,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "0", r.URL.Query().Get("start"))
 		assert.Equal(t, "100", r.URL.Query().Get("take"))
 
-		json.NewEncoder(w).Encode(usersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 			Users: []dsUser{
 				{ID: "u1", UserName: "Alice Smith", Email: "alice@co.com", UserStatus: "active"},
 				{ID: "u2", UserName: "Bob Jones", Email: "bob@co.com", UserStatus: "active"},
@@ -45,7 +45,7 @@ func TestListUsers(t *testing.T) {
 				ResultSetStartPosition int `json:"result_set_start_position"`
 				TotalSetSize           int `json:"total_set_size"`
 			}{ResultSetSize: 3, ResultSetStartPosition: 0, TotalSetSize: 3},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -69,7 +69,7 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "0", r.URL.Query().Get("start"))
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				Users: []dsUser{
 					{ID: "u1", UserName: "Alice", Email: "alice@co.com", UserStatus: "active"},
 				},
@@ -78,10 +78,10 @@ func TestListUsersPagination(t *testing.T) {
 					ResultSetStartPosition int `json:"result_set_start_position"`
 					TotalSetSize           int `json:"total_set_size"`
 				}{ResultSetSize: 1, ResultSetStartPosition: 0, TotalSetSize: 200},
-			})
+			}))
 		} else {
 			assert.Equal(t, "100", r.URL.Query().Get("start"))
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				Users: []dsUser{
 					{ID: "u2", UserName: "Bob", Email: "bob@co.com", UserStatus: "active"},
 				},
@@ -90,7 +90,7 @@ func TestListUsersPagination(t *testing.T) {
 					ResultSetStartPosition int `json:"result_set_start_position"`
 					TotalSetSize           int `json:"total_set_size"`
 				}{ResultSetSize: 1, ResultSetStartPosition: 100, TotalSetSize: 200},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -109,7 +109,7 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				Users: []dsUser{
 					{ID: "u1", UserName: "Alice", Email: "alice@co.com", UserStatus: "active"},
 				},
@@ -118,7 +118,7 @@ func TestRemoveUser(t *testing.T) {
 					ResultSetStartPosition int `json:"result_set_start_position"`
 					TotalSetSize           int `json:"total_set_size"`
 				}{ResultSetSize: 1, ResultSetStartPosition: 0, TotalSetSize: 1},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/v2/organizations/org-123/users/u1/profiles", r.URL.Path)
@@ -135,14 +135,14 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(usersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 			Users: []dsUser{},
 			Paging: struct {
 				ResultSetSize          int `json:"result_set_size"`
 				ResultSetStartPosition int `json:"result_set_start_position"`
 				TotalSetSize           int `json:"total_set_size"`
 			}{ResultSetSize: 0, ResultSetStartPosition: 0, TotalSetSize: 0},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -155,7 +155,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestListUsersAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"invalid_token"}`))
+		_, err := w.Write([]byte(`{"error":"invalid_token"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

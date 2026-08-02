@@ -33,13 +33,13 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "/api/1.0/workspaces/ws-123/users", r.URL.Path)
 		assert.Equal(t, "email,name,resource_type", r.URL.Query().Get("opt_fields"))
 
-		json.NewEncoder(w).Encode(listUsersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 			Data: []asanaUser{
 				{GID: "100", Name: "Alice Smith", Email: "alice@co.com", ResourceType: "user"},
 				{GID: "200", Name: "Bob Jones", Email: "bob@co.com", ResourceType: "user"},
 			},
 			NextPage: nil,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -64,21 +64,21 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Empty(t, r.URL.Query().Get("offset"))
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Data: []asanaUser{
 					{GID: "1", Name: "User 1", Email: "u1@co.com"},
 					{GID: "2", Name: "User 2", Email: "u2@co.com"},
 				},
 				NextPage: &nextPage{Offset: "eyJ0eXAi"},
-			})
+			}))
 		} else {
 			assert.Equal(t, "eyJ0eXAi", r.URL.Query().Get("offset"))
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Data: []asanaUser{
 					{GID: "3", Name: "User 3", Email: "u3@co.com"},
 				},
 				NextPage: nil,
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -97,11 +97,11 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Data: []asanaUser{
 					{GID: "100", Name: "Alice", Email: "alice@co.com"},
 				},
-			})
+			}))
 			return
 		}
 
@@ -110,7 +110,7 @@ func TestRemoveUser(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
 		var body map[string]map[string]string
-		json.NewDecoder(r.Body).Decode(&body)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
 		assert.Equal(t, "100", body["data"]["user"])
 
 		w.WriteHeader(http.StatusNoContent)
@@ -125,7 +125,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(listUsersResponse{Data: []asanaUser{}})
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{Data: []asanaUser{}}))
 	}))
 	defer server.Close()
 
@@ -138,7 +138,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"errors":[{"message":"Not authorized"}]}`))
+		_, err := w.Write([]byte(`{"errors":[{"message":"Not authorized"}]}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

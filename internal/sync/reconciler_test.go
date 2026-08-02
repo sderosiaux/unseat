@@ -105,7 +105,7 @@ func TestReconcilerFullSync(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -155,7 +155,7 @@ func TestReconcilerDryRun(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -198,7 +198,7 @@ func TestReconcilerGracePeriod(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -247,7 +247,7 @@ func TestReconcilerExceptions(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -296,7 +296,7 @@ func TestReconcilerNeverRemovesActiveEmployee(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -343,7 +343,7 @@ func TestReconcilerRemovesSuspendedDirectoryUser(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -386,7 +386,7 @@ func TestReconcilerDirectoryFailureAbortsRun(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -430,7 +430,7 @@ func TestReconcilerExternalSeatGoesToReview(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -473,7 +473,7 @@ func TestReconcilerUnresolvedUsernameGoesToReview(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -516,7 +516,7 @@ func TestReconcilerAliasResolvesToDirectoryIdentity(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -551,7 +551,7 @@ func TestReconcilerSkipsUnregisteredProvider(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -592,7 +592,7 @@ func TestReconcilerMultipleProviders(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -631,7 +631,7 @@ func TestReconcilerSyncStateUpdated(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},
@@ -681,7 +681,7 @@ func TestReconcilerNotifiesOnRemoval(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	var notifyCount atomic.Int32
 	srv := newSlackMock(t, &notifyCount)
@@ -726,7 +726,7 @@ func TestReconcilerNotifiesOnPendingRemoval(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	var notifyCount atomic.Int32
 	srv := newSlackMock(t, &notifyCount)
@@ -774,7 +774,7 @@ func TestReconcilerNoNotificationWhenDisabled(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	var notifyCount atomic.Int32
 	srv := newSlackMock(t, &notifyCount)
@@ -819,7 +819,7 @@ func TestReconcilerNilNotifierSafe(t *testing.T) {
 
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)
-	defer db.Close()
+	defer func() { require.NoError(t, db.Close()) }()
 
 	cfg := &config.Config{
 		IdentitySource: config.IdentitySource{Domain: "co.com"},

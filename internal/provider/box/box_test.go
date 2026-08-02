@@ -36,7 +36,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "100", r.URL.Query().Get("limit"))
 		assert.Equal(t, "0", r.URL.Query().Get("offset"))
 
-		json.NewEncoder(w).Encode(boxListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(boxListResponse{
 			TotalCount: 2,
 			Limit:      100,
 			Offset:     0,
@@ -44,7 +44,7 @@ func TestListUsers(t *testing.T) {
 				{ID: "11111", Type: "user", Name: "Alice Smith", Login: "alice@co.com", Role: "admin", Status: "active", ModifiedAt: "2025-03-01T20:00:00Z"},
 				{ID: "22222", Type: "user", Name: "Bob Jones", Login: "bob@co.com", Role: "user", Status: "active"},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -72,7 +72,7 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "0", r.URL.Query().Get("offset"))
-			json.NewEncoder(w).Encode(boxListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(boxListResponse{
 				TotalCount: 150,
 				Limit:      100,
 				Offset:     0,
@@ -83,10 +83,10 @@ func TestListUsersPagination(t *testing.T) {
 					}
 					return users
 				}(),
-			})
+			}))
 		} else {
 			assert.Equal(t, "100", r.URL.Query().Get("offset"))
-			json.NewEncoder(w).Encode(boxListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(boxListResponse{
 				TotalCount: 150,
 				Limit:      100,
 				Offset:     100,
@@ -97,7 +97,7 @@ func TestListUsersPagination(t *testing.T) {
 					}
 					return users
 				}(),
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -116,14 +116,14 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(boxListResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(boxListResponse{
 				TotalCount: 1,
 				Limit:      100,
 				Offset:     0,
 				Entries: []boxUser{
 					{ID: "11111", Name: "Alice", Login: "alice@co.com", Role: "user", Status: "active"},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/2.0/users/11111", r.URL.Path)
@@ -141,12 +141,12 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(boxListResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(boxListResponse{
 			TotalCount: 0,
 			Limit:      100,
 			Offset:     0,
 			Entries:    []boxUser{},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -159,7 +159,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"type":"error","status":401,"message":"Unauthorized"}`))
+		_, err := w.Write([]byte(`{"type":"error","status":401,"message":"Unauthorized"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

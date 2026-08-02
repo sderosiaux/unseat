@@ -31,7 +31,7 @@ func runHistoryEvents(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	events, err := db.ListEvents(cmd.Context(), store.EventFilter{Limit: eventsLimit})
 	if err != nil {

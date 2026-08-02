@@ -35,7 +35,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Contains(t, r.URL.Path, "/services/data/v59.0/query")
 
-		json.NewEncoder(w).Encode(queryResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(queryResponse{
 			Done:      true,
 			TotalSize: 2,
 			Records: []sfUser{
@@ -46,7 +46,7 @@ func TestListUsers(t *testing.T) {
 					Name string `json:"Name"`
 				}{Name: "Standard User"}},
 			},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -73,23 +73,23 @@ func TestListUsersPagination(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(queryResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(queryResponse{
 				Done:      false,
 				TotalSize: 2,
 				Records: []sfUser{
 					{ID: "001A", Name: "Alice", Email: "alice@co.com", IsActive: true},
 				},
 				NextRecordsURL: "/services/data/v59.0/query/01gxx-2000",
-			})
+			}))
 		} else {
 			assert.Equal(t, "/services/data/v59.0/query/01gxx-2000", r.URL.Path)
-			json.NewEncoder(w).Encode(queryResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(queryResponse{
 				Done:      true,
 				TotalSize: 2,
 				Records: []sfUser{
 					{ID: "001B", Name: "Bob", Email: "bob@co.com", IsActive: true},
 				},
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -108,20 +108,21 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(queryResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(queryResponse{
 				Done: true,
 				Records: []sfUser{
 					{ID: "001A", Email: "alice@co.com", IsActive: true},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodPatch, r.Method)
 			assert.Equal(t, "/services/data/v59.0/sobjects/User/001A", r.URL.Path)
 			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
-			body, _ := io.ReadAll(r.Body)
+			body, err := io.ReadAll(r.Body)
+			require.NoError(t, err)
 			var payload map[string]bool
-			json.Unmarshal(body, &payload)
+			require.NoError(t, json.Unmarshal(body, &payload))
 			assert.Equal(t, false, payload["IsActive"])
 
 			w.WriteHeader(http.StatusNoContent)
@@ -137,7 +138,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(queryResponse{Done: true, Records: []sfUser{}})
+		require.NoError(t, json.NewEncoder(w).Encode(queryResponse{Done: true, Records: []sfUser{}}))
 	}))
 	defer server.Close()
 
@@ -150,7 +151,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestListUsersAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`[{"message":"Session expired","errorCode":"INVALID_SESSION_ID"}]`))
+		_, err := w.Write([]byte(`[{"message":"Session expired","errorCode":"INVALID_SESSION_ID"}]`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 
@@ -195,10 +197,11 @@ func TestParseSalesforceTimeAcceptsSOQLFormat(t *testing.T) {
 
 func TestListUsersParsesSOQLLastLogin(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"done":true,"totalSize":1,"records":[
+		_, err := fmt.Fprint(w, `{"done":true,"totalSize":1,"records":[
 		  {"Id":"005x","Name":"Alice","Email":"alice@co.com","IsActive":true,
 		   "LastLoginDate":"2024-01-15T10:30:00.000+0000"}
 		]}`)
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

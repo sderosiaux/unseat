@@ -33,7 +33,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 		assert.Contains(t, r.URL.Path, "/api/v2/users")
 
-		json.NewEncoder(w).Encode(usersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 			Users: []zendeskUser{
 				{ID: 100, Name: "Alice Smith", Email: "alice@co.com", Role: "admin", Active: true, LastLoginAt: "2025-01-25T18:00:00Z"},
 				{ID: 200, Name: "Bob Jones", Email: "bob@co.com", Role: "agent", Active: false},
@@ -42,7 +42,7 @@ func TestListUsers(t *testing.T) {
 				HasMore     bool   `json:"has_more"`
 				AfterCursor string `json:"after_cursor"`
 			}{HasMore: false},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -71,7 +71,7 @@ func TestListUsersPagination(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				Users: []zendeskUser{
 					{ID: 100, Name: "Alice", Email: "alice@co.com", Role: "admin", Active: true},
 				},
@@ -82,9 +82,9 @@ func TestListUsersPagination(t *testing.T) {
 				Links: struct {
 					Next string `json:"next"`
 				}{Next: serverURL + "/api/v2/users?page[after]=abc123&page[size]=100"},
-			})
+			}))
 		} else {
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				Users: []zendeskUser{
 					{ID: 200, Name: "Bob", Email: "bob@co.com", Role: "agent", Active: true},
 				},
@@ -92,7 +92,7 @@ func TestListUsersPagination(t *testing.T) {
 					HasMore     bool   `json:"has_more"`
 					AfterCursor string `json:"after_cursor"`
 				}{HasMore: false},
-			})
+			}))
 		}
 	}))
 	serverURL = server.URL
@@ -112,17 +112,18 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			json.NewEncoder(w).Encode(usersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(usersResponse{
 				Users: []zendeskUser{
 					{ID: 42, Email: "alice@co.com", Role: "agent", Active: true},
 				},
-			})
+			}))
 		} else {
 			assert.Equal(t, http.MethodDelete, r.Method)
 			assert.Equal(t, "/api/v2/users/42", r.URL.Path)
 			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"user":{"id":42,"active":false}}`))
+			_, err := w.Write([]byte(`{"user":{"id":42,"active":false}}`))
+			require.NoError(t, err)
 		}
 	}))
 	defer server.Close()
@@ -135,7 +136,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(usersResponse{Users: []zendeskUser{}})
+		require.NoError(t, json.NewEncoder(w).Encode(usersResponse{Users: []zendeskUser{}}))
 	}))
 	defer server.Close()
 
@@ -148,7 +149,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestListUsersAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"Couldn't authenticate you"}`))
+		_, err := w.Write([]byte(`{"error":"Couldn't authenticate you"}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

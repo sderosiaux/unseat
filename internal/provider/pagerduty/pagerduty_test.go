@@ -32,7 +32,7 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "Token token=test-key", r.Header.Get("Authorization"))
 		assert.Equal(t, "/users", r.URL.Path)
 
-		json.NewEncoder(w).Encode(listUsersResponse{
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 			Users: []pagerdutyUser{
 				{ID: "P1", Name: "Alice Smith", Email: "alice@co.com", Role: "admin"},
 				{ID: "P2", Name: "Bob Jones", Email: "bob@co.com", Role: "user"},
@@ -41,7 +41,7 @@ func TestListUsers(t *testing.T) {
 			Offset: 0,
 			Limit:  100,
 			Total:  2,
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -66,7 +66,7 @@ func TestListUsersPagination(t *testing.T) {
 		callCount++
 		if callCount == 1 {
 			assert.Equal(t, "0", r.URL.Query().Get("offset"))
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []pagerdutyUser{
 					{ID: "P1", Name: "User 1", Email: "u1@co.com", Role: "user"},
 					{ID: "P2", Name: "User 2", Email: "u2@co.com", Role: "user"},
@@ -75,10 +75,10 @@ func TestListUsersPagination(t *testing.T) {
 				Offset: 0,
 				Limit:  100,
 				Total:  3,
-			})
+			}))
 		} else {
 			assert.Equal(t, "100", r.URL.Query().Get("offset"))
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []pagerdutyUser{
 					{ID: "P3", Name: "User 3", Email: "u3@co.com", Role: "user"},
 				},
@@ -86,7 +86,7 @@ func TestListUsersPagination(t *testing.T) {
 				Offset: 100,
 				Limit:  100,
 				Total:  3,
-			})
+			}))
 		}
 	}))
 	defer server.Close()
@@ -105,12 +105,12 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode(listUsersResponse{
+			require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{
 				Users: []pagerdutyUser{
 					{ID: "P1", Name: "Alice", Email: "alice@co.com", Role: "user"},
 				},
 				More: false,
-			})
+			}))
 			return
 		}
 		assert.Equal(t, http.MethodDelete, r.Method)
@@ -128,7 +128,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(listUsersResponse{Users: []pagerdutyUser{}, More: false})
+		require.NoError(t, json.NewEncoder(w).Encode(listUsersResponse{Users: []pagerdutyUser{}, More: false}))
 	}))
 	defer server.Close()
 
@@ -141,7 +141,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":{"message":"Invalid API key"}}`))
+		_, err := w.Write([]byte(`{"error":{"message":"Invalid API key"}}`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

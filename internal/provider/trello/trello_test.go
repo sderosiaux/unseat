@@ -34,10 +34,10 @@ func TestListUsers(t *testing.T) {
 		assert.Equal(t, "api-token", r.URL.Query().Get("token"))
 		assert.Equal(t, "fullName,username,email", r.URL.Query().Get("fields"))
 
-		json.NewEncoder(w).Encode([]trelloMember{
+		require.NoError(t, json.NewEncoder(w).Encode([]trelloMember{
 			{ID: "m1", FullName: "Alice Smith", Username: "alicesmith", Email: "alice@co.com"},
 			{ID: "m2", FullName: "Bob Jones", Username: "bobjones", Email: "bob@co.com"},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -58,9 +58,9 @@ func TestListUsers(t *testing.T) {
 
 func TestListUsersNoEmail(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]trelloMember{
+		require.NoError(t, json.NewEncoder(w).Encode([]trelloMember{
 			{ID: "m1", FullName: "Private User", Username: "privateuser", Email: ""},
-		})
+		}))
 	}))
 	defer server.Close()
 
@@ -77,9 +77,9 @@ func TestRemoveUser(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if r.Method == http.MethodGet {
-			json.NewEncoder(w).Encode([]trelloMember{
+			require.NoError(t, json.NewEncoder(w).Encode([]trelloMember{
 				{ID: "m1", FullName: "Alice", Username: "alice", Email: "alice@co.com"},
-			})
+			}))
 			return
 		}
 
@@ -99,7 +99,7 @@ func TestRemoveUser(t *testing.T) {
 
 func TestRemoveUserNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]trelloMember{})
+		require.NoError(t, json.NewEncoder(w).Encode([]trelloMember{}))
 	}))
 	defer server.Close()
 
@@ -112,7 +112,8 @@ func TestRemoveUserNotFound(t *testing.T) {
 func TestAPIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`invalid key`))
+		_, err := w.Write([]byte(`invalid key`))
+		require.NoError(t, err)
 	}))
 	defer server.Close()
 

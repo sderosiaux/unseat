@@ -1002,6 +1002,51 @@ func (s *SQLite) RejectDecision(ctx context.Context, id, rejector, reason string
 	return &decision, nil
 }
 
+func (s *SQLite) MarkDecisionExecuted(ctx context.Context, id, actor string) (*core.Decision, error) {
+	if actor == "" {
+		actor = "system"
+	}
+	return s.transitionDecision(ctx, id, actor, "", core.DecisionApproved, core.DecisionExecuted, "executed")
+}
+
+func (s *SQLite) MarkDecisionVerified(ctx context.Context, id, actor string) (*core.Decision, error) {
+	if actor == "" {
+		actor = "system"
+	}
+	return s.transitionDecision(ctx, id, actor, "", core.DecisionExecuted, core.DecisionVerified, "verified")
+}
+
+func (s *SQLite) transitionDecision(ctx context.Context, id, actor, reason string, from, to core.DecisionStatus, eventType string) (*core.Decision, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	decision, hash, found, err := getDecisionTx(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("decision %q not found", id)
+	}
+	if decision.Status != from {
+		return nil, fmt.Errorf("decision %q is %s, not %s", id, decision.Status, from)
+	}
+	decision.Status = to
+	now := time.Now().UTC()
+	if err := upsertDecisionTx(ctx, tx, decision, hash, now); err != nil {
+		return nil, err
+	}
+	if err := insertDecisionEventTx(ctx, tx, decision, eventType, from, to, actor, reason, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &decision, nil
+}
+
 // --- Provider Credentials ---
 
 func (s *SQLite) UpsertProviderCredentials(ctx context.Context, provider string, credentials []core.ClassifiedCredential) error {

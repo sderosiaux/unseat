@@ -412,6 +412,30 @@ func TestDecisionUpsertMarksApprovedDecisionStaleWhenRecommendationChanges(t *te
 	assert.Equal(t, core.DecisionStale, events[0].ToStatus)
 }
 
+func TestDecisionLedgerExecutedAndVerifiedTransitions(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	decision := core.NewDecision("alice@co.com", "github", core.ObjectWorkspaceMember, "alice@co.com", core.ActionRemoveWorkspaceMember, core.DecisionRiskHigh, "directory identity is suspended")
+	require.NoError(t, s.UpsertDecisions(ctx, []core.Decision{decision}))
+	_, err := s.ApproveDecision(ctx, decision.ID, "sre@co.com")
+	require.NoError(t, err)
+
+	executed, err := s.MarkDecisionExecuted(ctx, decision.ID, "enforce")
+	require.NoError(t, err)
+	assert.Equal(t, core.DecisionExecuted, executed.Status)
+
+	verified, err := s.MarkDecisionVerified(ctx, decision.ID, "recheck")
+	require.NoError(t, err)
+	assert.Equal(t, core.DecisionVerified, verified.Status)
+
+	events, err := s.ListDecisionEvents(ctx, decision.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 4)
+	assert.Equal(t, "verified", events[0].EventType)
+	assert.Equal(t, "executed", events[1].EventType)
+}
+
 func TestProviderCredentialsRoundTripAndReplace(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

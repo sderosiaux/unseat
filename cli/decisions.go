@@ -34,6 +34,13 @@ var decisionsRejectCmd = &cobra.Command{
 	RunE:  runDecisionsReject,
 }
 
+var decisionsAttestOwnerCmd = &cobra.Command{
+	Use:   "attest-owner <decision-id>",
+	Short: "Record a named owner for a non-human identity decision",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runDecisionsAttestOwner,
+}
+
 var (
 	decisionsProvider string
 	decisionsSubject  string
@@ -41,6 +48,8 @@ var (
 	decisionsLimit    int
 	decisionActor     string
 	rejectReason      string
+	attestedOwner     string
+	attestReason      string
 )
 
 func init() {
@@ -52,8 +61,11 @@ func init() {
 	decisionsApproveCmd.Flags().StringVar(&decisionActor, "by", "cli", "Approver identity recorded in the ledger")
 	decisionsRejectCmd.Flags().StringVar(&decisionActor, "by", "cli", "Rejector identity recorded in the ledger")
 	decisionsRejectCmd.Flags().StringVar(&rejectReason, "reason", "", "Reason to store with the rejection")
+	decisionsAttestOwnerCmd.Flags().StringVar(&decisionActor, "by", "cli", "Actor identity recorded in the ledger")
+	decisionsAttestOwnerCmd.Flags().StringVar(&attestedOwner, "owner", "", "Owner identity to attach to the non-human identity")
+	decisionsAttestOwnerCmd.Flags().StringVar(&attestReason, "reason", "", "Reason or context for the attestation")
 
-	decisionsCmd.AddCommand(decisionsListCmd, decisionsApproveCmd, decisionsRejectCmd)
+	decisionsCmd.AddCommand(decisionsListCmd, decisionsApproveCmd, decisionsRejectCmd, decisionsAttestOwnerCmd)
 	rootCmd.AddCommand(decisionsCmd)
 }
 
@@ -130,6 +142,24 @@ func runDecisionsReject(cmd *cobra.Command, args []string) error {
 		return printJSON(decision)
 	}
 	fmt.Printf("Rejected %s by %s: %s\n", decision.ID, decision.RejectedBy, decision.RejectedReason)
+	return nil
+}
+
+func runDecisionsAttestOwner(cmd *cobra.Command, args []string) error {
+	db, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+
+	decision, err := db.AttestOwner(cmd.Context(), args[0], attestedOwner, decisionActor, attestReason)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return printJSON(decision)
+	}
+	fmt.Printf("Attested owner %s for %s by %s.\n", decision.Metadata["attested_owner"], decision.ID, decision.Metadata["attested_by"])
 	return nil
 }
 

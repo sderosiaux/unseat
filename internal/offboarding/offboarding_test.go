@@ -167,6 +167,58 @@ func TestRunObserveKeepsCredentialReadFailuresAsProviderLimits(t *testing.T) {
 	assert.Zero(t, github.writeCalls)
 }
 
+func TestRunObserveTurnsUnownedCredentialIntoOwnerAttestationDecision(t *testing.T) {
+	ctx := context.Background()
+	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Provider: "google-directory", Domain: "co.com"},
+		Domain:         "co.com",
+		Providers: map[string]config.ProviderConfig{
+			"github": {APIKey: "token"},
+		},
+	}
+	identity := &fakeIdentity{users: []core.User{{Email: "alice@co.com", Status: core.StatusSuspended}}}
+	github := &fakeFullProvider{
+		name:  "github",
+		users: []core.User{{Email: "alice@co.com", Status: core.StatusActive}},
+		caps:  core.Capabilities{CanRemove: true},
+		credentials: []core.Credential{{
+			Provider: "github",
+			Kind:     core.CredentialDeployKey,
+			ID:       "key-1",
+			Label:    "deploy key",
+		}},
+	}
+	reg := provider.NewRegistry()
+	reg.Register(github)
+
+	cert, err := RunObserve(ctx, Input{
+		Config:   cfg,
+		Registry: reg,
+		Identity: identity,
+		Subject:  "alice@co.com",
+		Now:      time.Date(2026, 8, 2, 10, 30, 0, 0, time.UTC),
+	})
+
+	require.NoError(t, err)
+	require.Len(t, cert.Providers, 1)
+	require.Len(t, cert.Providers[0].Credentials, 1)
+	require.Len(t, cert.Providers[0].NonHumanIdentities, 1)
+	assert.True(t, cert.Providers[0].NonHumanIdentities[0].OwnerRequired)
+	require.Contains(t, decisionActions(cert.Decisions), core.ActionRequestOwnerAttestation)
+	var attestation core.Decision
+	for _, decision := range cert.Decisions {
+		if decision.ActionClass == core.ActionRequestOwnerAttestation {
+			attestation = decision
+			break
+		}
+	}
+	assert.Equal(t, core.ObjectCredential, attestation.ObjectKind)
+	assert.Equal(t, "key-1", attestation.ObjectID)
+	assert.Equal(t, "provider_unowned", attestation.Metadata["attestation_scope"])
+	assert.Contains(t, attestation.RequiredEvidence, "owner_attestation")
+	assert.Zero(t, github.writeCalls)
+}
+
 func decisionActions(decisions []core.Decision) []core.ActionClass {
 	out := make([]core.ActionClass, 0, len(decisions))
 	for _, d := range decisions {

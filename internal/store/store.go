@@ -31,6 +31,7 @@ type Store interface {
 	ListDecisionEvents(ctx context.Context, decisionID string) ([]DecisionEvent, error)
 	ApproveDecision(ctx context.Context, id, approver string) (*core.Decision, error)
 	RejectDecision(ctx context.Context, id, rejector, reason string) (*core.Decision, error)
+	AttestOwner(ctx context.Context, id, owner, actor, reason string) (*core.Decision, error)
 	MarkDecisionExecuted(ctx context.Context, id, actor string) (*core.Decision, error)
 	MarkDecisionVerified(ctx context.Context, id, actor string) (*core.Decision, error)
 	UpsertOffboardingCertificate(ctx context.Context, certificate core.OffboardingCertificate) error

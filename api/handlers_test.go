@@ -239,6 +239,25 @@ func TestHandleApproveAndRejectDecision(t *testing.T) {
 	assert.Equal(t, "keep during migration", rejected.RejectedReason)
 }
 
+func TestHandleAttestOwnerDecision(t *testing.T) {
+	srv, db := setupTestServer(t)
+	ctx := context.Background()
+	decision := core.NewDecision("alice@co.com", "github", core.ObjectCredential, "app-1", core.ActionRequestOwnerAttestation, core.DecisionRiskHigh, "owner required")
+	require.NoError(t, db.UpsertDecisions(ctx, []core.Decision{decision}))
+
+	req := httptest.NewRequest("POST", "/api/v1/decisions/"+decision.ID+"/attest-owner", bytes.NewBufferString(`{"owner":"platform@co.com","by":"sre@co.com","reason":"deploy automation"}`))
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var attested core.Decision
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &attested))
+	assert.Equal(t, core.DecisionVerified, attested.Status)
+	assert.Equal(t, "platform@co.com", attested.Metadata["attested_owner"])
+	assert.Equal(t, "sre@co.com", attested.Metadata["attested_by"])
+	assert.Equal(t, "deploy automation", attested.Metadata["attestation_reason"])
+}
+
 func TestHandleOffboardingCertificates(t *testing.T) {
 	srv, db := setupTestServer(t)
 	cert := core.OffboardingCertificate{

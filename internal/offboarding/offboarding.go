@@ -174,8 +174,7 @@ func RunObserve(ctx context.Context, in Input) (*core.OffboardingCertificate, er
 	}
 
 	sortCertificate(&cert)
-	partitionDecisionViews(&cert)
-	cert.Status = core.ComputeCertificateStatus(cert)
+	core.RefreshCertificateDecisionViews(&cert)
 	return &cert, nil
 }
 
@@ -360,6 +359,7 @@ func providerCredentials(subject core.CanonicalIdentity, inv providerInventory, 
 		switch {
 		case owner == "" && cred.Class == core.CredentialUnowned:
 			unowned++
+			out = append(out, cred)
 		case subject.Matches(owner):
 			out = append(out, cred)
 		case subject.AmbiguousMatch(owner):
@@ -477,23 +477,6 @@ func billingEvidenceLimits(b *core.Billing) []string {
 		reason = "provider API did not expose price"
 	}
 	return []string{reason}
-}
-
-func partitionDecisionViews(cert *core.OffboardingCertificate) {
-	for _, decision := range cert.Decisions {
-		switch {
-		case decision.Status == core.DecisionVerified:
-			if decision.ActionClass == core.ActionTransferOwnership || decision.ActionClass == core.ActionRequestOwnerAttestation {
-				cert.TransferredResponsibility = append(cert.TransferredResponsibility, decision)
-			} else {
-				cert.ClosedAccess = append(cert.ClosedAccess, decision)
-			}
-		case decision.Status == core.DecisionBlocked || decision.ActionClass == core.ActionMarkUnsupported:
-			cert.UnsupportedActions = append(cert.UnsupportedActions, decision)
-		default:
-			cert.PendingReviews = append(cert.PendingReviews, decision)
-		}
-	}
 }
 
 func sortCertificate(cert *core.OffboardingCertificate) {

@@ -74,6 +74,7 @@ type certificateInput struct {
 
 type decisionMutationInput struct {
 	ID     string `json:"id" jsonschema:"decision id"`
+	Owner  string `json:"owner,omitempty" jsonschema:"owner identity recorded for attest_owner"`
 	By     string `json:"by,omitempty" jsonschema:"actor recorded in the local decision ledger"`
 	Reason string `json:"reason,omitempty" jsonschema:"required rejection reason for reject_decision"`
 }
@@ -237,6 +238,11 @@ func (s *MCPServer) registerTools() {
 		Name:        "reject_decision",
 		Description: "Reject a proposed or approved decision with a reason. This does not mutate any provider.",
 	}, s.handleRejectDecision)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "attest_owner",
+		Description: "Record the owner for a non-human identity owner-attestation decision. This verifies the decision with human evidence and does not mutate any provider.",
+	}, s.handleAttestOwner)
 
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "list_offboarding_certificates",
@@ -481,6 +487,14 @@ func (s *MCPServer) handleApproveDecision(ctx context.Context, _ *mcp.CallToolRe
 
 func (s *MCPServer) handleRejectDecision(ctx context.Context, _ *mcp.CallToolRequest, input decisionMutationInput) (*mcp.CallToolResult, decisionOutput, error) {
 	decision, err := s.store.RejectDecision(ctx, input.ID, strings.TrimSpace(input.By), input.Reason)
+	if err != nil {
+		return nil, decisionOutput{}, err
+	}
+	return nil, decisionOutput{Decision: decision}, nil
+}
+
+func (s *MCPServer) handleAttestOwner(ctx context.Context, _ *mcp.CallToolRequest, input decisionMutationInput) (*mcp.CallToolResult, decisionOutput, error) {
+	decision, err := s.store.AttestOwner(ctx, input.ID, input.Owner, strings.TrimSpace(input.By), input.Reason)
 	if err != nil {
 		return nil, decisionOutput{}, err
 	}

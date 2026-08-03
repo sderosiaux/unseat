@@ -145,13 +145,31 @@ func BuildDecisions(in DecisionInput) []Decision {
 			continue
 		}
 		d := NewDecision(subject, cred.Credential.Provider, ObjectCredential, cred.Credential.ID, action, risk, cred.Reason)
+		if action == ActionRequestOwnerAttestation {
+			d.RequiredEvidence = []string{"owner_attestation"}
+			if d.Metadata == nil {
+				d.Metadata = map[string]string{}
+			}
+			if cred.Class == CredentialUnowned {
+				d.Metadata["attestation_scope"] = "provider_unowned"
+			}
+			if cred.Credential.Label != "" {
+				d.Metadata["credential_label"] = cred.Credential.Label
+			}
+			if cred.Credential.Kind != "" {
+				d.Metadata["credential_kind"] = string(cred.Credential.Kind)
+			}
+		}
 		if action == ActionRevokeCredential {
 			d.BlockedBy = []string{"credential_revocation_not_automated"}
 			d.Status = DecisionBlocked
 		}
 		if cred.Overreaching {
 			d.Risk = DecisionRiskCritical
-			d.Metadata = map[string]string{"reach_reason": cred.ReachReason}
+			if d.Metadata == nil {
+				d.Metadata = map[string]string{}
+			}
+			d.Metadata["reach_reason"] = cred.ReachReason
 		}
 		decisions = append(decisions, d)
 	}

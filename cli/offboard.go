@@ -12,6 +12,7 @@ import (
 	"github.com/sderosiaux/unseat/internal/core"
 	"github.com/sderosiaux/unseat/internal/offboarding"
 	"github.com/sderosiaux/unseat/internal/provider"
+	"github.com/sderosiaux/unseat/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -95,10 +96,27 @@ func persistOffboardingResult(ctx context.Context, cert *core.OffboardingCertifi
 		return err
 	}
 	defer func() { _ = db.Close() }()
-	if err := db.UpsertOffboardingCertificate(ctx, *cert); err != nil {
+	if err := db.UpsertDecisions(ctx, cert.Decisions); err != nil {
 		return err
 	}
-	return db.UpsertDecisions(ctx, cert.Decisions)
+	if err := hydrateCertificateDecisions(ctx, db, cert); err != nil {
+		return err
+	}
+	return db.UpsertOffboardingCertificate(ctx, *cert)
+}
+
+func hydrateCertificateDecisions(ctx context.Context, db store.Store, cert *core.OffboardingCertificate) error {
+	for i := range cert.Decisions {
+		stored, err := db.GetDecision(ctx, cert.Decisions[i].ID)
+		if err != nil {
+			return err
+		}
+		if stored != nil {
+			cert.Decisions[i] = *stored
+		}
+	}
+	core.RefreshCertificateDecisionViews(cert)
+	return nil
 }
 
 func writeOffboardingCertificate(cert *core.OffboardingCertificate, dir string) (string, error) {

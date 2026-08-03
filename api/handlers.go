@@ -164,6 +164,7 @@ func (s *Server) handleCredentialsSummary(w http.ResponseWriter, r *http.Request
 }
 
 type decisionMutationRequest struct {
+	Owner  string `json:"owner"`
 	By     string `json:"by"`
 	Reason string `json:"reason"`
 }
@@ -214,6 +215,20 @@ func (s *Server) handleRejectDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	decision, err := s.store.RejectDecision(r.Context(), chi.URLParam(r, "id"), body.By, body.Reason)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, decision)
+}
+
+func (s *Server) handleAttestOwnerDecision(w http.ResponseWriter, r *http.Request) {
+	body, err := readDecisionMutationRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	decision, err := s.store.AttestOwner(r.Context(), chi.URLParam(r, "id"), body.Owner, body.By, body.Reason)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -318,6 +333,7 @@ func readDecisionMutationRequest(r *http.Request) (decisionMutationRequest, erro
 		return decisionMutationRequest{}, err
 	}
 	body.By = strings.TrimSpace(body.By)
+	body.Owner = strings.TrimSpace(body.Owner)
 	body.Reason = strings.TrimSpace(body.Reason)
 	return body, nil
 }

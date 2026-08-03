@@ -51,6 +51,29 @@ type OffboardingCertificate struct {
 	Unknowns                  []string                    `json:"unknowns,omitempty"`
 }
 
+func RefreshCertificateDecisionViews(c *OffboardingCertificate) {
+	c.ClosedAccess = nil
+	c.TransferredResponsibility = nil
+	c.PendingReviews = nil
+	c.UnsupportedActions = nil
+
+	for _, decision := range c.Decisions {
+		switch {
+		case decision.Status == DecisionVerified:
+			if decision.ActionClass == ActionTransferOwnership || decision.ActionClass == ActionRequestOwnerAttestation {
+				c.TransferredResponsibility = append(c.TransferredResponsibility, decision)
+			} else {
+				c.ClosedAccess = append(c.ClosedAccess, decision)
+			}
+		case decision.Status == DecisionBlocked || decision.ActionClass == ActionMarkUnsupported:
+			c.UnsupportedActions = append(c.UnsupportedActions, decision)
+		default:
+			c.PendingReviews = append(c.PendingReviews, decision)
+		}
+	}
+	c.Status = ComputeCertificateStatus(*c)
+}
+
 func ComputeCertificateStatus(c OffboardingCertificate) CertificateStatus {
 	if c.Status == CertificateStale {
 		return CertificateStale

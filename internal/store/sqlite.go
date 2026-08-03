@@ -1002,6 +1002,64 @@ func (s *SQLite) RejectDecision(ctx context.Context, id, rejector, reason string
 	return &decision, nil
 }
 
+func (s *SQLite) AttestOwner(ctx context.Context, id, owner, actor, reason string) (*core.Decision, error) {
+	owner = strings.ToLower(strings.TrimSpace(owner))
+	if owner == "" {
+		return nil, fmt.Errorf("owner is required")
+	}
+	if actor == "" {
+		actor = "cli"
+	}
+	reason = strings.TrimSpace(reason)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	decision, hash, found, err := getDecisionTx(ctx, tx, id)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf("decision %q not found", id)
+	}
+	if decision.ActionClass != core.ActionRequestOwnerAttestation {
+		return nil, fmt.Errorf("decision %q action is %s, not %s", id, decision.ActionClass, core.ActionRequestOwnerAttestation)
+	}
+	switch decision.Status {
+	case core.DecisionProposed, core.DecisionApproved:
+	default:
+		return nil, fmt.Errorf("decision %q is %s, not proposed or approved", id, decision.Status)
+	}
+
+	from := decision.Status
+	now := time.Now().UTC()
+	decision.Status = core.DecisionVerified
+	decision.ApprovedBy = actor
+	if decision.Metadata == nil {
+		decision.Metadata = map[string]string{}
+	}
+	decision.Metadata["attested_owner"] = owner
+	decision.Metadata["attested_by"] = actor
+	decision.Metadata["attested_at"] = now.Format(time.RFC3339)
+	if reason != "" {
+		decision.Metadata["attestation_reason"] = reason
+	}
+
+	if err := upsertDecisionTx(ctx, tx, decision, hash, now); err != nil {
+		return nil, err
+	}
+	if err := insertDecisionEventTx(ctx, tx, decision, "owner_attested", from, decision.Status, actor, reason, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &decision, nil
+}
+
 func (s *SQLite) MarkDecisionExecuted(ctx context.Context, id, actor string) (*core.Decision, error) {
 	if actor == "" {
 		actor = "system"

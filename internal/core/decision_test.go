@@ -74,4 +74,6 @@ func TestBuildDecisionsRequestsOwnerForUnownedCredential(t *testing.T) {
 	require.Len(t, decisions, 1)
 	assert.Equal(t, ActionRequestOwnerAttestation, decisions[0].ActionClass)
 	assert.Equal(t, DecisionRiskMedium, decisions[0].Risk)
+	assert.Contains(t, decisions[0].RequiredEvidence, "owner_attestation")
+	assert.Equal(t, "provider_unowned", decisions[0].Metadata["attestation_scope"])
 }

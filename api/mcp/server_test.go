@@ -277,6 +277,28 @@ func TestHandleRejectDecisionRequiresReason(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestHandleAttestOwner(t *testing.T) {
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	ctx := context.Background()
+	decision := core.NewDecision("alice@test.com", "github", core.ObjectCredential, "app-1", core.ActionRequestOwnerAttestation, core.DecisionRiskHigh, "owner required")
+	require.NoError(t, db.UpsertDecisions(ctx, []core.Decision{decision}))
+
+	srv := New(db, &config.Config{})
+	_, out, err := srv.handleAttestOwner(ctx, nil, decisionMutationInput{
+		ID:     decision.ID,
+		Owner:  "platform@test.com",
+		By:     "sre@test.com",
+		Reason: "deploy automation",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, out.Decision)
+	require.Equal(t, core.DecisionVerified, out.Decision.Status)
+	require.Equal(t, "platform@test.com", out.Decision.Metadata["attested_owner"])
+}
+
 func TestHandleCertificateTools(t *testing.T) {
 	db, err := store.NewSQLite(":memory:")
 	require.NoError(t, err)

@@ -436,6 +436,37 @@ func TestDecisionLedgerExecutedAndVerifiedTransitions(t *testing.T) {
 	assert.Equal(t, "executed", events[1].EventType)
 }
 
+func TestAttestOwnerVerifiesOwnerAttestationDecision(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	decision := core.NewDecision("alice@co.com", "github", core.ObjectCredential, "app-1", core.ActionRequestOwnerAttestation, core.DecisionRiskHigh, "owner required")
+	require.NoError(t, s.UpsertDecisions(ctx, []core.Decision{decision}))
+
+	attested, err := s.AttestOwner(ctx, decision.ID, "platform@co.com", "sre@co.com", "platform owns deploy automation")
+	require.NoError(t, err)
+	require.NotNil(t, attested)
+	assert.Equal(t, core.DecisionVerified, attested.Status)
+	assert.Equal(t, "sre@co.com", attested.ApprovedBy)
+	assert.Equal(t, "platform@co.com", attested.Metadata["attested_owner"])
+	assert.Equal(t, "platform owns deploy automation", attested.Metadata["attestation_reason"])
+
+	events, err := s.ListDecisionEvents(ctx, decision.ID)
+	require.NoError(t, err)
+	require.NotEmpty(t, events)
+	assert.Equal(t, "owner_attested", events[0].EventType)
+	assert.Equal(t, core.DecisionVerified, events[0].ToStatus)
+}
+
+func TestAttestOwnerRejectsNonAttestationDecision(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	decision := core.NewDecision("alice@co.com", "github", core.ObjectWorkspaceMember, "alice@co.com", core.ActionRemoveWorkspaceMember, core.DecisionRiskHigh, "remove seat")
+	require.NoError(t, s.UpsertDecisions(ctx, []core.Decision{decision}))
+
+	_, err := s.AttestOwner(ctx, decision.ID, "platform@co.com", "sre@co.com", "")
+	require.Error(t, err)
+}
+
 func TestOffboardingCertificatesRoundTripAndFilter(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

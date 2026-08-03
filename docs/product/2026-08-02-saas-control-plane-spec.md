@@ -832,11 +832,10 @@ Retirer `nhi revoke` du MVP.
 MVP:
 
 ```text
-unseat nhi list
-unseat nhi assign-owner <id> <email>
-unseat nhi attest <id> --owner <email> --purpose "..."`
-unseat nhi expire <id> --at 2026-09-01
-unseat nhi review
+unseat audit credentials
+unseat offboard <email>
+unseat decisions list --status proposed
+unseat decisions attest-owner <decision-id> --owner <email> --reason "..."
 ```
 
 Actions:

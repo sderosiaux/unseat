@@ -127,6 +127,8 @@ cp unseat.example.yaml unseat.yaml   # map Google Groups to providers
 unseat config lint                   # catch unknown/removed YAML keys before a run
 unseat audit seats                   # classify every seat against the directory
 unseat audit credentials             # classify apps, integrations and webhooks
+unseat offboard alice@mycompany.com  # produce a local offboarding certificate
+unseat decisions list                # review proposed actions and owner attestations
 unseat sync plan                     # what reconciliation would change
 unseat sync apply                    # execute, after showing the plan and confirming
 unseat sync watch --interval 5m      # daemon
@@ -219,6 +221,18 @@ unseat
 │   ├── orphans              Seats with no active directory identity
 │   ├── inactive [--days]    Unused seats, on providers that expose activity
 │   └── drift                Desired vs actual, without applying anything
+├── offboard <email>         Build an observe-mode offboarding certificate
+├── decisions
+│   ├── list                 Proposed/approved/rejected/executed/stale decisions
+│   ├── approve <id>         Approve a proposed provider action
+│   ├── reject <id>          Reject with a reusable reason
+│   └── attest-owner <id>    Record the owner of a non-human identity
+├── certificates
+│   ├── list                 Stored offboarding certificate timeline
+│   └── show <id>            Human-readable certificate details
+├── enforce
+│   ├── plan                 Show approved executable actions
+│   └── apply <id> --yes     Execute one approved, scoped decision
 ├── sync
 │   ├── plan                 Show what would change — never mutates
 │   ├── apply [--yes]        Execute, after showing the plan and confirming
@@ -273,6 +287,12 @@ GET /api/v1/providers/{name}/credentials Cached non-human access for a provider
 GET /api/v1/billing                   Latest cached billing snapshots
 GET /api/v1/credentials               Cached non-human access inventory
 GET /api/v1/credentials/summary       Non-human access summary + coverage state
+GET /api/v1/decisions                 Decision ledger [?provider&subject&status&limit]
+POST /api/v1/decisions/{id}/approve   Approve a proposed decision
+POST /api/v1/decisions/{id}/reject    Reject a decision with a reason
+POST /api/v1/decisions/{id}/attest-owner Record the owner for a non-human identity
+GET /api/v1/offboarding/certificates  Stored offboarding certificates [?subject&status&limit]
+GET /api/v1/offboarding/certificates/{id} One offboarding certificate
 GET /api/v1/providers/{name}/inactive Inactive users for a provider, if it exposes activity data [?days]
 GET /api/v1/inactive                  Inactive users across every provider that exposes activity data [?days]
 GET /api/v1/pending-removals          Seats inside their grace period, awaiting removal — not the same as orphans
@@ -294,6 +314,8 @@ unseat mcp
 
 Tools: `list_providers`, `provider_users`, `list_billing`, `provider_billing`,
 `list_credentials`, `provider_credentials`, `credential_summary`,
+`list_decisions`, `approve_decision`, `reject_decision`, `attest_owner`,
+`list_offboarding_certificates`, `get_offboarding_certificate`,
 `list_pending_removals`, `list_inactive_users`, `list_events`, `get_mappings`
 
 Guardrails: dry_run by default for destructive actions, audit trail for agent vs human vs cron triggers.

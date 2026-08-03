@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -71,6 +72,10 @@ func runOffboard(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if err := persistOffboardingDecisions(cmd.Context(), cert); err != nil {
+		return err
+	}
+
 	path, err := writeOffboardingCertificate(cert, offboardEvidenceDir)
 	if err != nil {
 		return err
@@ -82,6 +87,18 @@ func runOffboard(cmd *cobra.Command, args []string) error {
 
 	printOffboardingCertificate(cert, path)
 	return nil
+}
+
+func persistOffboardingDecisions(ctx context.Context, cert *core.OffboardingCertificate) error {
+	if len(cert.Decisions) == 0 {
+		return nil
+	}
+	db, err := openStore()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	return db.UpsertDecisions(ctx, cert.Decisions)
 }
 
 func writeOffboardingCertificate(cert *core.OffboardingCertificate, dir string) (string, error) {

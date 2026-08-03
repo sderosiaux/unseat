@@ -25,6 +25,11 @@ type Store interface {
 	InsertBillingSnapshot(ctx context.Context, snapshot core.BillingSnapshot) error
 	LatestBillingSnapshot(ctx context.Context, provider string) (*core.BillingSnapshot, error)
 	ListLatestBillingSnapshots(ctx context.Context) ([]core.BillingSnapshot, error)
+	UpsertDecisions(ctx context.Context, decisions []core.Decision) error
+	GetDecision(ctx context.Context, id string) (*core.Decision, error)
+	ListDecisions(ctx context.Context, filter DecisionFilter) ([]core.Decision, error)
+	ApproveDecision(ctx context.Context, id, approver string) (*core.Decision, error)
+	RejectDecision(ctx context.Context, id, rejector, reason string) (*core.Decision, error)
 	UpsertProviderCredentials(ctx context.Context, provider string, credentials []core.ClassifiedCredential) error
 	GetProviderCredentials(ctx context.Context, provider string) ([]core.ClassifiedCredential, error)
 	ListProviderCredentials(ctx context.Context) ([]core.ClassifiedCredential, error)
@@ -38,6 +43,14 @@ type EventFilter struct {
 	Provider *string
 	Type     *core.EventType
 	Since    *time.Time
+	Limit    int
+}
+
+// DecisionFilter controls which decisions are returned by ListDecisions.
+type DecisionFilter struct {
+	Provider *string
+	Subject  *string
+	Status   *core.DecisionStatus
 	Limit    int
 }
 

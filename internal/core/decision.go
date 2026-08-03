@@ -46,6 +46,8 @@ type Decision struct {
 	RequiredEvidence  []string          `json:"required_evidence,omitempty"`
 	BlockedBy         []string          `json:"blocked_by,omitempty"`
 	ApprovedBy        string            `json:"approved_by,omitempty"`
+	RejectedBy        string            `json:"rejected_by,omitempty"`
+	RejectedReason    string            `json:"rejected_reason,omitempty"`
 	ExpiresAt         *time.Time        `json:"expires_at,omitempty"`
 	Metadata          map[string]string `json:"metadata,omitempty"`
 }

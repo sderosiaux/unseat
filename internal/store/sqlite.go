@@ -631,6 +631,197 @@ func nullInt64Ptr(v sql.NullInt64) *int64 {
 	return &v.Int64
 }
 
+// --- Decisions ---
+
+func (s *SQLite) UpsertDecisions(ctx context.Context, decisions []core.Decision) error {
+	if len(decisions) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO decisions (
+		id, tenant_id, subject, provider, object_kind, object_id, action_class,
+		status, risk, reason, policy_version, idempotency_key, approved_by,
+		rejected_by, payload_json, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		tenant_id = excluded.tenant_id,
+		subject = excluded.subject,
+		provider = excluded.provider,
+		object_kind = excluded.object_kind,
+		object_id = excluded.object_id,
+		action_class = excluded.action_class,
+		status = excluded.status,
+		risk = excluded.risk,
+		reason = excluded.reason,
+		policy_version = excluded.policy_version,
+		idempotency_key = excluded.idempotency_key,
+		approved_by = excluded.approved_by,
+		rejected_by = excluded.rejected_by,
+		payload_json = excluded.payload_json,
+		updated_at = excluded.updated_at`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = stmt.Close() }()
+
+	now := time.Now().UTC()
+	for _, d := range decisions {
+		if d.ID == "" {
+			return fmt.Errorf("decision id is required")
+		}
+		payload, err := json.Marshal(d)
+		if err != nil {
+			return err
+		}
+		if _, err := stmt.ExecContext(ctx,
+			d.ID,
+			d.TenantID,
+			d.Subject,
+			d.Provider,
+			string(d.ObjectKind),
+			d.ObjectID,
+			string(d.ActionClass),
+			string(d.Status),
+			string(d.Risk),
+			d.Reason,
+			d.PolicyVersion,
+			d.IdempotencyKey,
+			d.ApprovedBy,
+			d.RejectedBy,
+			string(payload),
+			now,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *SQLite) GetDecision(ctx context.Context, id string) (*core.Decision, error) {
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload_json FROM decisions WHERE id = ?`, id).Scan(&payload)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	decision, err := decodeDecision(payload)
+	if err != nil {
+		return nil, err
+	}
+	return &decision, nil
+}
+
+func (s *SQLite) ListDecisions(ctx context.Context, filter DecisionFilter) ([]core.Decision, error) {
+	query := `SELECT payload_json FROM decisions WHERE 1=1`
+	var args []any
+	if filter.Provider != nil {
+		query += ` AND provider = ?`
+		args = append(args, *filter.Provider)
+	}
+	if filter.Subject != nil {
+		query += ` AND subject = ?`
+		args = append(args, *filter.Subject)
+	}
+	if filter.Status != nil {
+		query += ` AND status = ?`
+		args = append(args, string(*filter.Status))
+	}
+	query += ` ORDER BY updated_at DESC, id`
+	if filter.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, filter.Limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var decisions []core.Decision
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		decision, err := decodeDecision(payload)
+		if err != nil {
+			return nil, err
+		}
+		decisions = append(decisions, decision)
+	}
+	return decisions, rows.Err()
+}
+
+func (s *SQLite) ApproveDecision(ctx context.Context, id, approver string) (*core.Decision, error) {
+	if approver == "" {
+		approver = "cli"
+	}
+	decision, err := s.GetDecision(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if decision == nil {
+		return nil, fmt.Errorf("decision %q not found", id)
+	}
+	if decision.Status != core.DecisionProposed {
+		return nil, fmt.Errorf("decision %q is %s, not proposed", id, decision.Status)
+	}
+	decision.Status = core.DecisionApproved
+	decision.ApprovedBy = approver
+	decision.RejectedBy = ""
+	decision.RejectedReason = ""
+	if err := s.UpsertDecisions(ctx, []core.Decision{*decision}); err != nil {
+		return nil, err
+	}
+	return decision, nil
+}
+
+func (s *SQLite) RejectDecision(ctx context.Context, id, rejector, reason string) (*core.Decision, error) {
+	if rejector == "" {
+		rejector = "cli"
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return nil, fmt.Errorf("reject reason is required")
+	}
+	decision, err := s.GetDecision(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if decision == nil {
+		return nil, fmt.Errorf("decision %q not found", id)
+	}
+	switch decision.Status {
+	case core.DecisionProposed, core.DecisionApproved:
+	default:
+		return nil, fmt.Errorf("decision %q is %s, not proposed or approved", id, decision.Status)
+	}
+	decision.Status = core.DecisionRejected
+	decision.RejectedBy = rejector
+	decision.RejectedReason = reason
+	decision.ApprovedBy = ""
+	if err := s.UpsertDecisions(ctx, []core.Decision{*decision}); err != nil {
+		return nil, err
+	}
+	return decision, nil
+}
+
+func decodeDecision(payload string) (core.Decision, error) {
+	var decision core.Decision
+	if err := json.Unmarshal([]byte(payload), &decision); err != nil {
+		return core.Decision{}, err
+	}
+	return decision, nil
+}
+
 // --- Provider Credentials ---
 
 func (s *SQLite) UpsertProviderCredentials(ctx context.Context, provider string, credentials []core.ClassifiedCredential) error {

@@ -299,6 +299,56 @@ func TestBillingSnapshotsRoundTripLatestPerProvider(t *testing.T) {
 	assert.Equal(t, int64(168000), *all[1].MonthlyAmountMinor)
 }
 
+func TestDecisionLedgerRoundTripApproveRejectAndFilter(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	first := core.NewDecision("alice@co.com", "github", core.ObjectWorkspaceMember, "alice@co.com", core.ActionRemoveWorkspaceMember, core.DecisionRiskHigh, "directory identity is suspended")
+	second := core.NewDecision("bob@co.com", "linear", core.ObjectBillingSeat, "bill_1", core.ActionReleasePaidSeat, core.DecisionRiskMedium, "provider API exposed money")
+	require.NoError(t, s.UpsertDecisions(ctx, []core.Decision{first, second}))
+
+	got, err := s.GetDecision(ctx, first.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, core.ActionRemoveWorkspaceMember, got.ActionClass)
+	assert.Equal(t, core.DecisionProposed, got.Status)
+
+	status := core.DecisionProposed
+	proposed, err := s.ListDecisions(ctx, DecisionFilter{Status: &status})
+	require.NoError(t, err)
+	assert.Len(t, proposed, 2)
+
+	approved, err := s.ApproveDecision(ctx, first.ID, "sre@co.com")
+	require.NoError(t, err)
+	assert.Equal(t, core.DecisionApproved, approved.Status)
+	assert.Equal(t, "sre@co.com", approved.ApprovedBy)
+
+	provider := "github"
+	githubDecisions, err := s.ListDecisions(ctx, DecisionFilter{Provider: &provider})
+	require.NoError(t, err)
+	require.Len(t, githubDecisions, 1)
+	assert.Equal(t, core.DecisionApproved, githubDecisions[0].Status)
+
+	rejected, err := s.RejectDecision(ctx, first.ID, "owner@co.com", "keep access during migration")
+	require.NoError(t, err)
+	assert.Equal(t, core.DecisionRejected, rejected.Status)
+	assert.Equal(t, "owner@co.com", rejected.RejectedBy)
+	assert.Equal(t, "keep access during migration", rejected.RejectedReason)
+	assert.Empty(t, rejected.ApprovedBy)
+}
+
+func TestDecisionLedgerRejectRequiresReason(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	decision := core.NewDecision("alice@co.com", "github", core.ObjectWorkspaceMember, "alice@co.com", core.ActionRemoveWorkspaceMember, core.DecisionRiskHigh, "directory identity is suspended")
+	require.NoError(t, s.UpsertDecisions(ctx, []core.Decision{decision}))
+
+	_, err := s.RejectDecision(ctx, decision.ID, "owner@co.com", "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reason")
+}
+
 func TestProviderCredentialsRoundTripAndReplace(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

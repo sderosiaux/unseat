@@ -335,6 +335,16 @@ func TestDecisionLedgerRoundTripApproveRejectAndFilter(t *testing.T) {
 	assert.Equal(t, "owner@co.com", rejected.RejectedBy)
 	assert.Equal(t, "keep access during migration", rejected.RejectedReason)
 	assert.Empty(t, rejected.ApprovedBy)
+
+	events, err := s.ListDecisionEvents(ctx, first.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 3)
+	assert.Equal(t, "rejected", events[0].EventType)
+	assert.Equal(t, core.DecisionApproved, events[0].FromStatus)
+	assert.Equal(t, core.DecisionRejected, events[0].ToStatus)
+	assert.Equal(t, "approved", events[1].EventType)
+	assert.Equal(t, core.DecisionProposed, events[1].FromStatus)
+	assert.Equal(t, core.DecisionApproved, events[1].ToStatus)
 }
 
 func TestDecisionLedgerRejectRequiresReason(t *testing.T) {
@@ -347,6 +357,59 @@ func TestDecisionLedgerRejectRequiresReason(t *testing.T) {
 	_, err := s.RejectDecision(ctx, decision.ID, "owner@co.com", "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "reason")
+}
+
+func TestDecisionUpsertPreservesHumanDecisionOnReobservedSameRecommendation(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	decision := core.NewDecision("alice@co.com", "github", core.ObjectWorkspaceMember, "alice@co.com", core.ActionRemoveWorkspaceMember, core.DecisionRiskHigh, "directory identity is suspended")
+	require.NoError(t, s.UpsertDecisions(ctx, []core.Decision{decision}))
+	_, err := s.ApproveDecision(ctx, decision.ID, "sre@co.com")
+	require.NoError(t, err)
+
+	require.NoError(t, s.UpsertDecisions(ctx, []core.Decision{decision}))
+
+	got, err := s.GetDecision(ctx, decision.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, core.DecisionApproved, got.Status)
+	assert.Equal(t, "sre@co.com", got.ApprovedBy)
+
+	events, err := s.ListDecisionEvents(ctx, decision.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 2)
+	assert.Equal(t, "approved", events[0].EventType)
+	assert.Equal(t, "upserted", events[1].EventType)
+}
+
+func TestDecisionUpsertMarksApprovedDecisionStaleWhenRecommendationChanges(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	decision := core.NewDecision("alice@co.com", "github", core.ObjectWorkspaceMember, "alice@co.com", core.ActionRemoveWorkspaceMember, core.DecisionRiskHigh, "directory identity is suspended")
+	require.NoError(t, s.UpsertDecisions(ctx, []core.Decision{decision}))
+	_, err := s.ApproveDecision(ctx, decision.ID, "sre@co.com")
+	require.NoError(t, err)
+
+	changed := decision
+	changed.Risk = core.DecisionRiskCritical
+	changed.Reason = "directory identity is suspended and seat is admin"
+	require.NoError(t, s.UpsertDecisions(ctx, []core.Decision{changed}))
+
+	got, err := s.GetDecision(ctx, decision.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, core.DecisionStale, got.Status)
+	assert.Equal(t, "sre@co.com", got.ApprovedBy)
+	assert.Equal(t, "approved", got.Metadata["previous_status"])
+
+	events, err := s.ListDecisionEvents(ctx, decision.ID)
+	require.NoError(t, err)
+	require.Len(t, events, 3)
+	assert.Equal(t, "stale", events[0].EventType)
+	assert.Equal(t, core.DecisionApproved, events[0].FromStatus)
+	assert.Equal(t, core.DecisionStale, events[0].ToStatus)
 }
 
 func TestProviderCredentialsRoundTripAndReplace(t *testing.T) {

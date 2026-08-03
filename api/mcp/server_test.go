@@ -235,3 +235,44 @@ func TestHandleCredentialSummaryIncludesUnsupportedState(t *testing.T) {
 	require.Equal(t, "figma", out.SyncStates[0].Provider)
 	require.Equal(t, "not_supported", out.SyncStates[0].Status)
 }
+
+func TestHandleDecisionLedgerTools(t *testing.T) {
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	ctx := context.Background()
+	decision := core.NewDecision("alice@test.com", "github", core.ObjectWorkspaceMember, "alice@test.com", core.ActionRemoveWorkspaceMember, core.DecisionRiskHigh, "directory identity is suspended")
+	require.NoError(t, db.UpsertDecisions(ctx, []core.Decision{decision}))
+
+	srv := New(db, &config.Config{})
+	_, listed, err := srv.handleListDecisions(ctx, nil, decisionsInput{Provider: "github", Status: string(core.DecisionProposed)})
+	require.NoError(t, err)
+	require.Len(t, listed.Decisions, 1)
+	require.Equal(t, decision.ID, listed.Decisions[0].ID)
+
+	_, approved, err := srv.handleApproveDecision(ctx, nil, decisionMutationInput{ID: decision.ID, By: "sre@test.com"})
+	require.NoError(t, err)
+	require.NotNil(t, approved.Decision)
+	require.Equal(t, core.DecisionApproved, approved.Decision.Status)
+	require.Equal(t, "sre@test.com", approved.Decision.ApprovedBy)
+
+	_, events, err := srv.handleDecisionEvents(ctx, nil, decisionInput{ID: decision.ID})
+	require.NoError(t, err)
+	require.NotEmpty(t, events.Events)
+	require.Equal(t, "approved", events.Events[0].EventType)
+}
+
+func TestHandleRejectDecisionRequiresReason(t *testing.T) {
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	ctx := context.Background()
+	decision := core.NewDecision("alice@test.com", "github", core.ObjectWorkspaceMember, "alice@test.com", core.ActionRemoveWorkspaceMember, core.DecisionRiskHigh, "directory identity is suspended")
+	require.NoError(t, db.UpsertDecisions(ctx, []core.Decision{decision}))
+
+	srv := New(db, &config.Config{})
+	_, _, err = srv.handleRejectDecision(ctx, nil, decisionMutationInput{ID: decision.ID, By: "owner@test.com"})
+	require.Error(t, err)
+}

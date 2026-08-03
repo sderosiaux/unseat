@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -49,6 +51,23 @@ type eventsInput struct {
 	Limit int `json:"limit" jsonschema:"maximum number of events to return (default 50)"`
 }
 
+type decisionsInput struct {
+	Provider string `json:"provider,omitempty" jsonschema:"optional provider filter"`
+	Subject  string `json:"subject,omitempty" jsonschema:"optional subject filter"`
+	Status   string `json:"status,omitempty" jsonschema:"optional decision status filter"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"maximum number of decisions to return (default 100)"`
+}
+
+type decisionInput struct {
+	ID string `json:"id" jsonschema:"decision id"`
+}
+
+type decisionMutationInput struct {
+	ID     string `json:"id" jsonschema:"decision id"`
+	By     string `json:"by,omitempty" jsonschema:"actor recorded in the local decision ledger"`
+	Reason string `json:"reason,omitempty" jsonschema:"required rejection reason for reject_decision"`
+}
+
 type orphanEntry struct {
 	Provider string `json:"provider"`
 	Email    string `json:"email"`
@@ -78,6 +97,18 @@ type providerBillingOutput struct {
 
 type listEventsOutput struct {
 	Events []core.Event `json:"events"`
+}
+
+type listDecisionsOutput struct {
+	Decisions []core.Decision `json:"decisions"`
+}
+
+type decisionOutput struct {
+	Decision *core.Decision `json:"decision,omitempty"`
+}
+
+type decisionEventsOutput struct {
+	Events []store.DecisionEvent `json:"events"`
 }
 
 type getMappingsOutput struct {
@@ -168,6 +199,26 @@ func (s *MCPServer) registerTools() {
 		Description: "Summarize cached non-human access findings by provider, including sync states " +
 			"for providers that were skipped, failed, or not supported.",
 	}, s.handleCredentialSummary)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "list_decisions",
+		Description: "List proposed, approved, rejected, stale or blocked access decisions from the local ledger",
+	}, s.handleListDecisions)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "decision_events",
+		Description: "List append-only ledger events for one decision",
+	}, s.handleDecisionEvents)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "approve_decision",
+		Description: "Approve a proposed decision in the local ledger. This does not mutate any provider.",
+	}, s.handleApproveDecision)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "reject_decision",
+		Description: "Reject a proposed or approved decision with a reason. This does not mutate any provider.",
+	}, s.handleRejectDecision)
 
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "list_events",
@@ -364,6 +415,87 @@ func (s *MCPServer) handleCredentialSummary(ctx context.Context, _ *mcp.CallTool
 		states = []store.CredentialSyncState{}
 	}
 	return nil, credentialsSummaryOutput{Summary: summary, SyncStates: states}, nil
+}
+
+func (s *MCPServer) handleListDecisions(ctx context.Context, _ *mcp.CallToolRequest, input decisionsInput) (*mcp.CallToolResult, listDecisionsOutput, error) {
+	filter, err := decisionFilterFromMCP(input)
+	if err != nil {
+		return nil, listDecisionsOutput{}, err
+	}
+	decisions, err := s.store.ListDecisions(ctx, filter)
+	if err != nil {
+		return nil, listDecisionsOutput{}, err
+	}
+	if decisions == nil {
+		decisions = []core.Decision{}
+	}
+	return nil, listDecisionsOutput{Decisions: decisions}, nil
+}
+
+func (s *MCPServer) handleDecisionEvents(ctx context.Context, _ *mcp.CallToolRequest, input decisionInput) (*mcp.CallToolResult, decisionEventsOutput, error) {
+	events, err := s.store.ListDecisionEvents(ctx, input.ID)
+	if err != nil {
+		return nil, decisionEventsOutput{}, err
+	}
+	if events == nil {
+		events = []store.DecisionEvent{}
+	}
+	return nil, decisionEventsOutput{Events: events}, nil
+}
+
+func (s *MCPServer) handleApproveDecision(ctx context.Context, _ *mcp.CallToolRequest, input decisionMutationInput) (*mcp.CallToolResult, decisionOutput, error) {
+	decision, err := s.store.ApproveDecision(ctx, input.ID, strings.TrimSpace(input.By))
+	if err != nil {
+		return nil, decisionOutput{}, err
+	}
+	return nil, decisionOutput{Decision: decision}, nil
+}
+
+func (s *MCPServer) handleRejectDecision(ctx context.Context, _ *mcp.CallToolRequest, input decisionMutationInput) (*mcp.CallToolResult, decisionOutput, error) {
+	decision, err := s.store.RejectDecision(ctx, input.ID, strings.TrimSpace(input.By), input.Reason)
+	if err != nil {
+		return nil, decisionOutput{}, err
+	}
+	return nil, decisionOutput{Decision: decision}, nil
+}
+
+func decisionFilterFromMCP(input decisionsInput) (store.DecisionFilter, error) {
+	filter := store.DecisionFilter{Limit: input.Limit}
+	if filter.Limit == 0 {
+		filter.Limit = 100
+	}
+	if input.Provider != "" {
+		provider := strings.ToLower(strings.TrimSpace(input.Provider))
+		filter.Provider = &provider
+	}
+	if input.Subject != "" {
+		subject := strings.ToLower(strings.TrimSpace(input.Subject))
+		filter.Subject = &subject
+	}
+	if input.Status != "" {
+		status := core.DecisionStatus(strings.TrimSpace(input.Status))
+		if !validDecisionStatus(status) {
+			return store.DecisionFilter{}, fmt.Errorf("unknown decision status %q", input.Status)
+		}
+		filter.Status = &status
+	}
+	return filter, nil
+}
+
+func validDecisionStatus(status core.DecisionStatus) bool {
+	switch status {
+	case core.DecisionProposed,
+		core.DecisionApproved,
+		core.DecisionRejected,
+		core.DecisionExecuted,
+		core.DecisionVerified,
+		core.DecisionBlocked,
+		core.DecisionStale,
+		core.DecisionVerificationFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func summarizeCredentials(credentials []core.ClassifiedCredential, states []store.CredentialSyncState) []core.CredentialSummary {

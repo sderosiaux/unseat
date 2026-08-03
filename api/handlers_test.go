@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -191,4 +192,48 @@ func TestHandleCredentialsSummaryIncludesUnsupportedState(t *testing.T) {
 	assert.Equal(t, "figma", out.SyncStates[0].Provider)
 	assert.Equal(t, "not_supported", out.SyncStates[0].Status)
 	assert.Empty(t, out.Summary)
+}
+
+func TestHandleListDecisions(t *testing.T) {
+	srv, db := setupTestServer(t)
+	decision := core.NewDecision("alice@co.com", "github", core.ObjectWorkspaceMember, "alice@co.com", core.ActionRemoveWorkspaceMember, core.DecisionRiskHigh, "directory identity is suspended")
+	require.NoError(t, db.UpsertDecisions(context.Background(), []core.Decision{decision}))
+
+	req := httptest.NewRequest("GET", "/api/v1/decisions?status=proposed&provider=github", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var out decisionsResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Len(t, out.Decisions, 1)
+	assert.Equal(t, decision.ID, out.Decisions[0].ID)
+}
+
+func TestHandleApproveAndRejectDecision(t *testing.T) {
+	srv, db := setupTestServer(t)
+	ctx := context.Background()
+	decision := core.NewDecision("alice@co.com", "github", core.ObjectWorkspaceMember, "alice@co.com", core.ActionRemoveWorkspaceMember, core.DecisionRiskHigh, "directory identity is suspended")
+	require.NoError(t, db.UpsertDecisions(ctx, []core.Decision{decision}))
+
+	req := httptest.NewRequest("POST", "/api/v1/decisions/"+decision.ID+"/approve", bytes.NewBufferString(`{"by":"sre@co.com"}`))
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var approved core.Decision
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &approved))
+	assert.Equal(t, core.DecisionApproved, approved.Status)
+	assert.Equal(t, "sre@co.com", approved.ApprovedBy)
+
+	req = httptest.NewRequest("POST", "/api/v1/decisions/"+decision.ID+"/reject", bytes.NewBufferString(`{"by":"owner@co.com","reason":"keep during migration"}`))
+	w = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var rejected core.Decision
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &rejected))
+	assert.Equal(t, core.DecisionRejected, rejected.Status)
+	assert.Equal(t, "owner@co.com", rejected.RejectedBy)
+	assert.Equal(t, "keep during migration", rejected.RejectedReason)
 }

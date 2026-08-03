@@ -28,6 +28,7 @@ type Store interface {
 	UpsertDecisions(ctx context.Context, decisions []core.Decision) error
 	GetDecision(ctx context.Context, id string) (*core.Decision, error)
 	ListDecisions(ctx context.Context, filter DecisionFilter) ([]core.Decision, error)
+	ListDecisionEvents(ctx context.Context, decisionID string) ([]DecisionEvent, error)
 	ApproveDecision(ctx context.Context, id, approver string) (*core.Decision, error)
 	RejectDecision(ctx context.Context, id, rejector, reason string) (*core.Decision, error)
 	UpsertProviderCredentials(ctx context.Context, provider string, credentials []core.ClassifiedCredential) error
@@ -52,6 +53,18 @@ type DecisionFilter struct {
 	Subject  *string
 	Status   *core.DecisionStatus
 	Limit    int
+}
+
+type DecisionEvent struct {
+	ID         int64               `json:"id"`
+	DecisionID string              `json:"decision_id"`
+	EventType  string              `json:"event_type"`
+	FromStatus core.DecisionStatus `json:"from_status,omitempty"`
+	ToStatus   core.DecisionStatus `json:"to_status,omitempty"`
+	Actor      string              `json:"actor,omitempty"`
+	Reason     string              `json:"reason,omitempty"`
+	OccurredAt time.Time           `json:"occurred_at"`
+	Payload    core.Decision       `json:"payload,omitempty"`
 }
 
 // PendingRemoval represents a user flagged for removal with a grace period.

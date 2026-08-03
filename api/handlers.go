@@ -3,11 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -158,6 +161,123 @@ func (s *Server) handleCredentialsSummary(w http.ResponseWriter, r *http.Request
 		Summary:    summary,
 		SyncStates: states,
 	})
+}
+
+type decisionMutationRequest struct {
+	By     string `json:"by"`
+	Reason string `json:"reason"`
+}
+
+type decisionsResponse struct {
+	Decisions []core.Decision `json:"decisions"`
+}
+
+func (s *Server) handleListDecisions(w http.ResponseWriter, r *http.Request) {
+	filter, err := decisionFilterFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	decisions, err := s.store.ListDecisions(r.Context(), filter)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if decisions == nil {
+		decisions = []core.Decision{}
+	}
+	writeJSON(w, http.StatusOK, decisionsResponse{Decisions: decisions})
+}
+
+func (s *Server) handleApproveDecision(w http.ResponseWriter, r *http.Request) {
+	body, err := readDecisionMutationRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	decision, err := s.store.ApproveDecision(r.Context(), chi.URLParam(r, "id"), body.By)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, decision)
+}
+
+func (s *Server) handleRejectDecision(w http.ResponseWriter, r *http.Request) {
+	body, err := readDecisionMutationRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	decision, err := s.store.RejectDecision(r.Context(), chi.URLParam(r, "id"), body.By, body.Reason)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, decision)
+}
+
+func decisionFilterFromRequest(r *http.Request) (store.DecisionFilter, error) {
+	query := r.URL.Query()
+	filter := store.DecisionFilter{Limit: 100}
+	if v := query.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return store.DecisionFilter{}, err
+		}
+		filter.Limit = n
+	}
+	if v := query.Get("provider"); v != "" {
+		provider := strings.ToLower(strings.TrimSpace(v))
+		filter.Provider = &provider
+	}
+	if v := query.Get("subject"); v != "" {
+		subject := strings.ToLower(strings.TrimSpace(v))
+		filter.Subject = &subject
+	}
+	if v := query.Get("status"); v != "" {
+		status := core.DecisionStatus(strings.TrimSpace(v))
+		if !validDecisionStatus(status) {
+			return store.DecisionFilter{}, fmt.Errorf("unknown decision status %q", v)
+		}
+		filter.Status = &status
+	}
+	return filter, nil
+}
+
+func readDecisionMutationRequest(r *http.Request) (decisionMutationRequest, error) {
+	var body decisionMutationRequest
+	if r.Body == nil {
+		return body, nil
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	err := decoder.Decode(&body)
+	if err == io.EOF {
+		return body, nil
+	}
+	if err != nil {
+		return decisionMutationRequest{}, err
+	}
+	body.By = strings.TrimSpace(body.By)
+	body.Reason = strings.TrimSpace(body.Reason)
+	return body, nil
+}
+
+func validDecisionStatus(status core.DecisionStatus) bool {
+	switch status {
+	case core.DecisionProposed,
+		core.DecisionApproved,
+		core.DecisionRejected,
+		core.DecisionExecuted,
+		core.DecisionVerified,
+		core.DecisionBlocked,
+		core.DecisionStale,
+		core.DecisionVerificationFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func summarizeCredentials(credentials []core.ClassifiedCredential, states []store.CredentialSyncState) []core.CredentialSummary {

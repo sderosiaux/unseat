@@ -51,3 +51,12 @@ type CredentialProvider interface {
 	Provider
 	ListCredentials(ctx context.Context) ([]core.Credential, error)
 }
+
+// CredentialInventoryProvider is the deeper read path for connectors that can
+// inspect multiple non-human identity surfaces with partial coverage. It keeps
+// optional scope gaps visible instead of making ListCredentials either fail the
+// whole provider or silently omit a surface.
+type CredentialInventoryProvider interface {
+	Provider
+	ListCredentialInventory(ctx context.Context) (core.CredentialInventory, error)
+}

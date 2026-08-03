@@ -70,6 +70,9 @@ func handleCommon(w http.ResponseWriter, r *http.Request) bool {
 	case "/orgs/my-org/events":
 		encodeTestJSON(w, []map[string]any{})
 		return true
+	case "/orgs/my-org/outside_collaborators":
+		encodeTestJSON(w, []orgMember{})
+		return true
 	}
 	return false
 }
@@ -92,6 +95,8 @@ func TestListUsers(t *testing.T) {
 				{Login: "alice", ID: 101},
 				{Login: "bob", ID: 102},
 			})
+		case r.URL.Path == "/orgs/my-org/outside_collaborators":
+			encodeTestJSON(w, []orgMember{})
 		case r.URL.Path == "/orgs/my-org/events":
 			encodeTestJSON(w, []map[string]any{
 				{"actor": map[string]any{"login": "alice"}, "created_at": activityTime.Format(time.RFC3339)},
@@ -122,6 +127,38 @@ func TestListUsers(t *testing.T) {
 	assert.Equal(t, "Bob Jones", users[1].DisplayName)
 	assert.Equal(t, "admin", users[1].Role) // listed by ?role=admin
 	assert.Nil(t, users[1].LastActivityAt)  // not in org events
+}
+
+func TestListUsersIncludesOutsideCollaborators(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/orgs/my-org/outside_collaborators":
+			assert.Equal(t, "all", r.URL.Query().Get("filter"))
+			encodeTestJSON(w, []orgMember{{Login: "contractor", ID: 501}})
+		case r.URL.Path == "/orgs/my-org/members" && r.URL.Query().Get("role") == "admin":
+			encodeTestJSON(w, []orgMember{})
+		case r.URL.Path == "/orgs/my-org/members":
+			encodeTestJSON(w, []orgMember{})
+		case r.URL.Path == "/users/contractor":
+			encodeTestJSON(w, map[string]any{"email": "contractor@gmail.com", "name": "Contractor", "login": "contractor"})
+		default:
+			if handleCommon(w, r) {
+				return
+			}
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := New("test-token", "my-org").WithBaseURL(server.URL)
+	users, err := p.ListUsers(context.Background())
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+
+	assert.Equal(t, "contractor@gmail.com", users[0].Email)
+	assert.Equal(t, "outside_collaborator", users[0].Role)
+	assert.Equal(t, "outside_collaborator", users[0].Metadata["github_access_kind"])
+	assert.Equal(t, "contractor", users[0].Metadata["login"])
 }
 
 func TestListUsersNoPublicEmail(t *testing.T) {
@@ -301,6 +338,8 @@ func TestListUsersWithSAML(t *testing.T) {
 				{Login: "alice", ID: 101},
 				{Login: "bob", ID: 102},
 			})
+		case r.URL.Path == "/orgs/my-org/outside_collaborators":
+			encodeTestJSON(w, []orgMember{})
 		}
 		// No /users/ calls should be made when SAML mapping is available
 	}))
@@ -458,6 +497,35 @@ func TestRemoveUser(t *testing.T) {
 
 	p := New("test-token", "my-org").WithBaseURL(server.URL)
 	err := p.RemoveUser(context.Background(), "alice@co.com")
+	require.NoError(t, err)
+	assert.True(t, deleteCalled)
+}
+
+func TestRemoveOutsideCollaborator(t *testing.T) {
+	var deleteCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/orgs/my-org/outside_collaborators" && r.Method == http.MethodGet:
+			encodeTestJSON(w, []orgMember{{Login: "contractor", ID: 501}})
+		case r.URL.Path == "/orgs/my-org/members" && r.Method == http.MethodGet:
+			encodeTestJSON(w, []orgMember{})
+		case r.URL.Path == "/users/contractor":
+			encodeTestJSON(w, map[string]any{"email": "contractor@gmail.com", "name": "Contractor", "login": "contractor"})
+		case r.Method == http.MethodDelete:
+			assert.Equal(t, "/orgs/my-org/outside_collaborators/contractor", r.URL.Path)
+			deleteCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			if handleCommon(w, r) {
+				return
+			}
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	p := New("test-token", "my-org").WithBaseURL(server.URL)
+	err := p.RemoveUser(context.Background(), "contractor@gmail.com")
 	require.NoError(t, err)
 	assert.True(t, deleteCalled)
 }
@@ -663,6 +731,8 @@ func TestAuditLog403FallsBackToEventsAndReportsActivityStaysFalse(t *testing.T) 
 				return
 			}
 			require.NoError(t, json.NewEncoder(w).Encode([]orgMember{{Login: "alice", ID: 101}}))
+		case "/orgs/my-org/outside_collaborators":
+			require.NoError(t, json.NewEncoder(w).Encode([]orgMember{}))
 		case "/users/alice":
 			encodeTestJSON(w, map[string]any{"email": "alice@co.com", "name": "Alice", "login": "alice"})
 		}
@@ -857,6 +927,9 @@ func TestAuditLogPartialFailureDropsActivityClaim(t *testing.T) {
 				return
 			}
 			_, err := fmt.Fprint(w, `[{"login":"noisy","id":1},{"login":"other","id":2}]`)
+			require.NoError(t, err)
+		case strings.Contains(r.URL.Path, "/outside_collaborators"):
+			_, err := fmt.Fprint(w, `[]`)
 			require.NoError(t, err)
 		case strings.Contains(r.URL.Path, "/memberships/orgs/"):
 			_, err := fmt.Fprint(w, `{"state":"active"}`)

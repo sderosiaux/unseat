@@ -408,7 +408,7 @@ func printCredentialScanSummary(targets []string, results map[string]scanResult)
 		if entry.Provider == "" {
 			continue
 		}
-		if entry.Status != credentialSyncOK && entry.Message != "" {
+		if entry.Message != "" {
 			caveats = append(caveats, fmt.Sprintf("  %-16s %s", name, entry.Message))
 		}
 		summary := core.SummarizeCredentials(name, entry.Credentials, entry.UsageKnown)

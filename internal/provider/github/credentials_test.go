@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/sderosiaux/unseat/internal/core"
@@ -53,6 +54,9 @@ func credentialServer(t *testing.T, auditStatus int) *httptest.Server {
 				return
 			}
 			_, err := fmt.Fprint(w, installEventsBody)
+			require.NoError(t, err)
+		case "/orgs/acme/repos", "/orgs/acme/hooks":
+			_, err := fmt.Fprint(w, `[]`)
 			require.NoError(t, err)
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
@@ -168,6 +172,16 @@ func TestListCredentialsPaginates(t *testing.T) {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
+		if r.URL.Path == "/orgs/acme/repos" || r.URL.Path == "/orgs/acme/hooks" {
+			_, err := fmt.Fprint(w, `[]`)
+			require.NoError(t, err)
+			return
+		}
+		if r.URL.Path != "/orgs/acme/installations" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		pages++
 		if r.URL.Query().Get("page") == "1" {
 			var b string
@@ -190,6 +204,111 @@ func TestListCredentialsPaginates(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, creds, 101)
 	assert.Equal(t, 2, pages)
+}
+
+func TestListCredentialInventoryIncludesDeployKeysAndWebhooks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/orgs/acme/installations":
+			_, err := fmt.Fprint(w, `{"total_count":0,"installations":[]}`)
+			require.NoError(t, err)
+		case "/orgs/acme/audit-log":
+			w.WriteHeader(http.StatusNotFound)
+		case "/orgs/acme/repos":
+			_, err := fmt.Fprint(w, `[{"name":"app","full_name":"acme/app","owner":{"login":"acme"}}]`)
+			require.NoError(t, err)
+		case "/repos/acme/app/keys":
+			_, err := fmt.Fprint(w, `[
+				{"id":7,"title":"prod-read","key":"ssh-rsa AAASECRET","url":"https://api.github.test/repos/acme/app/keys/7","created_at":"2025-01-02T03:04:05Z","read_only":true},
+				{"id":8,"title":"prod-write","key":"ssh-rsa BBBSECRET","url":"https://api.github.test/repos/acme/app/keys/8","created_at":"2025-01-03T03:04:05Z","read_only":false}
+			]`)
+			require.NoError(t, err)
+		case "/repos/acme/app/hooks":
+			_, err := fmt.Fprint(w, `[{
+				"id":42,"name":"web","active":false,"events":["push","pull_request"],
+				"config":{"url":"https://user:pass@example.com/repo-hook?token=secret","content_type":"json","insecure_ssl":"0"},
+				"created_at":"2024-05-06T07:08:09Z",
+				"last_response":{"code":500,"status":"error","message":"timeout"}
+			}]`)
+			require.NoError(t, err)
+		case "/orgs/acme/hooks":
+			_, err := fmt.Fprint(w, `[{
+				"id":99,"name":"web","active":true,"events":["member"],
+				"config":{"url":"https://hooks.example.com/org?secret=hidden","content_type":"json"},
+				"created_at":"2024-01-01T00:00:00Z"
+			}]`)
+			require.NoError(t, err)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	inventory, err := New("tok", "acme").WithBaseURL(server.URL).ListCredentialInventory(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, inventory.Warnings)
+	require.Len(t, inventory.Credentials, 4)
+
+	byID := map[string]core.Credential{}
+	for _, c := range inventory.Credentials {
+		byID[c.ID] = c
+	}
+
+	readKey := byID["acme/app:7"]
+	assert.Equal(t, core.CredentialDeployKey, readKey.Kind)
+	assert.Equal(t, []string{"contents:read"}, readKey.Scopes)
+	assert.Empty(t, readKey.PrivilegedScopes)
+	assert.Equal(t, core.ReachSelected, readKey.Reach)
+	assert.NotContains(t, readKey.Metadata, "key")
+	assert.NotContains(t, fmt.Sprint(readKey.Metadata), "AAASECRET")
+	assert.NotEmpty(t, readKey.Metadata["public_key_hash"])
+
+	writeKey := byID["acme/app:8"]
+	assert.Equal(t, []string{"contents:write"}, writeKey.Scopes)
+	assert.Equal(t, []string{"contents"}, writeKey.PrivilegedScopes)
+
+	repoHook := byID["repo:acme/app:42"]
+	assert.Equal(t, core.CredentialWebhook, repoHook.Kind)
+	assert.True(t, repoHook.Disabled)
+	assert.Equal(t, core.ReachSelected, repoHook.Reach)
+	assert.Equal(t, "example.com/repo-hook", repoHook.Metadata["destination"])
+	assert.NotContains(t, repoHook.Label, "token=secret")
+	assert.Equal(t, "500", repoHook.Metadata["last_response_code"])
+	assert.Equal(t, []string{"event:pull_request", "event:push"}, repoHook.Scopes)
+
+	orgHook := byID["org:99"]
+	assert.Equal(t, core.ReachAll, orgHook.Reach)
+	assert.Equal(t, "hooks.example.com/org", orgHook.Metadata["destination"])
+}
+
+func TestListCredentialInventoryReturnsWarningsForOptionalGitHubSurfaces(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/orgs/acme/installations":
+			_, err := fmt.Fprint(w, `{"total_count":0,"installations":[]}`)
+			require.NoError(t, err)
+		case "/orgs/acme/audit-log":
+			w.WriteHeader(http.StatusNotFound)
+		case "/orgs/acme/repos":
+			_, err := fmt.Fprint(w, `[{"name":"app","full_name":"acme/app","owner":{"login":"acme"}}]`)
+			require.NoError(t, err)
+		case "/repos/acme/app/keys", "/repos/acme/app/hooks", "/orgs/acme/hooks":
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	inventory, err := New("tok", "acme").WithBaseURL(server.URL).ListCredentialInventory(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, inventory.Credentials)
+	require.Len(t, inventory.Warnings, 3)
+	assert.Contains(t, inventory.Warnings[0], "deploy keys unavailable")
+	assert.Contains(t, strings.Join(inventory.Warnings, "\n"), "repository webhooks unavailable")
+	assert.Contains(t, strings.Join(inventory.Warnings, "\n"), "organization webhooks unavailable")
 }
 
 // A missing scope and a revoked token answer the same opaque 403. Naming the

@@ -85,6 +85,11 @@ type Credential struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
+type CredentialInventory struct {
+	Credentials []Credential `json:"credentials"`
+	Warnings    []string     `json:"warnings,omitempty"`
+}
+
 // CredentialClass is the verdict on one credential relative to the directory.
 type CredentialClass string
 

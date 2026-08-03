@@ -188,6 +188,7 @@ type providerInventory struct {
 	actions              []core.ActionCapability
 	credentialsSupported bool
 	credentialsErr       error
+	credentialWarnings   []string
 	credentials          []core.Credential
 	billingSupported     bool
 	billingErr           error
@@ -206,7 +207,13 @@ func collectProvider(ctx context.Context, name string, reg *provider.Registry, n
 	inv.actions = inv.capabilities.ActionMatrix(name)
 	inv.users, inv.userErr = p.ListUsers(ctx)
 
-	if cp, ok := p.(provider.CredentialProvider); ok {
+	if ip, ok := p.(provider.CredentialInventoryProvider); ok {
+		inv.credentialsSupported = true
+		inventory, err := ip.ListCredentialInventory(ctx)
+		inv.credentials = inventory.Credentials
+		inv.credentialWarnings = inventory.Warnings
+		inv.credentialsErr = err
+	} else if cp, ok := p.(provider.CredentialProvider); ok {
 		inv.credentialsSupported = true
 		inv.credentials, inv.credentialsErr = cp.ListCredentials(ctx)
 	}
@@ -362,6 +369,7 @@ func providerCredentials(subject core.CanonicalIdentity, inv providerInventory, 
 	}
 
 	var unknowns []string
+	unknowns = append(unknowns, inv.credentialWarnings...)
 	if unowned > 0 {
 		unknowns = append(unknowns, fmt.Sprintf("%d non-human identity credential(s) have no provider-reported owner", unowned))
 	}

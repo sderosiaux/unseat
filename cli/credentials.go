@@ -36,6 +36,7 @@ type credentialAudit struct {
 	Credentials []core.ClassifiedCredential `json:"credentials"`
 	Summary     []core.CredentialSummary    `json:"summary"`
 	Failed      map[string]string           `json:"failed,omitempty"`
+	Warnings    map[string]string           `json:"warnings,omitempty"`
 	// Skipped names the configured providers whose API exposes no credential
 	// listing at all. Leaving them out silently would let an empty section read
 	// as "nothing to find" when it means "never looked".
@@ -79,7 +80,7 @@ func classifyCredentials(ctx context.Context, cfg *config.Config) (*credentialAu
 		aliasIndex = core.BuildAliasIndex(cfg.Aliases, knownEmails)
 	}
 
-	audit := &credentialAudit{Failed: make(map[string]string)}
+	audit := &credentialAudit{Failed: make(map[string]string), Warnings: make(map[string]string)}
 
 	for _, name := range sortedProviderNames(cfg) {
 		if auditProvider != "" && name != auditProvider {
@@ -101,6 +102,9 @@ func classifyCredentials(ctx context.Context, cfg *config.Config) (*credentialAu
 		case credentialSyncFailed:
 			audit.Failed[name] = entry.Message
 			continue
+		}
+		if entry.Message != "" {
+			audit.Warnings[name] = entry.Message
 		}
 
 		audit.Credentials = append(audit.Credentials, classified...)
@@ -128,7 +132,19 @@ func inspectProviderCredentials(
 		return entry, nil
 	}
 
-	creds, err := cp.ListCredentials(ctx)
+	var (
+		creds    []core.Credential
+		warnings []string
+		err      error
+	)
+	if ip, ok := p.(provider.CredentialInventoryProvider); ok {
+		var inventory core.CredentialInventory
+		inventory, err = ip.ListCredentialInventory(ctx)
+		creds = inventory.Credentials
+		warnings = inventory.Warnings
+	} else {
+		creds, err = cp.ListCredentials(ctx)
+	}
 	if err != nil {
 		entry.Status = credentialSyncFailed
 		entry.Message = err.Error()
@@ -144,6 +160,9 @@ func inspectProviderCredentials(
 	entry.Status = credentialSyncOK
 	entry.Credentials = classified
 	entry.UsageKnown = p.Capabilities().ReportsCredentialUsage
+	if len(warnings) > 0 {
+		entry.Message = strings.Join(warnings, "; ")
+	}
 	return entry, classified
 }
 
@@ -219,6 +238,9 @@ func printCredentialAudit(audit *credentialAudit, cfg *config.Config) {
 
 	for _, name := range audit.Skipped {
 		fmt.Printf("\n%s: no credential listing in its API — not checked, not clean.\n", name)
+	}
+	for name, msg := range audit.Warnings {
+		fmt.Printf("\n%s: partial credential coverage — %s\n", name, msg)
 	}
 	for name, msg := range audit.Failed {
 		fmt.Printf("\n%s: could not be read — %s\n", name, msg)

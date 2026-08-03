@@ -86,6 +86,10 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	if err != nil {
 		return nil, err
 	}
+	outsideCollaborators, err := p.fetchOutsideCollaborators(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Org owners are only visible through the role filter: the member objects
 	// returned by the unfiltered listing carry no role at all.
@@ -106,8 +110,11 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	// events feed, an absent login really does mean no activity. Only fall back
 	// to the public feed — and only report it as such — when the audit log is
 	// unreachable (non-Enterprise org, or token missing read:audit_log).
-	logins := make([]string, 0, len(members))
+	logins := make([]string, 0, len(members)+len(outsideCollaborators))
 	for _, m := range members {
+		logins = append(logins, m.Login)
+	}
+	for _, m := range outsideCollaborators {
 		logins = append(logins, m.Login)
 	}
 	activityMap, auditOK := p.fetchOrgAuditLog(ctx, logins, time.Now())
@@ -124,41 +131,52 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 	// honest verdict for a member GitHub refuses to identify. Synthesising an
 	// address such as {login}@users.noreply.github.com would instead produce a
 	// confident external/orphan verdict about a mailbox nobody can act on.
-	all := make([]core.User, 0, len(members))
+	all := make([]core.User, 0, len(members)+len(outsideCollaborators))
 	for _, m := range members {
-		var email, displayName, emailSource string
-		if samlEmail, ok := samlMap[m.Login]; ok {
-			email, displayName, emailSource = samlEmail, m.Login, "saml"
-		} else {
-			var resolved bool
-			email, displayName, resolved = p.fetchUserEmail(ctx, m.Login)
-			if displayName == "" {
-				displayName = m.Login
-			}
-			emailSource = "profile"
-			if !resolved {
-				emailSource = "unresolved"
-			}
-		}
 		role := "member"
 		if isAdmin[strings.ToLower(m.Login)] {
 			role = "admin"
 		}
-		u := core.User{
-			Email:       email,
-			DisplayName: displayName,
-			Role:        role,
-			Status:      "active",
-			ProviderID:  fmt.Sprintf("%d", m.ID),
-			Metadata:    map[string]string{"login": m.Login, "email_source": emailSource},
-		}
-		if t, ok := activityMap[strings.ToLower(m.Login)]; ok {
-			u.LastActivityAt = &t
-		}
-		all = append(all, u)
+		all = append(all, p.githubUserFromMember(ctx, m, role, "member", samlMap, activityMap))
+	}
+	for _, m := range outsideCollaborators {
+		all = append(all, p.githubUserFromMember(ctx, m, "outside_collaborator", "outside_collaborator", samlMap, activityMap))
 	}
 
 	return all, nil
+}
+
+func (p *Provider) githubUserFromMember(ctx context.Context, m orgMember, role, accessKind string, samlMap map[string]string, activityMap map[string]time.Time) core.User {
+	var email, displayName, emailSource string
+	if samlEmail, ok := samlMap[m.Login]; ok {
+		email, displayName, emailSource = samlEmail, m.Login, "saml"
+	} else {
+		var resolved bool
+		email, displayName, resolved = p.fetchUserEmail(ctx, m.Login)
+		if displayName == "" {
+			displayName = m.Login
+		}
+		emailSource = "profile"
+		if !resolved {
+			emailSource = "unresolved"
+		}
+	}
+	u := core.User{
+		Email:       email,
+		DisplayName: displayName,
+		Role:        role,
+		Status:      "active",
+		ProviderID:  fmt.Sprintf("%d", m.ID),
+		Metadata: map[string]string{
+			"login":              m.Login,
+			"email_source":       emailSource,
+			"github_access_kind": accessKind,
+		},
+	}
+	if t, ok := activityMap[strings.ToLower(m.Login)]; ok {
+		u.LastActivityAt = &t
+	}
+	return u
 }
 
 // verifyOrgVisibility refuses to sync unless the token provably sees private members.
@@ -256,6 +274,27 @@ func (p *Provider) fetchMembers(ctx context.Context, role string) ([]orgMember, 
 	}
 
 	return members, nil
+}
+
+func (p *Provider) fetchOutsideCollaborators(ctx context.Context) ([]orgMember, error) {
+	var collaborators []orgMember
+
+	for page := 1; ; page++ {
+		url := fmt.Sprintf("%s/orgs/%s/outside_collaborators?filter=all&per_page=100&page=%d", p.baseURL, p.org, page)
+		pageMembers, hasNext, err := p.fetchMemberPage(ctx, url)
+		if err != nil {
+			return nil, err
+		}
+		if len(pageMembers) == 0 {
+			break
+		}
+		collaborators = append(collaborators, pageMembers...)
+		if !hasNext {
+			break
+		}
+	}
+
+	return collaborators, nil
 }
 
 func (p *Provider) fetchMemberPage(ctx context.Context, url string) (members []orgMember, hasNext bool, err error) {
@@ -815,10 +854,11 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 		return err
 	}
 
-	var login string
+	var login, accessKind string
 	for _, u := range users {
 		if u.Email == email {
 			login = u.Metadata["login"]
+			accessKind = u.Metadata["github_access_kind"]
 			break
 		}
 	}
@@ -826,7 +866,11 @@ func (p *Provider) RemoveUser(ctx context.Context, email string) error {
 		return fmt.Errorf("github: user %s not found", email)
 	}
 
-	url := fmt.Sprintf("%s/orgs/%s/members/%s", p.baseURL, p.org, login)
+	path := "members"
+	if accessKind == "outside_collaborator" {
+		path = "outside_collaborators"
+	}
+	url := fmt.Sprintf("%s/orgs/%s/%s/%s", p.baseURL, p.org, path, login)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
 		return err

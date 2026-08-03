@@ -72,7 +72,7 @@ func runOffboard(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if err := persistOffboardingDecisions(cmd.Context(), cert); err != nil {
+	if err := persistOffboardingResult(cmd.Context(), cert); err != nil {
 		return err
 	}
 
@@ -89,15 +89,15 @@ func runOffboard(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func persistOffboardingDecisions(ctx context.Context, cert *core.OffboardingCertificate) error {
-	if len(cert.Decisions) == 0 {
-		return nil
-	}
+func persistOffboardingResult(ctx context.Context, cert *core.OffboardingCertificate) error {
 	db, err := openStore()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = db.Close() }()
+	if err := db.UpsertOffboardingCertificate(ctx, *cert); err != nil {
+		return err
+	}
 	return db.UpsertDecisions(ctx, cert.Decisions)
 }
 

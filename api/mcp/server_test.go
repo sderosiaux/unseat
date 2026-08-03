@@ -276,3 +276,38 @@ func TestHandleRejectDecisionRequiresReason(t *testing.T) {
 	_, _, err = srv.handleRejectDecision(ctx, nil, decisionMutationInput{ID: decision.ID, By: "owner@test.com"})
 	require.Error(t, err)
 }
+
+func TestHandleCertificateTools(t *testing.T) {
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	ctx := context.Background()
+	started := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+	cert := core.OffboardingCertificate{
+		ID:          "cert_123",
+		Subject:     core.CanonicalIdentity{PrimaryEmail: "alice@test.com"},
+		Status:      core.CertificateIncomplete,
+		Mode:        core.CertificateModeObserve,
+		Trigger:     "manual",
+		StartedAt:   started,
+		CompletedAt: started.Add(time.Minute),
+		Providers:   []core.ProviderOffboardingReport{{Provider: "github"}},
+		Unknowns:    []string{"github: billing unknown"},
+	}
+	require.NoError(t, db.UpsertOffboardingCertificate(ctx, cert))
+
+	srv := New(db, &config.Config{})
+	_, listed, err := srv.handleListCertificates(ctx, nil, certificatesInput{
+		Subject: "alice@test.com",
+		Status:  string(core.CertificateIncomplete),
+	})
+	require.NoError(t, err)
+	require.Len(t, listed.Certificates, 1)
+	require.Equal(t, cert.ID, listed.Certificates[0].ID)
+
+	_, got, err := srv.handleGetCertificate(ctx, nil, certificateInput{ID: cert.ID})
+	require.NoError(t, err)
+	require.NotNil(t, got.Certificate)
+	require.Equal(t, "alice@test.com", got.Certificate.Subject.PrimaryEmail)
+}

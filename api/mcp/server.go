@@ -62,6 +62,16 @@ type decisionInput struct {
 	ID string `json:"id" jsonschema:"decision id"`
 }
 
+type certificatesInput struct {
+	Subject string `json:"subject,omitempty" jsonschema:"optional subject filter"`
+	Status  string `json:"status,omitempty" jsonschema:"optional certificate status filter"`
+	Limit   int    `json:"limit,omitempty" jsonschema:"maximum number of certificates to return (default 50)"`
+}
+
+type certificateInput struct {
+	ID string `json:"id" jsonschema:"offboarding certificate id"`
+}
+
 type decisionMutationInput struct {
 	ID     string `json:"id" jsonschema:"decision id"`
 	By     string `json:"by,omitempty" jsonschema:"actor recorded in the local decision ledger"`
@@ -109,6 +119,14 @@ type decisionOutput struct {
 
 type decisionEventsOutput struct {
 	Events []store.DecisionEvent `json:"events"`
+}
+
+type listCertificatesOutput struct {
+	Certificates []core.OffboardingCertificate `json:"certificates"`
+}
+
+type certificateOutput struct {
+	Certificate *core.OffboardingCertificate `json:"certificate,omitempty"`
 }
 
 type getMappingsOutput struct {
@@ -219,6 +237,16 @@ func (s *MCPServer) registerTools() {
 		Name:        "reject_decision",
 		Description: "Reject a proposed or approved decision with a reason. This does not mutate any provider.",
 	}, s.handleRejectDecision)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "list_offboarding_certificates",
+		Description: "List stored offboarding certificates from the local timeline",
+	}, s.handleListCertificates)
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "get_offboarding_certificate",
+		Description: "Get one stored offboarding certificate by id",
+	}, s.handleGetCertificate)
 
 	mcp.AddTool(s.server, &mcp.Tool{
 		Name:        "list_events",
@@ -459,6 +487,29 @@ func (s *MCPServer) handleRejectDecision(ctx context.Context, _ *mcp.CallToolReq
 	return nil, decisionOutput{Decision: decision}, nil
 }
 
+func (s *MCPServer) handleListCertificates(ctx context.Context, _ *mcp.CallToolRequest, input certificatesInput) (*mcp.CallToolResult, listCertificatesOutput, error) {
+	filter, err := certificateFilterFromMCP(input)
+	if err != nil {
+		return nil, listCertificatesOutput{}, err
+	}
+	certs, err := s.store.ListOffboardingCertificates(ctx, filter)
+	if err != nil {
+		return nil, listCertificatesOutput{}, err
+	}
+	if certs == nil {
+		certs = []core.OffboardingCertificate{}
+	}
+	return nil, listCertificatesOutput{Certificates: certs}, nil
+}
+
+func (s *MCPServer) handleGetCertificate(ctx context.Context, _ *mcp.CallToolRequest, input certificateInput) (*mcp.CallToolResult, certificateOutput, error) {
+	cert, err := s.store.GetOffboardingCertificate(ctx, input.ID)
+	if err != nil {
+		return nil, certificateOutput{}, err
+	}
+	return nil, certificateOutput{Certificate: cert}, nil
+}
+
 func decisionFilterFromMCP(input decisionsInput) (store.DecisionFilter, error) {
 	filter := store.DecisionFilter{Limit: input.Limit}
 	if filter.Limit == 0 {
@@ -482,6 +533,25 @@ func decisionFilterFromMCP(input decisionsInput) (store.DecisionFilter, error) {
 	return filter, nil
 }
 
+func certificateFilterFromMCP(input certificatesInput) (store.CertificateFilter, error) {
+	filter := store.CertificateFilter{Limit: input.Limit}
+	if filter.Limit == 0 {
+		filter.Limit = 50
+	}
+	if input.Subject != "" {
+		subject := strings.ToLower(strings.TrimSpace(input.Subject))
+		filter.Subject = &subject
+	}
+	if input.Status != "" {
+		status := core.CertificateStatus(strings.TrimSpace(input.Status))
+		if !validCertificateStatus(status) {
+			return store.CertificateFilter{}, fmt.Errorf("unknown certificate status %q", input.Status)
+		}
+		filter.Status = &status
+	}
+	return filter, nil
+}
+
 func validDecisionStatus(status core.DecisionStatus) bool {
 	switch status {
 	case core.DecisionProposed,
@@ -492,6 +562,19 @@ func validDecisionStatus(status core.DecisionStatus) bool {
 		core.DecisionBlocked,
 		core.DecisionStale,
 		core.DecisionVerificationFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func validCertificateStatus(status core.CertificateStatus) bool {
+	switch status {
+	case core.CertificateComplete,
+		core.CertificateCompleteWithProviderLimits,
+		core.CertificateBlocked,
+		core.CertificateIncomplete,
+		core.CertificateStale:
 		return true
 	default:
 		return false

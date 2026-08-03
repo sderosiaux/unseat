@@ -44,6 +44,8 @@ func (s *Server) setupRoutes() {
 		r.Get("/decisions", s.handleListDecisions)
 		r.Post("/decisions/{id}/approve", s.handleApproveDecision)
 		r.Post("/decisions/{id}/reject", s.handleRejectDecision)
+		r.Get("/offboarding/certificates", s.handleListOffboardingCertificates)
+		r.Get("/offboarding/certificates/{id}", s.handleGetOffboardingCertificate)
 		// Named for what it reads. As /orphans it invited "empty means no
 		// orphaned accounts", when it only ever meant "no removal is currently
 		// counting down" — a table that stays empty until a non-dry-run sync

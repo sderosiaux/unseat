@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/sderosiaux/unseat/config"
 	"github.com/sderosiaux/unseat/internal/core"
@@ -236,4 +237,42 @@ func TestHandleApproveAndRejectDecision(t *testing.T) {
 	assert.Equal(t, core.DecisionRejected, rejected.Status)
 	assert.Equal(t, "owner@co.com", rejected.RejectedBy)
 	assert.Equal(t, "keep during migration", rejected.RejectedReason)
+}
+
+func TestHandleOffboardingCertificates(t *testing.T) {
+	srv, db := setupTestServer(t)
+	cert := core.OffboardingCertificate{
+		ID:          "cert_123",
+		Subject:     core.CanonicalIdentity{PrimaryEmail: "alice@co.com"},
+		Status:      core.CertificateIncomplete,
+		Mode:        core.CertificateModeObserve,
+		Trigger:     "manual",
+		StartedAt:   coreTime(2026, 8, 2),
+		CompletedAt: coreTime(2026, 8, 2),
+		Providers:   []core.ProviderOffboardingReport{{Provider: "github"}},
+	}
+	require.NoError(t, db.UpsertOffboardingCertificate(context.Background(), cert))
+
+	req := httptest.NewRequest("GET", "/api/v1/offboarding/certificates?subject=alice@co.com", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var listed certificatesResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listed))
+	require.Len(t, listed.Certificates, 1)
+	assert.Equal(t, cert.ID, listed.Certificates[0].ID)
+
+	req = httptest.NewRequest("GET", "/api/v1/offboarding/certificates/"+cert.ID, nil)
+	w = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var got core.OffboardingCertificate
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, "alice@co.com", got.Subject.PrimaryEmail)
+}
+
+func coreTime(year int, month time.Month, day int) time.Time {
+	return time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 }

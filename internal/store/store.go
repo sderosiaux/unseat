@@ -33,6 +33,9 @@ type Store interface {
 	RejectDecision(ctx context.Context, id, rejector, reason string) (*core.Decision, error)
 	MarkDecisionExecuted(ctx context.Context, id, actor string) (*core.Decision, error)
 	MarkDecisionVerified(ctx context.Context, id, actor string) (*core.Decision, error)
+	UpsertOffboardingCertificate(ctx context.Context, certificate core.OffboardingCertificate) error
+	GetOffboardingCertificate(ctx context.Context, id string) (*core.OffboardingCertificate, error)
+	ListOffboardingCertificates(ctx context.Context, filter CertificateFilter) ([]core.OffboardingCertificate, error)
 	UpsertProviderCredentials(ctx context.Context, provider string, credentials []core.ClassifiedCredential) error
 	GetProviderCredentials(ctx context.Context, provider string) ([]core.ClassifiedCredential, error)
 	ListProviderCredentials(ctx context.Context) ([]core.ClassifiedCredential, error)
@@ -55,6 +58,12 @@ type DecisionFilter struct {
 	Subject  *string
 	Status   *core.DecisionStatus
 	Limit    int
+}
+
+type CertificateFilter struct {
+	Subject *string
+	Status  *core.CertificateStatus
+	Limit   int
 }
 
 type DecisionEvent struct {

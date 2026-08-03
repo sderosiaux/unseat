@@ -436,6 +436,41 @@ func TestDecisionLedgerExecutedAndVerifiedTransitions(t *testing.T) {
 	assert.Equal(t, "executed", events[1].EventType)
 }
 
+func TestOffboardingCertificatesRoundTripAndFilter(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	started := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+	cert := core.OffboardingCertificate{
+		ID:          "cert_123",
+		Subject:     core.CanonicalIdentity{PrimaryEmail: "alice@co.com"},
+		Status:      core.CertificateIncomplete,
+		Mode:        core.CertificateModeObserve,
+		Trigger:     "manual",
+		StartedAt:   started,
+		CompletedAt: started.Add(time.Minute),
+		Providers:   []core.ProviderOffboardingReport{{Provider: "github", UsersRead: 1}},
+		Decisions: []core.Decision{
+			core.NewDecision("alice@co.com", "github", core.ObjectWorkspaceMember, "alice@co.com", core.ActionRemoveWorkspaceMember, core.DecisionRiskHigh, "directory identity is suspended"),
+		},
+		Unknowns: []string{"github: provider will not say price"},
+	}
+	require.NoError(t, s.UpsertOffboardingCertificate(ctx, cert))
+
+	got, err := s.GetOffboardingCertificate(ctx, cert.ID)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "alice@co.com", got.Subject.PrimaryEmail)
+	require.Len(t, got.Providers, 1)
+	require.Len(t, got.Decisions, 1)
+
+	subject := "alice@co.com"
+	status := core.CertificateIncomplete
+	certs, err := s.ListOffboardingCertificates(ctx, CertificateFilter{Subject: &subject, Status: &status})
+	require.NoError(t, err)
+	require.Len(t, certs, 1)
+	assert.Equal(t, cert.ID, certs[0].ID)
+}
+
 func TestProviderCredentialsRoundTripAndReplace(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

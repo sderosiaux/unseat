@@ -1016,6 +1016,112 @@ func (s *SQLite) MarkDecisionVerified(ctx context.Context, id, actor string) (*c
 	return s.transitionDecision(ctx, id, actor, "", core.DecisionExecuted, core.DecisionVerified, "verified")
 }
 
+// --- Offboarding Certificates ---
+
+func (s *SQLite) UpsertOffboardingCertificate(ctx context.Context, certificate core.OffboardingCertificate) error {
+	if certificate.ID == "" {
+		return fmt.Errorf("offboarding certificate id is required")
+	}
+	payload, err := json.Marshal(certificate)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	_, err = s.db.ExecContext(ctx, `INSERT INTO offboarding_certificates (
+		id, tenant_id, subject, status, mode, trigger_source, started_at, completed_at,
+		provider_count, decision_count, unknown_count, payload_json, updated_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		tenant_id = excluded.tenant_id,
+		subject = excluded.subject,
+		status = excluded.status,
+		mode = excluded.mode,
+		trigger_source = excluded.trigger_source,
+		started_at = excluded.started_at,
+		completed_at = excluded.completed_at,
+		provider_count = excluded.provider_count,
+		decision_count = excluded.decision_count,
+		unknown_count = excluded.unknown_count,
+		payload_json = excluded.payload_json,
+		updated_at = excluded.updated_at`,
+		certificate.ID,
+		certificate.TenantID,
+		certificate.Subject.PrimaryEmail,
+		string(certificate.Status),
+		string(certificate.Mode),
+		certificate.Trigger,
+		certificate.StartedAt.UTC(),
+		certificate.CompletedAt.UTC(),
+		len(certificate.Providers),
+		len(certificate.Decisions),
+		len(certificate.Unknowns),
+		string(payload),
+		now,
+	)
+	return err
+}
+
+func (s *SQLite) GetOffboardingCertificate(ctx context.Context, id string) (*core.OffboardingCertificate, error) {
+	var payload string
+	err := s.db.QueryRowContext(ctx, `SELECT payload_json FROM offboarding_certificates WHERE id = ?`, id).Scan(&payload)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	cert, err := decodeOffboardingCertificate(payload)
+	if err != nil {
+		return nil, err
+	}
+	return &cert, nil
+}
+
+func (s *SQLite) ListOffboardingCertificates(ctx context.Context, filter CertificateFilter) ([]core.OffboardingCertificate, error) {
+	query := `SELECT payload_json FROM offboarding_certificates WHERE 1=1`
+	var args []any
+	if filter.Subject != nil {
+		query += ` AND subject = ?`
+		args = append(args, *filter.Subject)
+	}
+	if filter.Status != nil {
+		query += ` AND status = ?`
+		args = append(args, string(*filter.Status))
+	}
+	query += ` ORDER BY started_at DESC, id`
+	if filter.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, filter.Limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var certs []core.OffboardingCertificate
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		cert, err := decodeOffboardingCertificate(payload)
+		if err != nil {
+			return nil, err
+		}
+		certs = append(certs, cert)
+	}
+	return certs, rows.Err()
+}
+
+func decodeOffboardingCertificate(payload string) (core.OffboardingCertificate, error) {
+	var cert core.OffboardingCertificate
+	if err := json.Unmarshal([]byte(payload), &cert); err != nil {
+		return core.OffboardingCertificate{}, err
+	}
+	return cert, nil
+}
+
 func (s *SQLite) transitionDecision(ctx context.Context, id, actor, reason string, from, to core.DecisionStatus, eventType string) (*core.Decision, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

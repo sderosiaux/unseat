@@ -172,6 +172,10 @@ type decisionsResponse struct {
 	Decisions []core.Decision `json:"decisions"`
 }
 
+type certificatesResponse struct {
+	Certificates []core.OffboardingCertificate `json:"certificates"`
+}
+
 func (s *Server) handleListDecisions(w http.ResponseWriter, r *http.Request) {
 	filter, err := decisionFilterFromRequest(r)
 	if err != nil {
@@ -217,6 +221,36 @@ func (s *Server) handleRejectDecision(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, decision)
 }
 
+func (s *Server) handleListOffboardingCertificates(w http.ResponseWriter, r *http.Request) {
+	filter, err := certificateFilterFromRequest(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	certs, err := s.store.ListOffboardingCertificates(r.Context(), filter)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if certs == nil {
+		certs = []core.OffboardingCertificate{}
+	}
+	writeJSON(w, http.StatusOK, certificatesResponse{Certificates: certs})
+}
+
+func (s *Server) handleGetOffboardingCertificate(w http.ResponseWriter, r *http.Request) {
+	cert, err := s.store.GetOffboardingCertificate(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if cert == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "certificate not found"})
+		return
+	}
+	writeJSON(w, http.StatusOK, cert)
+}
+
 func decisionFilterFromRequest(r *http.Request) (store.DecisionFilter, error) {
 	query := r.URL.Query()
 	filter := store.DecisionFilter{Limit: 100}
@@ -239,6 +273,30 @@ func decisionFilterFromRequest(r *http.Request) (store.DecisionFilter, error) {
 		status := core.DecisionStatus(strings.TrimSpace(v))
 		if !validDecisionStatus(status) {
 			return store.DecisionFilter{}, fmt.Errorf("unknown decision status %q", v)
+		}
+		filter.Status = &status
+	}
+	return filter, nil
+}
+
+func certificateFilterFromRequest(r *http.Request) (store.CertificateFilter, error) {
+	query := r.URL.Query()
+	filter := store.CertificateFilter{Limit: 50}
+	if v := query.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return store.CertificateFilter{}, err
+		}
+		filter.Limit = n
+	}
+	if v := query.Get("subject"); v != "" {
+		subject := strings.ToLower(strings.TrimSpace(v))
+		filter.Subject = &subject
+	}
+	if v := query.Get("status"); v != "" {
+		status := core.CertificateStatus(strings.TrimSpace(v))
+		if !validCertificateStatus(status) {
+			return store.CertificateFilter{}, fmt.Errorf("unknown certificate status %q", v)
 		}
 		filter.Status = &status
 	}
@@ -274,6 +332,19 @@ func validDecisionStatus(status core.DecisionStatus) bool {
 		core.DecisionBlocked,
 		core.DecisionStale,
 		core.DecisionVerificationFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func validCertificateStatus(status core.CertificateStatus) bool {
+	switch status {
+	case core.CertificateComplete,
+		core.CertificateCompleteWithProviderLimits,
+		core.CertificateBlocked,
+		core.CertificateIncomplete,
+		core.CertificateStale:
 		return true
 	default:
 		return false

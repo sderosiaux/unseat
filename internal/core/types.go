@@ -63,6 +63,11 @@ type Capabilities struct {
 	CanSuspend bool `json:"can_suspend"`
 	CanSetRole bool `json:"can_set_role"`
 	HasWebhook bool `json:"has_webhook"`
+	// Actions is the capability model new workflow code should use. The legacy
+	// booleans above stay for existing commands and providers; ActionMatrix
+	// converts them into explicit action classes until each connector declares
+	// its own object/action surface.
+	Actions []ActionCapability `json:"actions,omitempty"`
 	// SuspendedBilling declares the vendor's billing behaviour for deactivated
 	// seats. Leave it unset unless the vendor's own documentation or contract
 	// says so — a wrong value here invents or hides real money.

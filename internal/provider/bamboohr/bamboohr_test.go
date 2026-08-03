@@ -19,7 +19,7 @@ func TestProviderName(t *testing.T) {
 func TestProviderCapabilities(t *testing.T) {
 	p := New("api-key", "acme")
 	caps := p.Capabilities()
-	assert.True(t, caps.CanRemove)
+	assert.False(t, caps.CanRemove)
 	assert.False(t, caps.CanAdd)
 	assert.False(t, caps.CanSuspend)
 	assert.False(t, caps.CanSetRole)
@@ -38,7 +38,7 @@ func TestListUsers(t *testing.T) {
 		require.NoError(t, json.NewEncoder(w).Encode(directoryResponse{
 			Employees: []directoryEmployee{
 				{ID: "101", DisplayName: "Alice Smith", WorkEmail: "alice@co.com", JobTitle: "Engineer"},
-				{ID: "102", DisplayName: "Bob Jones", WorkEmail: "bob@co.com", JobTitle: "Designer"},
+				{ID: "102", DisplayName: "Bob Jones", WorkEmail: "bob@co.com", JobTitle: "Designer", Status: "Inactive"},
 			},
 		}))
 	}))
@@ -56,49 +56,44 @@ func TestListUsers(t *testing.T) {
 	assert.Equal(t, "101", users[0].ProviderID)
 
 	assert.Equal(t, "bob@co.com", users[1].Email)
+	assert.Equal(t, "suspended", users[1].Status)
 	assert.Equal(t, "102", users[1].ProviderID)
 }
 
-func TestRemoveUser(t *testing.T) {
+func TestNormalizeEmployeeStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		status string
+	}{
+		{name: "blank defaults active", input: "", status: "active"},
+		{name: "active", input: "Active", status: "active"},
+		{name: "current", input: "current", status: "active"},
+		{name: "employed", input: " employed ", status: "active"},
+		{name: "inactive", input: "Inactive", status: "suspended"},
+		{name: "terminated", input: "terminated", status: "suspended"},
+		{name: "unknown is not destructive", input: "leave_of_absence", status: "active"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.status, normalizeEmployeeStatus(tt.input))
+		})
+	}
+}
+
+func TestRemoveUserNotSupported(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		if r.Method == http.MethodGet {
-			require.NoError(t, json.NewEncoder(w).Encode(directoryResponse{
-				Employees: []directoryEmployee{
-					{ID: "101", DisplayName: "Alice", WorkEmail: "alice@co.com"},
-				},
-			}))
-		} else {
-			assert.Equal(t, http.MethodPost, r.Method)
-			assert.Equal(t, "/api/gateway.php/acme/v1/employees/101", r.URL.Path)
-			user, pass, ok := r.BasicAuth()
-			assert.True(t, ok)
-			assert.Equal(t, "api-key", user)
-			assert.Equal(t, "x", pass)
-			w.WriteHeader(http.StatusOK)
-		}
 	}))
 	defer server.Close()
 
 	p := New("api-key", "acme").WithBaseURL(server.URL)
 	err := p.RemoveUser(context.Background(), "alice@co.com")
-	require.NoError(t, err)
-	assert.Equal(t, 2, callCount)
-}
-
-func TestRemoveUserNotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, json.NewEncoder(w).Encode(directoryResponse{
-			Employees: []directoryEmployee{},
-		}))
-	}))
-	defer server.Close()
-
-	p := New("api-key", "acme").WithBaseURL(server.URL)
-	err := p.RemoveUser(context.Background(), "nobody@co.com")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	assert.Contains(t, err.Error(), "read-only HR identity source")
+	assert.Equal(t, 0, callCount)
 }
 
 func TestAPIError(t *testing.T) {

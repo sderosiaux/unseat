@@ -3,7 +3,6 @@ package rippling
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -21,8 +20,8 @@ func TestProviderName(t *testing.T) {
 func TestProviderCapabilities(t *testing.T) {
 	p := New("test-token")
 	caps := p.Capabilities()
-	assert.True(t, caps.CanRemove)
-	assert.True(t, caps.CanSuspend)
+	assert.False(t, caps.CanRemove)
+	assert.False(t, caps.CanSuspend)
 	assert.False(t, caps.CanAdd)
 	assert.False(t, caps.CanSetRole)
 	assert.False(t, caps.HasWebhook)
@@ -157,58 +156,18 @@ func TestListUsersStopsOnEmptyPage(t *testing.T) {
 	assert.Equal(t, 2, callCount)
 }
 
-func TestRemoveUser(t *testing.T) {
+func TestRemoveUserNotSupported(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		if r.Method == http.MethodGet {
-			require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
-				Resources: []scimUser{
-					{ID: "R1", DisplayName: "Alice", Emails: []scimEmail{{Value: "alice@co.com", Primary: true}}, Active: true},
-				},
-				TotalResults: 1,
-				ItemsPerPage: 100,
-				StartIndex:   1,
-			}))
-		} else {
-			assert.Equal(t, http.MethodPatch, r.Method)
-			assert.Equal(t, "/scim/v2/Users/R1", r.URL.Path)
-			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
-
-			body, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
-			var patch map[string]any
-			require.NoError(t, json.Unmarshal(body, &patch))
-			ops := patch["Operations"].([]any)
-			op := ops[0].(map[string]any)
-			assert.Equal(t, "replace", op["op"])
-
-			w.WriteHeader(http.StatusOK)
-		}
 	}))
 	defer server.Close()
 
 	p := New("test-token").WithBaseURL(server.URL)
 	err := p.RemoveUser(context.Background(), "alice@co.com")
-	require.NoError(t, err)
-	assert.Equal(t, 2, callCount)
-}
-
-func TestRemoveUserNotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, json.NewEncoder(w).Encode(scimListResponse{
-			Resources:    []scimUser{},
-			TotalResults: 0,
-			ItemsPerPage: 100,
-			StartIndex:   1,
-		}))
-	}))
-	defer server.Close()
-
-	p := New("test-token").WithBaseURL(server.URL)
-	err := p.RemoveUser(context.Background(), "nobody@co.com")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	assert.Contains(t, err.Error(), "read-only HR identity source")
+	assert.Equal(t, 0, callCount)
 }
 
 func TestAPIError(t *testing.T) {

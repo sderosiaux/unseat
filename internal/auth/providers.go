@@ -350,17 +350,17 @@ var KnownProviders = map[string]ProviderAuth{
 	"rippling": {
 		Name:         "rippling",
 		AuthMethod:   "api_key",
-		Instructions: "Set up SCIM provisioning in Rippling admin. Use the SCIM bearer token.",
+		Instructions: "Use a read-only SCIM/API token where available. unseat treats Rippling as an HR identity source and will not deactivate users.",
 	},
 	"bamboohr": {
 		Name:         "bamboohr",
 		AuthMethod:   "api_key",
-		Instructions: "Create an API key in BambooHR > Account > API Keys. Uses Basic auth (key as username). Requires extra.subdomain.",
+		Instructions: "Create a BambooHR API key with directory read access. Uses Basic auth (key as username). Requires extra.subdomain. unseat will not terminate employees.",
 	},
 	"deel": {
 		Name:         "deel",
 		AuthMethod:   "api_key",
-		Instructions: "Create an API token at https://app.deel.com/developer-center",
+		Instructions: "Create a read-only API token at https://app.deel.com/developer-center. unseat treats Deel as an HR identity source and will not terminate people.",
 	},
 
 	// --- Data ---

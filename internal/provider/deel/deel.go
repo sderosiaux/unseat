@@ -30,9 +30,7 @@ func (p *Provider) WithBaseURL(url string) *Provider {
 func (p *Provider) Name() string { return "deel" }
 
 func (p *Provider) Capabilities() core.Capabilities {
-	return core.Capabilities{
-		CanRemove: true,
-	}
+	return core.Capabilities{}
 }
 
 type deelPerson struct {
@@ -114,31 +112,8 @@ func (p *Provider) AddUser(_ context.Context, _, _ string) error {
 	return fmt.Errorf("deel: programmatic user creation not supported")
 }
 
-func (p *Provider) RemoveUser(ctx context.Context, email string) error {
-	users, err := p.ListUsers(ctx)
-	if err != nil {
-		return err
-	}
-
-	var personID string
-	for _, u := range users {
-		if u.Email == email {
-			personID = u.ProviderID
-			break
-		}
-	}
-	if personID == "" {
-		return fmt.Errorf("deel: user %s not found", email)
-	}
-
-	url := fmt.Sprintf("%s/rest/v2/people/%s/terminate", p.baseURL, personID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+p.token)
-
-	return p.client.DoJSON(ctx, "deel", req, nil)
+func (p *Provider) RemoveUser(_ context.Context, _ string) error {
+	return fmt.Errorf("deel: removal is not supported; treat Deel as a read-only HR identity source, not a SaaS seat target")
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

@@ -208,16 +208,16 @@ func (r *Reconciler) executeActions(ctx context.Context, name string, p provider
 	}
 
 	for _, ua := range plan.ToRemove {
+		if !caps.CanRemove {
+			slog.Warn("removal skipped: provider does not support it",
+				"provider", name, "email", ua.Email)
+			continue
+		}
 		if r.config.Policies.GracePeriod > 0 {
 			if err := r.store.InsertPendingRemoval(ctx, name, ua.Email, time.Now().Add(r.config.Policies.GracePeriod)); err != nil {
 				slog.Error("failed to insert pending removal", "provider", name, "email", ua.Email, "error", err)
 			}
 			r.sendNotification(ctx, name, ua.Email, "pending_removal")
-			continue
-		}
-		if !caps.CanRemove {
-			slog.Warn("removal skipped: provider does not support it",
-				"provider", name, "email", ua.Email)
 			continue
 		}
 		r.removeSeat(ctx, name, p, ua.Email, ua.Target())

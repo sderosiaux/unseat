@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/sderosiaux/unseat/internal/core"
 	"github.com/sderosiaux/unseat/internal/provider/httpclient"
@@ -31,9 +32,7 @@ func (p *Provider) WithBaseURL(url string) *Provider {
 func (p *Provider) Name() string { return "bamboohr" }
 
 func (p *Provider) Capabilities() core.Capabilities {
-	return core.Capabilities{
-		CanRemove: true,
-	}
+	return core.Capabilities{}
 }
 
 type directoryEmployee struct {
@@ -73,43 +72,30 @@ func (p *Provider) ListUsers(ctx context.Context) ([]core.User, error) {
 			Email:       e.WorkEmail,
 			DisplayName: e.DisplayName,
 			Role:        "member",
-			Status:      "active",
+			Status:      normalizeEmployeeStatus(e.Status),
 			ProviderID:  e.ID,
 		})
 	}
 	return users, nil
 }
 
+func normalizeEmployeeStatus(status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "inactive", "terminated":
+		return core.StatusSuspended
+	case "", "active", "current", "employed":
+		return core.StatusActive
+	default:
+		return core.StatusActive
+	}
+}
+
 func (p *Provider) AddUser(_ context.Context, _, _ string) error {
 	return fmt.Errorf("bamboohr: programmatic user creation not supported")
 }
 
-func (p *Provider) RemoveUser(ctx context.Context, email string) error {
-	users, err := p.ListUsers(ctx)
-	if err != nil {
-		return err
-	}
-
-	var employeeID string
-	for _, u := range users {
-		if u.Email == email {
-			employeeID = u.ProviderID
-			break
-		}
-	}
-	if employeeID == "" {
-		return fmt.Errorf("bamboohr: user %s not found", email)
-	}
-
-	url := fmt.Sprintf("%s/api/gateway.php/%s/v1/employees/%s", p.baseURL, p.subdomain, employeeID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
-	if err != nil {
-		return err
-	}
-	p.setBasicAuth(req)
-	req.Header.Set("Content-Type", "application/json")
-
-	return p.client.DoJSON(ctx, "bamboohr", req, nil)
+func (p *Provider) RemoveUser(_ context.Context, _ string) error {
+	return fmt.Errorf("bamboohr: removal is not supported; treat BambooHR as a read-only HR identity source, not a SaaS seat target")
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

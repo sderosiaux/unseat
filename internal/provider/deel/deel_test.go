@@ -19,7 +19,7 @@ func TestProviderName(t *testing.T) {
 func TestProviderCapabilities(t *testing.T) {
 	p := New("test-token")
 	caps := p.Capabilities()
-	assert.True(t, caps.CanRemove)
+	assert.False(t, caps.CanRemove)
 	assert.False(t, caps.CanAdd)
 	assert.False(t, caps.CanSuspend)
 	assert.False(t, caps.CanSetRole)
@@ -92,45 +92,18 @@ func TestListUsersPagination(t *testing.T) {
 	assert.Equal(t, "u3@co.com", users[2].Email)
 }
 
-func TestRemoveUser(t *testing.T) {
+func TestRemoveUserNotSupported(t *testing.T) {
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
-		if r.Method == http.MethodGet {
-			require.NoError(t, json.NewEncoder(w).Encode(deelListResponse{
-				Data: []deelPerson{
-					{ID: "D1", FullName: "Alice", WorkEmail: "alice@co.com", State: "active"},
-				},
-				Page: deelPage{Offset: 0, Limit: 100, TotalRows: 1},
-			}))
-		} else {
-			assert.Equal(t, http.MethodPost, r.Method)
-			assert.Equal(t, "/rest/v2/people/D1/terminate", r.URL.Path)
-			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
-			w.WriteHeader(http.StatusOK)
-		}
 	}))
 	defer server.Close()
 
 	p := New("test-token").WithBaseURL(server.URL)
 	err := p.RemoveUser(context.Background(), "alice@co.com")
-	require.NoError(t, err)
-	assert.Equal(t, 2, callCount)
-}
-
-func TestRemoveUserNotFound(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, json.NewEncoder(w).Encode(deelListResponse{
-			Data: []deelPerson{},
-			Page: deelPage{Offset: 0, Limit: 100, TotalRows: 0},
-		}))
-	}))
-	defer server.Close()
-
-	p := New("test-token").WithBaseURL(server.URL)
-	err := p.RemoveUser(context.Background(), "nobody@co.com")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not found")
+	assert.Contains(t, err.Error(), "read-only HR identity source")
+	assert.Equal(t, 0, callCount)
 }
 
 func TestAPIError(t *testing.T) {

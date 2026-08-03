@@ -87,9 +87,9 @@ Kubernetes-style reconciliation: define which Google Groups map to which SaaS pr
 | unverified | | Claude Code | Admin API | yes (filtered) |
 | unverified | **Finance** | Brex | REST v2 | yes (disable) |
 | unverified | | Stripe | SCIM v2 | yes |
-| unverified | **HR** | Rippling | SCIM v2 | yes (deactivate) |
-| unverified | | BambooHR | REST | yes (terminate) |
-| unverified | | Deel | REST v2 | yes (terminate) |
+| unverified | **HR** | Rippling | SCIM v2 | no (read-only HR source) |
+| unverified | | BambooHR | REST | no (read-only HR source) |
+| unverified | | Deel | REST v2 | no (read-only HR source) |
 | unverified | **Data** | Airtable | Enterprise API | yes |
 | unverified | | Snowflake | SCIM v2 | yes (deactivate) |
 | unverified | | Databricks | SCIM v2 | yes (deactivate) |

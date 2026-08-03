@@ -226,6 +226,62 @@ func TestReconcilerGracePeriod(t *testing.T) {
 	assert.Equal(t, "old@co.com", removals[0].Email)
 }
 
+func TestReconcilerDoesNotQueuePendingRemovalWhenProviderCannotRemove(t *testing.T) {
+	identity := &fakeIdentity{
+		groups: map[string][]core.User{
+			"design@co.com": {{Email: "alice@co.com"}},
+		},
+		users: directoryOf("alice@co.com"), // old@co.com has left
+	}
+
+	target := &fakeTarget{
+		name:  "bamboohr",
+		users: []core.User{{Email: "alice@co.com"}, {Email: "old@co.com"}},
+		caps:  core.Capabilities{CanRemove: false},
+	}
+
+	reg := provider.NewRegistry()
+	reg.Register(target)
+
+	db, err := store.NewSQLite(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+
+	var notifyCount atomic.Int32
+	srv := newSlackMock(t, &notifyCount)
+	defer srv.Close()
+
+	d := notify.NewDispatcher([]string{"slack:#ops"}, notify.NotifyConfig{
+		SlackWebhookURL: srv.URL,
+	})
+
+	cfg := &config.Config{
+		IdentitySource: config.IdentitySource{Domain: "co.com"},
+		Mappings: []config.Mapping{
+			{Group: "design@co.com", Providers: []config.ProviderMapping{{Name: "bamboohr", Role: "member"}}},
+		},
+		Policies: config.Policies{
+			DryRun:         false,
+			GracePeriod:    72 * time.Hour,
+			NotifyOnRemove: true,
+		},
+	}
+
+	r := NewReconciler(db, cfg, reg, identity, WithNotifier(d))
+	results, err := r.Run(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, results, 1)
+	require.Len(t, results[0].ToRemove, 1)
+	assert.Equal(t, "old@co.com", results[0].ToRemove[0].Email)
+	assert.Empty(t, target.removed)
+	assert.Equal(t, int32(0), notifyCount.Load(), "non-removable providers must not announce pending removals")
+
+	removals, err := db.GetPendingRemovals(context.Background(), "bamboohr")
+	require.NoError(t, err)
+	assert.Empty(t, removals, "non-removable providers must not queue removals they cannot execute")
+}
+
 func TestReconcilerExceptions(t *testing.T) {
 	identity := &fakeIdentity{
 		groups: map[string][]core.User{

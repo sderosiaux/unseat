@@ -1,9 +1,7 @@
 package rippling
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -32,10 +30,7 @@ func (p *Provider) WithBaseURL(url string) *Provider {
 func (p *Provider) Name() string { return "rippling" }
 
 func (p *Provider) Capabilities() core.Capabilities {
-	return core.Capabilities{
-		CanRemove:  true,
-		CanSuspend: true,
-	}
+	return core.Capabilities{}
 }
 
 type scimEmail struct {
@@ -101,39 +96,8 @@ func (p *Provider) AddUser(_ context.Context, _, _ string) error {
 	return fmt.Errorf("rippling: programmatic user creation not supported via SCIM API")
 }
 
-func (p *Provider) RemoveUser(ctx context.Context, email string) error {
-	users, err := p.ListUsers(ctx)
-	if err != nil {
-		return err
-	}
-
-	var userID string
-	for _, u := range users {
-		if u.Email == email {
-			userID = u.ProviderID
-			break
-		}
-	}
-	if userID == "" {
-		return fmt.Errorf("rippling: user %s not found", email)
-	}
-
-	patchBody, _ := json.Marshal(map[string]any{
-		"schemas": []string{"urn:ietf:params:scim:api:messages:2.0:PatchOp"},
-		"Operations": []map[string]any{
-			{"op": "replace", "value": map[string]any{"active": false}},
-		},
-	})
-
-	url := fmt.Sprintf("%s/scim/v2/Users/%s", p.baseURL, userID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(patchBody))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+p.token)
-	req.Header.Set("Content-Type", "application/scim+json")
-
-	return p.client.DoJSON(ctx, "rippling", req, nil)
+func (p *Provider) RemoveUser(_ context.Context, _ string) error {
+	return fmt.Errorf("rippling: removal is not supported; treat Rippling as a read-only HR identity source, not a SaaS seat target")
 }
 
 func (p *Provider) SetRole(_ context.Context, _, _ string) error {

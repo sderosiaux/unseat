@@ -1,0 +1,1462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>unseat — Offboarding is not done when the account is disabled.</title>
+<meta name="description" content="unseat follows the person across your stack, closes what can be closed, and hands you a certificate that says what is done, what is blocked, and what no API will tell you.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Archivo:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============ TOKENS ============ */
+:root{
+  --paper:#FAF8F3; --paper-sunk:#F3EFE6; --paper-raised:#FFFDF8; --paper-edge:#ECE6D9;
+  --ink:#16130F; --ink-2:#3F3A32; --ink-3:#6B655B; --ink-4:#9A9287;
+  --rule:#D8D1C1; --rule-strong:#B9B09C; --rule-hair:#E6E0D2;
+  --seal:#C2402A; --seal-deep:#9B3220; --seal-wash:#F8EAE6;
+  --st-complete:#14654A; --st-complete-bg:#E4EFE9; --st-complete-br:#9CC0B0;
+  --st-limits:#14654A;   --st-limits-bg:#E4EFE9;   --st-limits-br:#9CC0B0;
+  --st-blocked:#9A6408;  --st-blocked-bg:#F6EDDA;  --st-blocked-br:#D9BE84;
+  --st-incomplete:#A8331C; --st-incomplete-bg:#F8E7E2; --st-incomplete-br:#E0AC9E;
+  --st-stale:#4E5A66;    --st-stale-bg:#E9ECEF;    --st-stale-br:#B3BCC5;
+  --hatch:repeating-linear-gradient(45deg,transparent 0 3px,color-mix(in srgb,currentColor 22%,transparent) 3px 4px);
+  --ease:cubic-bezier(0.2,0.7,0.2,1); --dur:220ms; --dur-l:420ms;
+  --shadow:0 1px 0 var(--rule),0 8px 24px -16px rgba(22,19,15,.18);
+  --page-max:1320px; --rail-w:88px; --margin-w:200px;
+  --f-display:"Fraunces",Georgia,serif;
+  --f-text:"Archivo","Helvetica Neue",sans-serif;
+  --f-mono:"IBM Plex Mono","Courier New",monospace;
+}
+/* ============ BASE ============ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{
+  background:var(--paper); color:var(--ink-2);
+  font-family:var(--f-text); font-size:17px; line-height:28px;
+  -webkit-font-smoothing:antialiased; font-variant-numeric:tabular-nums;
+}
+body::after{
+  content:""; position:fixed; inset:0; z-index:9999; pointer-events:none;
+  background-image:url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3"/></filter><rect width="100%25" height="100%25" filter="url(%23n)"/></svg>');
+  opacity:.025; mix-blend-mode:multiply;
+}
+h1,h2{font-family:var(--f-display);font-weight:600;color:var(--ink);text-wrap:balance}
+h1{font-size:60px;line-height:62px;letter-spacing:-0.022em}
+h2{font-size:38px;line-height:44px;letter-spacing:-0.016em}
+h3{font-family:var(--f-text);font-weight:600;font-size:22px;line-height:30px;letter-spacing:-0.008em;color:var(--ink)}
+p{max-width:66ch}
+.lead{font-size:20px;line-height:32px;text-wrap:pretty}
+.small{font-size:14px;line-height:22px}
+.label{font-family:var(--f-text);font-weight:600;font-size:11px;line-height:14px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-4)}
+.mono{font-family:var(--f-mono);font-size:15px;line-height:26px}
+.mono-sm{font-family:var(--f-mono);font-size:13px;line-height:22px}
+.stat{font-family:var(--f-mono);font-weight:500;font-size:44px;line-height:44px;letter-spacing:-0.02em}
+a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--rule-strong);text-decoration-thickness:1px;text-underline-offset:4px;transition:text-decoration-thickness 120ms var(--ease)}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--seal);outline-offset:3px}
+button{font:inherit;cursor:pointer;background:none;border:none;color:inherit}
+/* ============ LAYOUT ============ */
+.page{max-width:var(--page-max);margin:0 auto;padding-left:var(--rail-w)}
+.section{position:relative;padding:96px 0}
+.section-rule{position:relative;border-top:1px solid var(--rule-strong)}
+.folio-tag{
+  position:absolute;top:-8px;left:0;background:var(--paper);padding-right:12px;
+  font-family:var(--f-text);font-weight:600;font-size:11px;letter-spacing:.12em;color:var(--ink-4);
+}
+.content{width:min(1000px,100%);padding-right:var(--margin-w);position:relative}
+.content--full{padding-right:0}
+/* margin annotation */
+.margin-note{
+  position:absolute;right:0;top:0;width:calc(var(--margin-w) - 24px);
+  font-size:14px;line-height:22px;color:var(--ink-3);
+  border-left:2px solid var(--seal);padding-left:12px;
+  opacity:0;transition:opacity 120ms var(--ease);pointer-events:none;
+}
+.margin-note.visible{opacity:1}
+.margin-note .mono-sm{color:var(--ink-3);word-break:break-all}
+/* ============ RAIL ============ */
+.rail{
+  position:fixed;top:0;left:max(0px,calc((100vw - var(--page-max))/2));bottom:0;width:var(--rail-w);
+  border-right:1px solid var(--rule-strong);z-index:100;background:var(--paper);
+  display:flex;flex-direction:column;align-items:center;padding:24px 0;
+}
+.rail::before{content:"";position:absolute;top:0;right:-1px;width:1px;height:100%;background:var(--rule-strong);transform-origin:top;animation:drawY 260ms var(--ease)}
+.rail-brand{font-family:var(--f-mono);font-weight:600;font-size:13px;color:var(--ink);writing-mode:horizontal-tb}
+.rail-folio{margin-top:32px;font-family:var(--f-text);font-weight:600;font-size:11px;letter-spacing:.12em;color:var(--ink)}
+.rail-clock{margin-top:8px;font-family:var(--f-mono);font-size:10px;color:var(--ink-4);white-space:nowrap}
+.rail-ticks{flex:1;display:flex;flex-direction:column;justify-content:center;gap:14px;margin:24px 0}
+.rail-tick{width:12px;height:1px;background:var(--rule-strong);position:relative;transition:background 120ms var(--ease)}
+.rail-tick.read{background:var(--seal);width:16px}
+.rail-tick.active::after{content:"";position:absolute;left:-6px;top:-3px;width:7px;height:7px;background:var(--seal)}
+.rail-seal{
+  width:44px;height:44px;border-radius:9999px;border:1px solid var(--rule-strong);
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--f-mono);font-weight:600;font-size:9px;color:var(--ink-4);
+  position:relative;transition:all var(--dur) var(--ease);
+}
+.rail-seal::before{content:"";position:absolute;inset:3px;border-radius:9999px;border:2px solid var(--rule-strong);transition:border-color var(--dur) var(--ease)}
+.rail-seal.stale{color:var(--st-stale)}
+.rail-seal.stale::before{border-color:var(--st-stale)}
+.rail-seal.filled{color:var(--seal);border-color:var(--seal)}
+.rail-seal.filled::before{border-color:var(--seal)}
+/* rail collapsed to top band under 1200 */
+@media (max-width:1199px){
+  .rail{position:sticky;top:0;left:0;width:100%;height:36px;flex-direction:row;padding:0 16px;gap:16px;border-right:none;border-bottom:1px solid var(--rule-strong)}
+  .rail::before{display:none}
+  .rail-ticks{flex-direction:row;margin:0;flex:1;justify-content:flex-start;gap:8px}
+  .rail-tick{width:8px}
+  .rail-folio{margin-top:0}
+  .rail-clock{margin-top:0}
+  .rail-seal{width:24px;height:24px;font-size:6px}
+  .page{padding:0 24px}
+  .content{padding-right:0}
+  .margin-note{position:static;width:100%;margin-top:8px}
+}
+/* ============ SHARED MOTIFS ============ */
+.doc-card{
+  background:var(--paper-raised);border:1px solid var(--rule-strong);border-radius:2px;
+  box-shadow:var(--shadow);position:relative;
+}
+.crop{position:relative}
+.crop::before,.crop::after,
+.crop .crop-b::before,.crop .crop-b::after{
+  content:"";position:absolute;width:8px;height:8px;border:0 solid var(--rule-strong);
+}
+.crop::before{top:-6px;left:-6px;border-top-width:1px;border-left-width:1px}
+.crop::after{top:-6px;right:-6px;border-top-width:1px;border-right-width:1px}
+.crop .crop-b::before{bottom:-6px;left:-6px;border-bottom-width:1px;border-left-width:1px}
+.crop .crop-b::after{bottom:-6px;right:-6px;border-bottom-width:1px;border-right-width:1px}
+.dotline{display:flex;align-items:baseline;gap:8px}
+.dotline .dots{flex:1;border-bottom:2px dotted var(--rule);transform:translateY(-4px)}
+.stamp{
+  display:inline-flex;align-items:center;justify-content:center;text-align:center;
+  border:1px solid var(--seal);border-radius:9999px;position:relative;
+  font-family:var(--f-mono);font-weight:600;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--seal);opacity:.9;mix-blend-mode:multiply;transform:rotate(-7deg);
+  padding:18px 14px;
+}
+.stamp::before{content:"";position:absolute;inset:4px;border-radius:9999px;border:2px solid var(--seal)}
+.redact{background:var(--ink);color:var(--ink);border-radius:1px;cursor:help;position:relative}
+.redact:hover::after{
+  content:attr(data-redaction);position:absolute;left:0;bottom:calc(100% + 6px);z-index:10;
+  background:var(--paper-raised);color:var(--ink-3);border:1px solid var(--rule-strong);
+  padding:4px 8px;font-family:var(--f-mono);font-size:11px;line-height:16px;white-space:nowrap;border-radius:2px;
+}
+.hatched{color:var(--ink-3);background-image:var(--hatch)}
+/* status chips: color AND shape */
+.st{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono);font-size:13px;line-height:22px;padding:1px 8px;border-radius:4px}
+.st--complete{color:var(--st-complete);background:var(--st-complete-bg);border:1px solid var(--st-complete-br)}
+.st--limits{color:var(--st-limits);background-color:var(--st-limits-bg);background-image:var(--hatch);border:1px solid var(--st-limits-br);border-right-style:dashed}
+.st--blocked{color:var(--st-blocked);background:var(--st-blocked-bg);border:1px solid var(--st-blocked-br);border-left-width:3px}
+.st--incomplete{color:var(--st-incomplete);background:var(--st-incomplete-bg);border:1px solid var(--st-incomplete-br);outline:1px solid var(--st-incomplete-br);outline-offset:2px}
+.st--stale{color:var(--st-stale);background:var(--st-stale-bg);border:1px dashed var(--st-stale-br)}
+.st--stale::after{content:"↻"}
+/* buttons */
+.btn{
+  display:inline-block;background:var(--seal);color:var(--paper);border-radius:4px;
+  padding:14px 28px;font-weight:500;font-size:17px;text-decoration:none;
+  transition:all 120ms var(--ease);
+}
+.btn:hover{background:var(--seal-deep);transform:translateY(-1px);box-shadow:0 3px 0 var(--seal-deep)}
+.btn:active{transform:translateY(1px);box-shadow:none}
+.btn-ghost{
+  background:var(--paper);color:var(--ink);border:1px solid var(--rule-strong);border-radius:4px;
+  padding:8px 16px;font-size:14px;transition:border-color 120ms var(--ease);
+}
+.btn-ghost:hover{border-color:var(--ink)}
+/* registry tables */
+table.registry{width:100%;border-collapse:collapse}
+table.registry th{
+  font-family:var(--f-text);font-weight:600;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ink-4);text-align:left;padding:10px 12px;background:var(--paper-edge);
+}
+table.registry td{padding:12px;border-top:1px solid var(--rule-hair);vertical-align:top}
+table.registry .idx{font-family:var(--f-text);font-weight:600;font-size:11px;letter-spacing:.12em;color:var(--ink-4);width:28px}
+/* reveal */
+.reveal{opacity:0;transform:translateY(8px);transition:opacity var(--dur-l) var(--ease),transform var(--dur-l) var(--ease)}
+.reveal.in{opacity:1;transform:none}
+@keyframes drawY{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+@keyframes drawX{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes lineIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@keyframes stampIn{from{opacity:0;transform:rotate(-7deg) scale(1.06)}to{opacity:.9;transform:rotate(-7deg) scale(1)}}
+@keyframes hatchShift{from{background-position:0 0}to{background-position:4px 4px}}
+.st--limits:hover,.cell-unknown:hover{animation:hatchShift 800ms linear infinite}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .reveal{opacity:1;transform:none}
+  html{scroll-behavior:auto}
+}
+/* ============ §01 HERO ============ */
+.hero{display:grid;grid-template-columns:5fr 7fr;gap:24px;align-items:start;padding-top:64px}
+.hero-left{padding-top:32px}
+.hero-left .lead{margin-top:24px}
+.hero-ctas{margin-top:40px;display:flex;flex-direction:column;gap:12px;align-items:flex-start}
+.hero-ctas .sub{color:var(--ink-3)}
+.cert{margin-top:-32px;margin-right:-40px;z-index:5}
+.cert-head{padding:16px 24px;border-bottom:3px double var(--rule-strong);display:flex;justify-content:space-between;align-items:center}
+.cert-tabs{display:flex;gap:4px}
+.cert-tab{font-family:var(--f-mono);font-size:12px;padding:3px 10px;border:1px solid transparent;border-radius:4px;color:var(--ink-3)}
+.cert-tab:hover{border-color:var(--rule)}
+.cert-tab[aria-selected="true"]{border-color:var(--ink);color:var(--ink)}
+.cert-body{display:grid;grid-template-columns:11fr 9fr;position:relative}
+.cert-body::before{content:"";position:absolute;left:55%;top:12px;bottom:12px;border-left:3px dotted var(--rule-strong)}
+.cert-col{padding:20px 20px 56px;font-family:var(--f-mono);font-size:13px;line-height:26px;min-width:0}
+.cert-statusline{padding:10px 20px;border-top:1px solid var(--rule-hair);font-family:var(--f-mono);font-size:13px}
+.cert-line{display:flex;align-items:baseline;gap:6px;padding:2px 4px;margin:0 -4px;cursor:default}
+.cert-line:hover{background:var(--paper-sunk);box-shadow:inset 2px 0 0 var(--seal)}
+.cert-line .k{color:var(--ink-4);font-size:11px;white-space:nowrap}
+.cert-line .st{font-size:11px;white-space:nowrap}
+.cert-line .v{color:var(--ink);font-weight:500;white-space:nowrap}
+.cert-line .dots{flex:1;border-bottom:2px dotted var(--rule);transform:translateY(-4px);min-width:16px}
+.cert-line.line-in{animation:lineIn var(--dur) var(--ease) backwards}
+.cert-foot{padding:12px 24px;border-top:1px solid var(--rule-hair);display:flex;justify-content:space-between;align-items:center;font-family:var(--f-mono);font-size:12px;color:var(--ink-4)}
+.cert .stamp{position:absolute;right:28px;bottom:104px;animation:stampIn 180ms var(--ease) 1180ms backwards}
+.cert-line .v{overflow:hidden;text-overflow:ellipsis}
+/* ============ §02 PROBLEM ============ */
+.problem-grid{display:grid;grid-template-columns:6fr 5fr;gap:48px;margin-top:48px;align-items:start}
+.doorway{border:1px solid var(--rule-strong);border-radius:2px;padding:20px;position:relative;background:var(--paper-raised)}
+.doorway-title{font-family:var(--f-mono);font-size:12px;color:var(--ink-4);margin-bottom:16px}
+.door{height:34px;margin:8px 0;display:flex;align-items:center;padding:0 12px;font-family:var(--f-mono);font-size:12px;color:var(--ink-3);background-image:var(--hatch);border:1px dashed var(--rule-strong);border-radius:2px;transition:all 120ms var(--ease)}
+.door.lit{color:var(--seal);border-color:var(--seal);background-color:var(--seal-wash)}
+.problem-row{cursor:default}
+.problem-row:hover{background:var(--paper-sunk)}
+.problem-row .idp-says{font-family:var(--f-mono);font-size:13px;color:var(--ink-3);white-space:nowrap}
+/* ============ §03 PROMISE ============ */
+.facts-guesses{display:grid;grid-template-columns:1fr 1fr;margin-top:48px;border:1px solid var(--rule-strong);border-radius:2px;background:var(--paper-raised)}
+.fg-col{padding:24px}
+.fg-col+.fg-col{border-left:1px solid var(--rule-strong)}
+.fg-col.guesses{background-image:var(--hatch);color:var(--ink-3);display:flex;flex-direction:column}
+.fg-col.guesses .empty-note{margin:auto;font-family:var(--f-mono);font-size:13px;color:var(--ink-4);background:var(--paper-raised);padding:4px 12px;border:1px dashed var(--rule-strong)}
+.fact-line{display:flex;align-items:baseline;gap:8px;padding:8px 4px;border-bottom:1px solid var(--rule-hair);font-size:15px}
+.fact-line:last-child{border-bottom:none}
+.fact-line .ev-link{font-family:var(--f-mono);font-size:11px;white-space:nowrap}
+/* ============ §04 SCALE + RECHECK ============ */
+.scale-wrap{margin-top:48px;display:grid;grid-template-columns:1fr 260px;gap:32px;align-items:start}
+.scale{position:relative;padding:24px 0 40px}
+.scale-rail{height:1px;background:var(--rule-strong);position:relative}
+.scale-notch{position:absolute;top:-5px;width:1px;height:11px;background:var(--rule-strong)}
+.scale-handle{
+  position:absolute;top:-9px;width:18px;height:18px;background:var(--seal);border-radius:9999px;
+  cursor:grab;transform:translateX(-50%);transition:left var(--dur) var(--ease);
+}
+.scale-handle:active{cursor:grabbing}
+.scale-labels{display:flex;justify-content:space-between;margin-top:16px}
+.scale-label{font-family:var(--f-mono);font-size:10px;line-height:15px;color:var(--ink-4);cursor:pointer;max-width:24%;text-align:center}
+.scale-label.on{color:var(--ink);font-weight:600}
+.scale-def{margin-top:24px;min-height:56px;font-size:15px;color:var(--ink-2)}
+.scale-note{margin-top:8px;font-family:var(--f-mono);font-size:11px;color:var(--ink-4)}
+.mini-cert{padding:16px;font-family:var(--f-mono);font-size:12px;line-height:20px;overflow:hidden}
+.mini-cert .mc-status{margin-top:8px}
+.mini-cert .st{font-size:10px;white-space:normal;overflow-wrap:anywhere}
+.recheck{margin-top:-16px;margin-left:auto;width:70%;padding:24px;z-index:4}
+.recheck-lines{font-family:var(--f-mono);font-size:13px;line-height:24px;min-height:76px;margin-top:16px}
+.recheck-lines .ok{color:var(--st-complete)}
+.recheck-lines .warn{color:var(--st-stale)}
+.recheck-line{animation:lineIn var(--dur) var(--ease) backwards}
+/* ============ §05 IDENTITY ============ */
+.threshold{margin-top:32px;padding:24px;background:var(--paper-sunk);border-radius:2px;position:relative}
+.threshold-rail{height:1px;background:var(--rule-strong);position:relative;margin:24px 8px 8px}
+.threshold-handle{position:absolute;top:-9px;width:18px;height:18px;background:var(--seal);border-radius:9999px;cursor:grab;transform:translateX(-50%);transition:left 150ms var(--ease)}
+.threshold-labels{display:flex;justify-content:space-between;font-family:var(--f-mono);font-size:11px;color:var(--ink-4);margin-top:12px;padding:0 8px}
+.policy-stamp{position:absolute;right:24px;top:-24px;opacity:0;transition:opacity var(--dur) var(--ease);pointer-events:none}
+.policy-stamp.show{opacity:.9}
+.policy-msg{margin-top:12px;font-family:var(--f-mono);font-size:12px;color:var(--seal);min-height:20px}
+.act-badge{font-family:var(--f-mono);font-size:11px;padding:1px 8px;border-radius:4px;white-space:nowrap}
+.act-badge.review{color:var(--st-blocked);background:var(--st-blocked-bg);border:1px solid var(--st-blocked-br);border-left-width:3px}
+.act-badge.act{color:var(--st-complete);border:1px solid var(--st-complete-br)}
+/* ============ §06 DESCENDANTS ============ */
+.desc-diagram{margin:48px -48px 0 0;display:grid;grid-template-columns:repeat(4,1fr);gap:0;position:relative}
+.desc-col{padding:0 24px;position:relative}
+.desc-col+.desc-col{border-left:1px solid var(--rule-strong)}
+.desc-col-title{font-family:var(--f-text);font-weight:600;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-4);margin-bottom:16px}
+.desc-node{
+  font-family:var(--f-mono);font-size:12px;line-height:18px;background:var(--paper-raised);
+  border:1px solid var(--rule-strong);border-radius:2px;padding:8px 10px;margin-bottom:10px;
+  cursor:default;transition:all 120ms var(--ease);
+}
+.desc-node .sub{color:var(--ink-4);font-size:11px}
+.desc-node.clickable{cursor:pointer}
+.desc-node.clickable:hover{border-color:var(--ink)}
+.desc-node.lit{border-color:var(--seal);box-shadow:inset 2px 0 0 var(--seal)}
+.desc-node.stops{background-image:var(--hatch);color:var(--ink-3);border-style:dashed}
+.desc-node.stops .sub{color:var(--ink-4)}
+.token-panel{margin-top:24px;padding:24px;max-width:560px;display:none}
+.token-panel.open{display:block}
+.token-actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.token-actions .refuse{
+  background:var(--paper-sunk);color:var(--ink-4);border:1px solid var(--rule);border-radius:4px;
+  padding:8px 16px;font-size:14px;cursor:not-allowed;position:relative;
+}
+.refuse-reason{margin-top:16px;font-family:var(--f-mono);font-size:12px;line-height:20px;color:var(--seal);border-left:2px solid var(--seal);padding-left:12px}
+.refuse-deps{margin-top:8px;font-family:var(--f-mono);font-size:12px;color:var(--ink-3);min-height:20px}
+/* ============ §07 MODES ============ */
+.mode-band{position:sticky;top:0;z-index:50;background:var(--paper-raised);border-bottom:1px solid var(--rule-strong);padding:8px 0;margin-bottom:32px}
+.mode-switch{display:inline-flex;border:1px solid var(--rule-strong);border-radius:4px;overflow:hidden}
+.mode-btn{padding:10px 24px;font-weight:500;font-size:15px;border-right:1px solid var(--rule-strong);background:var(--paper);transition:all 120ms var(--ease)}
+.mode-btn:last-child{border-right:none}
+.mode-btn[aria-selected="true"]{background:var(--ink);color:var(--paper)}
+.mode-layout{display:grid;grid-template-columns:1fr 280px;gap:32px;align-items:start}
+.perm-matrix{position:sticky;top:72px;border:1px solid var(--rule-strong);border-radius:2px;background:var(--paper-raised);font-family:var(--f-mono);font-size:11px}
+.perm-matrix table{width:100%;border-collapse:collapse}
+.perm-matrix th{font-family:var(--f-text);font-weight:600;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-4);padding:8px 6px;background:var(--paper-edge);text-align:center}
+.perm-matrix th:first-child{text-align:left}
+.perm-matrix td{padding:7px 6px;border-top:1px solid var(--rule-hair);text-align:center}
+.perm-matrix td:first-child{text-align:left;color:var(--ink-2)}
+.perm-yes{color:var(--st-complete)}
+.perm-no{display:inline-block;width:100%;color:var(--ink-4);background-image:var(--hatch);cursor:not-allowed}
+.perm-never{color:var(--st-incomplete);outline:1px solid var(--st-incomplete-br);outline-offset:1px;padding:0 3px}
+.perm-msg{padding:8px;font-size:10px;color:var(--seal);min-height:32px;border-top:1px solid var(--rule-hair)}
+.mode-panel{display:none}
+.mode-panel.on{display:block}
+.terminal{border:1px solid var(--rule-strong);border-radius:2px;background:var(--paper-sunk);overflow:hidden}
+.terminal-head{display:flex;justify-content:space-between;align-items:center;padding:8px 16px;border-bottom:1px solid var(--rule);font-family:var(--f-mono);font-size:12px;color:var(--ink-4)}
+.terminal-body{padding:16px;font-family:var(--f-mono);font-size:13px;line-height:22px;height:420px;overflow-y:auto}
+.terminal-body .cmd{color:var(--ink);font-weight:500}
+.terminal-body .t-unknown{background-image:var(--hatch);color:var(--ink-3)}
+.terminal-body .t-ok{color:var(--st-complete)}
+.terminal-body .t-warn{color:var(--st-blocked)}
+.cursor{display:inline-block;width:8px;height:15px;background:var(--seal);vertical-align:text-bottom;animation:blink 1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
+.decision-card{padding:24px;max-width:640px}
+.lifecycle{display:flex;align-items:center;gap:0;margin-top:20px;font-family:var(--f-mono);font-size:12px}
+.lc-step{padding:4px 12px;border:1px solid var(--rule);color:var(--ink-4);border-radius:4px;white-space:nowrap}
+.lc-step.done{border-color:var(--st-complete-br);background:var(--st-complete-bg);color:var(--st-complete)}
+.lc-arrow{padding:0 8px;color:var(--ink-4)}
+.approvals{margin-top:24px;display:flex;align-items:center;gap:12px}
+.micro-stamps{display:flex;gap:4px}
+.micro-stamp{width:14px;height:14px;border-radius:9999px;border:1px solid var(--seal);position:relative;opacity:.8}
+.micro-stamp::before{content:"";position:absolute;inset:2px;border-radius:9999px;border:1px solid var(--seal)}
+.yaml{border:1px solid var(--rule-strong);border-radius:2px;background:var(--paper-sunk);padding:20px 24px;font-family:var(--f-mono);font-size:14px;line-height:24px;color:var(--ink-3)}
+.yaml .yk{color:var(--ink)}
+.yaml .yv{color:var(--seal)}
+.yaml .ynever{color:var(--st-incomplete);outline:1px solid var(--st-incomplete-br);outline-offset:1px;padding:0 3px}
+.audit-note{margin-top:16px;background:var(--paper-sunk);padding:16px 20px;font-family:var(--f-mono);font-size:13px;line-height:22px;color:var(--ink-2);position:relative;border-radius:2px}
+.invariant{margin-top:48px;background:var(--paper-sunk);border-left:3px solid var(--ink);padding:20px 24px;border-radius:0 2px 2px 0}
+.invariant p{font-size:15px;line-height:26px}
+/* ============ §08 COVERAGE ============ */
+.prov-chips{display:flex;gap:8px;margin:32px 0 16px;flex-wrap:wrap}
+.prov-chip{font-family:var(--f-mono);font-size:13px;padding:5px 14px;border:1px solid var(--rule-strong);border-radius:4px;background:var(--paper);transition:all 120ms var(--ease)}
+.prov-chip[aria-selected="true"]{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.coverage-head{display:flex;justify-content:space-between;align-items:flex-end;gap:24px}
+.honesty{text-align:right;flex-shrink:0}
+.honesty .stat{white-space:nowrap}
+.honesty .stat{color:var(--ink)}
+.honesty .small{color:var(--ink-3)}
+.coverage table{width:100%;border-collapse:collapse;font-family:var(--f-mono);font-size:13px}
+.coverage th{position:sticky;top:36px;font-family:var(--f-text);font-weight:600;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-4);text-align:left;padding:10px 12px;background:var(--paper-edge)}
+.coverage td{padding:10px 12px;border-top:1px solid var(--rule-hair)}
+.coverage td.obj{color:var(--ink)}
+.cell{display:inline-block;min-width:72px;padding:1px 8px;border-radius:4px;text-align:center}
+.cell-yes{color:var(--st-complete);border:1px solid var(--st-complete-br)}
+.cell-partial{color:var(--st-blocked);border:1px solid var(--st-blocked-br);background:linear-gradient(90deg,var(--st-blocked-bg) 50%,transparent 50%)}
+.cell-unknown{color:var(--ink-3);background-image:var(--hatch);border:1px dashed var(--rule-strong)}
+.cell-na{color:var(--ink-4);background:var(--paper-sunk)}
+.coverage-foot{margin-top:12px;font-family:var(--f-mono);font-size:12px;color:var(--ink-4)}
+/* ============ §09 BILLING ============ */
+.seatbars{margin:40px 0;max-width:720px}
+.seatbar-row{display:grid;grid-template-columns:80px 1fr 40px;gap:12px;align-items:center;margin-bottom:12px;font-family:var(--f-mono);font-size:13px}
+.seatbar-track{height:22px;position:relative}
+.seatbar-fill{position:absolute;top:0;bottom:0;left:0;border-radius:2px}
+.seatbar-fill.billed{border:1px solid var(--ink);background:transparent}
+.seatbar-fill.filled{background:var(--ink)}
+.seatbar-delta{position:absolute;top:0;bottom:0;background-image:var(--hatch);color:var(--ink-3);border:1px dashed var(--rule-strong);border-radius:2px}
+.seat-ticks{display:grid;grid-template-columns:80px 1fr 40px;gap:12px;margin-top:4px}
+.seat-ticks .ticks{position:relative;height:16px;font-family:var(--f-mono);font-size:10px;color:var(--ink-4)}
+.seat-ticks .tick{position:absolute;top:0}
+.delta-note{font-family:var(--f-mono);font-size:12px;color:var(--ink-3);margin-top:8px}
+.trap-field{margin-top:40px;max-width:480px}
+.trap-field label{display:block;font-family:var(--f-mono);font-size:12px;color:var(--ink-4);margin-bottom:6px}
+.trap-input{
+  width:100%;padding:10px 14px;font-family:var(--f-mono);font-size:14px;
+  border:1px solid var(--rule-strong);border-radius:4px;background:var(--paper-raised);color:var(--ink);
+  transition:all var(--dur) var(--ease);
+}
+.trap-input.locked{background-image:var(--hatch);color:var(--ink-3);cursor:not-allowed;border-style:dashed}
+.trap-msg{margin-top:8px;font-family:var(--f-mono);font-size:12px;color:var(--seal);min-height:20px}
+.no-estimates{margin-top:48px;border:1px solid var(--rule-strong);outline:1px solid var(--rule-strong);outline-offset:3px;padding:24px 32px;max-width:560px}
+.no-estimates p{font-family:var(--f-display);font-style:italic;font-weight:400;font-size:22px;line-height:32px;color:var(--ink)}
+/* ============ §10 EVIDENCE ============ */
+.ev-toggle{display:inline-flex;align-items:center;gap:12px;margin:32px 0;font-family:var(--f-mono);font-size:13px}
+.ev-switch{width:56px;height:28px;border:1px solid var(--rule-strong);border-radius:4px;position:relative;background:var(--paper-raised);cursor:pointer}
+.ev-switch::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:20px;background:var(--ink);border-radius:2px;transition:left var(--dur) var(--ease)}
+.ev-switch[aria-checked="true"]::after{left:27px}
+.ev-panes{position:relative}
+.ev-pane{display:none}
+.ev-pane.on{display:block}
+.json-view{border:1px solid var(--rule-strong);border-radius:2px;background:var(--paper-raised);padding:20px 0;font-family:var(--f-mono);font-size:13px;line-height:22px;overflow-x:auto}
+.json-line{display:flex;gap:16px;padding:0 20px}
+.json-line:hover{background:var(--paper-sunk)}
+.json-line .ln{color:var(--ink-4);width:24px;text-align:right;flex-shrink:0;user-select:none}
+.json-line .jk{color:var(--ink)}
+.json-line .js{color:var(--st-complete)}
+.hash{cursor:pointer;border-bottom:1px dotted var(--rule-strong)}
+.ev-closing{margin-top:32px;color:var(--ink-3)}
+/* ============ §11 WHO ============ */
+.who-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;margin-top:48px;align-items:start}
+.who-card{padding:24px;border-top:1px solid var(--rule-strong)}
+.who-card.primary{background:var(--paper-raised);border:1px solid var(--rule-strong);border-radius:2px;margin-top:-16px;box-shadow:var(--shadow)}
+.who-card.finance{margin-top:32px}
+.who-card .role{font-family:var(--f-mono);font-size:13px;color:var(--ink-4);margin-bottom:8px}
+.competitors{margin-top:48px;background:var(--paper-sunk);border-left:3px solid var(--seal);padding:20px 24px;border-radius:0 2px 2px 0}
+.competitors .names{font-family:var(--f-mono);font-size:14px;color:var(--ink)}
+/* ============ §12 PRICING ============ */
+.pricing table td.retention{background:var(--paper-edge)}
+.pricing .talk{font-family:var(--f-mono);font-size:13px;white-space:nowrap}
+.nevers{margin-top:24px;display:flex;flex-direction:column;gap:6px}
+.nevers .small{display:flex;align-items:center;gap:10px;color:var(--ink-3)}
+.nevers .small::before{content:"";width:6px;height:6px;background:var(--ink-4);flex-shrink:0}
+/* ============ §13 WHY ============ */
+.why-wrap{position:relative;max-width:760px;margin:48px auto 0}
+.vendor-toggle{display:inline-flex;align-items:center;gap:12px;margin-top:32px;font-family:var(--f-mono);font-size:13px;color:var(--ink-3)}
+.vendor-overlay{
+  position:absolute;inset:-24px;background:var(--paper-raised);border:1px solid var(--rule-strong);
+  border-radius:2px;box-shadow:var(--shadow);padding:32px;display:none;z-index:10;overflow:hidden;
+}
+.vendor-overlay.on{display:block}
+.vendor-overlay .sim-badge{position:absolute;top:12px;right:12px;font-family:var(--f-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--st-stale);border:1px dashed var(--st-stale-br);padding:2px 8px}
+.vendor-fake{display:grid;grid-template-columns:1fr 1fr;gap:16px;transition:opacity var(--dur-l) var(--ease)}
+.vendor-fake.folded{opacity:.15}
+.fake-item{border:1px solid var(--rule);border-radius:4px;padding:16px;font-size:13px;color:var(--ink-3)}
+.fake-item .big{font-size:28px;font-weight:600;color:var(--st-complete)}
+.fake-chart{height:64px;position:relative;overflow:hidden}
+.fake-chart svg{position:absolute;inset:0;width:100%;height:100%}
+.fake-logos{display:flex;gap:8px;flex-wrap:wrap}
+.fake-logo{width:60px;height:20px;background:var(--paper-sunk);border-radius:2px}
+.strike{position:absolute;left:-10%;top:50%;width:120%;height:3px;background:var(--seal);transform:rotate(-8deg) scaleX(0);transform-origin:left;transition:transform 400ms var(--ease)}
+.strike.drawn{transform:rotate(-8deg) scaleX(1)}
+.vendor-verdict{position:absolute;left:32px;bottom:24px;font-family:var(--f-mono);font-size:14px;color:var(--seal);opacity:0;transition:opacity var(--dur) var(--ease)}
+.vendor-verdict.show{opacity:1}
+/* ============ §14 CTA ============ */
+.final{max-width:480px;margin:0 auto;text-align:left;background:var(--paper-sunk);border-top:3px double var(--rule-strong);border-bottom:3px double var(--rule-strong);padding:64px 48px;position:relative}
+.final ol{list-style:none;margin-top:32px}
+.final li{display:flex;gap:16px;padding:10px 0;border-bottom:1px solid var(--rule-hair);font-size:15px}
+.final li .idx{font-family:var(--f-text);font-weight:600;font-size:11px;letter-spacing:.12em;color:var(--ink-4);padding-top:4px}
+.final .btn{margin-top:32px}
+.page-stamp{margin:64px auto 0;text-align:center;min-height:140px}
+.page-stamp .stamp{opacity:0}
+.page-stamp .stamp.on{animation:stampIn 180ms var(--ease) forwards}
+.page-stamp .meta{margin-top:16px;font-family:var(--f-mono);font-size:12px;color:var(--ink-4)}
+footer{border-top:1px solid var(--rule-strong);padding:24px 0;margin-top:96px}
+footer .content{display:flex;justify-content:space-between;font-family:var(--f-mono);font-size:12px;color:var(--ink-4)}
+/* responsive */
+@media (max-width:1199px){
+  .hero{grid-template-columns:1fr}
+  .cert{margin:32px 0 0}
+  .problem-grid,.facts-guesses,.scale-wrap,.mode-layout,.who-grid{grid-template-columns:1fr}
+  .desc-diagram{margin:48px 0 0;grid-template-columns:1fr}
+  .desc-col+.desc-col{border-left:none;border-top:1px solid var(--rule-strong);padding-top:16px;margin-top:16px}
+  .recheck{width:100%;margin-top:24px}
+  .coverage-scroll{overflow-x:auto}
+  .coverage th{top:36px}
+  .perm-matrix{position:static}
+  .who-card.primary,.who-card.finance{margin-top:0}
+  h1{font-size:42px;line-height:46px}
+  h2{font-size:30px;line-height:36px}
+  .stat{font-size:34px;line-height:36px}
+}
+</style>
+<!-- HEAD-END -->
+</head>
+<body>
+<!-- rail -->
+<nav class="rail" aria-label="Document rail">
+  <div class="rail-brand">unseat</div>
+  <div class="rail-folio" id="railFolio">§01</div>
+  <div class="rail-clock" id="railClock">--:--:-- UTC</div>
+  <div class="rail-ticks" id="railTicks" aria-hidden="true"></div>
+  <div class="rail-seal" id="railSeal" title="Section seal">SEAL</div>
+</nav>
+
+<div class="page">
+
+<!-- ============ §01 HERO ============ -->
+<section class="section" id="s01" data-folio="§01">
+  <div class="content">
+    <div class="hero">
+      <div class="hero-left">
+        <h1 class="reveal">Offboarding is not done when the account is disabled.</h1>
+        <p class="lead reveal">Every departure leaves a trail: SaaS seats, outside collaborators, OAuth apps, API keys, bots, agents, webhooks, ownership, billing ghosts.</p>
+        <p class="lead reveal">unseat follows the person across your stack, closes what can be closed, asks for approval where judgment is needed, and hands you a certificate that says what is done, what is blocked, and what no API will tell you.</p>
+        <div class="hero-ctas reveal">
+          <a class="btn" href="#s14">Generate an offboarding certificate</a>
+          <span class="sub small">Two connections, a certificate in under 15 minutes.</span>
+          <a href="#s10" class="small">See a real certificate, unknowns included</a>
+        </div>
+      </div>
+      <div class="cert doc-card crop" id="heroCert">
+        <span class="crop-b"></span>
+        <div class="cert-head">
+          <span class="label">Offboarding Certificate</span>
+          <div class="cert-tabs" role="tablist" aria-label="Certificate subject">
+            <button class="cert-tab" role="tab" aria-selected="true" data-subject="alice">Alice Martin</button>
+            <button class="cert-tab" role="tab" aria-selected="false" data-subject="marco">Marco Reis</button>
+            <button class="cert-tab" role="tab" aria-selected="false" data-subject="bot">svc-deploy-bot</button>
+          </div>
+        </div>
+        <div class="cert-body">
+          <div class="cert-col" id="certIdentity"></div>
+          <div class="cert-col" id="certCounts"></div>
+        </div>
+        <div class="cert-statusline" id="certStatusLine"></div>
+        <div class="cert-foot">
+          <span id="certVerified">Last verified 2026-08-02 22:14 UTC</span>
+          <span id="certRecheck">Next recheck 2026-08-09</span>
+        </div>
+        <span class="stamp" id="heroStamp">Verified<br>2026-08-02</span>
+      </div>
+    </div>
+    <div class="margin-note" id="heroNote" aria-live="polite"></div>
+  </div>
+</section>
+
+<!-- ============ §02 PROBLEM ============ -->
+<section class="section" id="s02" data-folio="§02">
+  <div class="section-rule"><span class="folio-tag">§02 — Problem</span></div>
+  <div class="content">
+    <h2 class="reveal" style="margin-top:48px">Your IdP closes the front door. The side doors stay open.</h2>
+    <p class="lead reveal" style="margin-top:16px">SSO and SCIM handle the accounts they federate. They usually cannot tell you:</p>
+    <div class="problem-grid">
+      <table class="registry reveal" id="problemTable">
+        <tbody>
+          <tr class="problem-row" data-door="0"><td class="idx">01</td><td>which SaaS accounts exist outside the IdP</td><td class="idp-says">not federated</td></tr>
+          <tr class="problem-row" data-door="1"><td class="idx">02</td><td>which external identities belong to the person</td><td class="idp-says">no signal</td></tr>
+          <tr class="problem-row" data-door="2"><td class="idx">03</td><td>which GitHub Apps, tokens, bots, and agents they created</td><td class="idp-says">out of scope</td></tr>
+          <tr class="problem-row" data-door="3"><td class="idx">04</td><td>whether a suspended seat is still billed</td><td class="idp-says">not its job</td></tr>
+          <tr class="problem-row" data-door="4"><td class="idx">05</td><td>whether ownership moved to anyone</td><td class="idp-says">no concept of it</td></tr>
+          <tr class="problem-row" data-door="5"><td class="idx">06</td><td>whether a provider refused to expose the truth</td><td class="idp-says">silence</td></tr>
+        </tbody>
+      </table>
+      <div class="doorway reveal">
+        <div class="doorway-title">IdP perimeter — federated accounts: closed</div>
+        <div class="door">accounts outside IdP</div>
+        <div class="door">external identities</div>
+        <div class="door">GitHub Apps, tokens, bots</div>
+        <div class="door">billed seats</div>
+        <div class="door">ownership</div>
+        <div class="door">provider silence</div>
+      </div>
+    </div>
+    <p class="reveal" style="margin-top:32px">What is left gets handled in Slack threads, a spreadsheet, six admin consoles, and the hope that nobody audits it. unseat turns that last mile into a workflow you can hand to someone else.</p>
+  </div>
+</section>
+
+<!-- ============ §03 PROMISE ============ -->
+<section class="section" id="s03" data-folio="§03">
+  <div class="section-rule"><span class="folio-tag">§03 — Promise</span></div>
+  <div class="content">
+    <h2 class="reveal" style="margin-top:48px">A departure is finished when every leftover is closed, transferred, approved, or proven unknowable.</h2>
+    <p class="lead reveal" style="margin-top:16px">unseat does not pretend the APIs are better than they are. It keeps facts and guesses in separate columns:</p>
+    <div class="facts-guesses reveal">
+      <div class="fg-col">
+        <div class="label" style="margin-bottom:16px">Facts</div>
+        <div class="fact-line" data-note="source: provider ListUsers · every seat found is listed with its provider id"><span>access found and access removed</span><span class="dots"></span><a class="ev-link" href="#s10">→ §10 evidence</a></div>
+        <div class="fact-line" data-note="source: decision ledger · transfer recorded with approver and timestamp"><span>responsibility transferred</span><span class="dots"></span><a class="ev-link" href="#s10">→ §10 evidence</a></div>
+        <div class="fact-line" data-note="source: decision ledger · status=proposed, waiting on a named approver"><span>approvals pending</span><span class="dots"></span><a class="ev-link" href="#s10">→ §10 evidence</a></div>
+        <div class="fact-line" data-note="source: provider capabilities · the API has no endpoint for this action"><span>actions the provider does not support</span><span class="dots"></span><a class="ev-link" href="#s10">→ §10 evidence</a></div>
+        <div class="fact-line" data-note="source: provider response · the API exists but withholds the answer"><span>answers the provider will not give</span><span class="dots"></span><a class="ev-link" href="#s10">→ §10 evidence</a></div>
+        <div class="fact-line" data-note="source: provider billing API · never a price typed into YAML"><span>billing impact proven by provider data</span><span class="dots"></span><a class="ev-link" href="#s10">→ §10 evidence</a></div>
+      </div>
+      <div class="fg-col guesses">
+        <div class="label" style="margin-bottom:16px">Guesses</div>
+        <div class="empty-note">intentionally empty</div>
+      </div>
+    </div>
+    <p class="reveal" style="margin-top:32px">The output is not a dashboard. It is a certificate, and it is the thing you keep.</p>
+    <div class="margin-note" id="promiseNote" aria-live="polite"></div>
+  </div>
+</section>
+
+<!-- ============ §04 CERTIFICATE ============ -->
+<section class="section" id="s04" data-folio="§04">
+  <div class="section-rule"><span class="folio-tag">§04 — The certificate</span></div>
+  <div class="content">
+    <h2 class="reveal" style="margin-top:48px">Incomplete and honest beats complete and wrong.</h2>
+    <p class="lead reveal" style="margin-top:16px">Every offboarding ends in one of five states. None of them is a spinner.</p>
+    <div class="scale-wrap reveal">
+      <div class="scale">
+        <div class="scale-rail" id="scaleRail" role="slider" tabindex="0" aria-label="Certificate status scale" aria-valuemin="0" aria-valuemax="4" aria-valuenow="1" aria-valuetext="complete_with_provider_limits">
+          <span class="scale-notch" style="left:0%"></span>
+          <span class="scale-notch" style="left:25%"></span>
+          <span class="scale-notch" style="left:50%"></span>
+          <span class="scale-notch" style="left:75%"></span>
+          <span class="scale-notch" style="left:100%"></span>
+          <div class="scale-handle" id="scaleHandle" style="left:25%"></div>
+        </div>
+        <div class="scale-labels" id="scaleLabels">
+          <span class="scale-label" data-i="0">complete</span>
+          <span class="scale-label on" data-i="1">complete_with_<br>provider_limits</span>
+          <span class="scale-label" data-i="2">blocked</span>
+          <span class="scale-label" data-i="3">incomplete</span>
+          <span class="scale-label" data-i="4">stale</span>
+        </div>
+        <p class="scale-def" id="scaleDef">complete as far as the APIs go, with the limits named</p>
+        <p class="scale-note">this is not a progress bar</p>
+      </div>
+      <div class="mini-cert doc-card" id="miniCert">
+        <div class="label">Certificate</div>
+        <div class="dotline"><span>Subject</span><span class="dots"></span><span>A. Martin</span></div>
+        <div class="dotline"><span>Closed</span><span class="dots"></span><span>12</span></div>
+        <div class="dotline"><span>Unknowns</span><span class="dots"></span><span id="miniUnknowns">2</span></div>
+        <div class="mc-status"><span class="st st--limits" id="miniStatus">complete_with_provider_limits</span></div>
+      </div>
+    </div>
+    <p class="reveal" style="margin-top:32px;max-width:66ch">A certificate that says <span class="mono-sm">complete_with_provider_limits</span> and names the four things GitHub would not answer is more useful than a green check that quietly skipped them.</p>
+    <div class="recheck doc-card crop reveal"><span class="crop-b"></span>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h3>Certificates do not freeze.</h3>
+        <div style="display:flex;gap:8px">
+          <button class="btn-ghost" id="recheckBtn">Run recheck (J+7)</button>
+          <button class="btn-ghost" id="recheckReset" style="display:none">Reset</button>
+        </div>
+      </div>
+      <div class="recheck-lines" id="recheckLines"><span class="mono-sm" style="color:var(--ink-4)">rechecks run on schedule — press the button to replay the J+7 pass</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §05 IDENTITY ============ -->
+<section class="section" id="s05" data-folio="§05">
+  <div class="section-rule"><span class="folio-tag">§05 — Identity resolution</span></div>
+  <div class="content">
+    <h2 class="reveal" style="margin-top:48px">The certificate is only worth what the identity match is worth.</h2>
+    <p class="lead reveal" style="margin-top:16px"><span class="mono-sm">alice@company.com</span>, <span class="mono-sm">alice@gmail.com</span>, <span class="mono-sm">alice-dev</span>, <span class="mono-sm">a-smith</span>, and a GitHub App installed by someone called Alice are not the same person until something proves they are. unseat scores every association and shows its work.</p>
+    <table class="registry reveal" style="margin-top:32px">
+      <thead><tr><th></th><th>Association</th><th>Example</th><th>Strength</th><th>Action</th></tr></thead>
+      <tbody>
+        <tr><td class="idx">01</td><td>Directory primary</td><td class="mono-sm">Workspace primaryEmail</td><td><span class="st st--complete">strong</span></td><td><span class="act-badge act">will act</span></td></tr>
+        <tr><td class="idx">02</td><td>Directory alias</td><td class="mono-sm">Workspace alias</td><td><span class="st st--complete">strong</span></td><td><span class="act-badge act">will act</span></td></tr>
+        <tr><td class="idx">03</td><td>Verified provider email</td><td class="mono-sm">email the provider confirms</td><td><span class="st st--complete">strong</span></td><td><span class="act-badge act">will act</span></td></tr>
+        <tr><td class="idx">04</td><td>Declared mapping</td><td class="mono-sm">alias you set, recorded as evidence</td><td><span class="st st--complete">strong, manual</span></td><td><span class="act-badge act">will act</span></td></tr>
+        <tr><td class="idx">05</td><td>Username lookalike</td><td class="mono-sm">alice resembles the email</td><td><span class="st st--blocked">weak</span></td><td><span class="act-badge review">goes to review</span></td></tr>
+      </tbody>
+    </table>
+    <div class="threshold reveal">
+      <div class="label">Match strength required to act</div>
+      <div class="stamp policy-stamp" id="policyStamp">Policy</div>
+      <div class="threshold-rail" id="thresholdRail" role="slider" tabindex="0" aria-label="Match strength required to act" aria-valuemin="0" aria-valuemax="2" aria-valuenow="2" aria-valuetext="strong — nothing is removed on a weak match alone">
+        <div class="threshold-handle" id="thresholdHandle" style="left:100%"></div>
+      </div>
+      <div class="threshold-labels"><span>weak</span><span>medium</span><span>strong</span></div>
+      <div class="policy-msg" id="policyMsg"></div>
+    </div>
+    <p class="reveal" style="margin-top:32px">Three rules that never bend: nothing is removed on a weak match alone; an unresolved identity goes to review, never to removal; every manual alias appears in the evidence, named and timestamped.</p>
+    <p class="reveal">The output says <span class="mono-sm">matched</span>, <span class="mono-sm">unmatched</span>, or <span class="st st--blocked">ambiguous</span> — an ambiguous match is a question for a human, not a silent decision.</p>
+  </div>
+</section>
+
+<!-- ============ §06 DESCENDANTS ============ -->
+<section class="section" id="s06" data-folio="§06">
+  <div class="section-rule"><span class="folio-tag">§06 — Digital descendants</span></div>
+  <div class="content content--full">
+    <div style="width:min(1000px,100%);">
+    <h2 class="reveal" style="margin-top:48px">People leave. Their software keeps running.</h2>
+    <p class="lead reveal" style="margin-top:16px">unseat walks outward from one person: accounts, roles, paid seats, outside collaborations, OAuth apps, webhooks, tokens, service accounts, bots, AI agents, and the resources they own. Where the APIs stop, it says where it stopped.</p>
+    <p class="reveal" style="margin-top:16px"><strong>Creator is not owner. Owner is not consumer.</strong></p>
+    </div>
+    <div class="desc-diagram reveal" id="descDiagram">
+      <div class="desc-col">
+        <div class="desc-col-title">Person</div>
+        <div class="desc-node lit">alice@company.com<div class="sub">directory: suspended</div></div>
+      </div>
+      <div class="desc-col">
+        <div class="desc-col-title">Objects</div>
+        <div class="desc-node">github seat<div class="sub">org member</div></div>
+        <div class="desc-node clickable lit" id="tokenNode">token tk_88f<div class="sub">created by Alice, 2 years ago — click</div></div>
+        <div class="desc-node">oauth app gh_app_112<div class="sub">installed 2024</div></div>
+        <div class="desc-node stops">personal access tokens<div class="sub">stops here — GitHub reports nothing without SAML SSO</div></div>
+      </div>
+      <div class="desc-col">
+        <div class="desc-col-title">Decisions</div>
+        <div class="desc-node">remove seat<div class="sub">remove_safe</div></div>
+        <div class="desc-node lit">ask who owns tk_88f<div class="sub">owner_required</div></div>
+        <div class="desc-node stops">app usage<div class="sub">stops here — updated_at is not usage</div></div>
+      </div>
+      <div class="desc-col">
+        <div class="desc-col-title">Evidence</div>
+        <div class="desc-node lit">owner attestation requested<div class="sub">2026-08-02 22:14 UTC</div></div>
+        <div class="desc-node">before/after snapshots<div class="sub">hashed</div></div>
+      </div>
+    </div>
+    <div class="token-panel doc-card crop" id="tokenPanel"><span class="crop-b"></span>
+      <h3 class="mono" style="font-family:var(--f-mono)">token tk_88f</h3>
+      <p class="small" style="margin-top:8px;color:var(--ink-3)">created by alice@company.com, 2 years ago · scope: repo write · consumer: unknown to the provider</p>
+      <div class="token-actions">
+        <button class="btn-ghost">Ask who owns it</button>
+        <button class="btn-ghost">Open decision</button>
+        <button class="refuse" id="revokeBtn" aria-disabled="true">Revoke</button>
+      </div>
+      <p class="refuse-reason">unseat never revokes a credential because its creator left. Ownership is unclaimed — that is a different problem with a different fix.</p>
+      <p class="refuse-deps" id="revokeDeps"></p>
+    </div>
+    <div style="width:min(1000px,100%);">
+    <p class="reveal" style="margin-top:32px">A token Alice created two years ago might be the only thing keeping a Finance job running. Her departure does not make that token deletable. It makes its ownership unclaimed. So unseat asks who owns it now, what depends on it, and what proof exists, then routes the answer to a human who can say yes.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §07 MODES ============ -->
+<section class="section" id="s07" data-folio="§07">
+  <div class="section-rule"><span class="folio-tag">§07 — How it works</span></div>
+  <div class="content content--full">
+    <h2 class="reveal" style="margin-top:48px">Observe. Approve. Enforce.</h2>
+    <p class="lead reveal" style="margin-top:16px">Read-only until explicitly told otherwise, and automation earned per action class.</p>
+    <div class="mode-band reveal">
+      <div class="mode-switch" role="tablist" aria-label="Product mode">
+        <button class="mode-btn" role="tab" aria-selected="true" data-mode="observe">Observe</button>
+        <button class="mode-btn" role="tab" aria-selected="false" data-mode="approve">Approve</button>
+        <button class="mode-btn" role="tab" aria-selected="false" data-mode="enforce">Enforce</button>
+      </div>
+    </div>
+    <div class="mode-layout">
+      <div>
+        <div class="mode-panel on" id="panel-observe">
+          <p style="margin-bottom:16px">Connect your directory and your providers. Nothing is writable yet, and Observe cannot be made writable.</p>
+          <div class="terminal">
+            <div class="terminal-head">
+              <span>zsh — unseat</span>
+              <span style="display:flex;gap:12px">
+                <button class="btn-ghost" id="termRun" style="padding:2px 12px;font-size:12px">Run</button>
+                <button class="btn-ghost" id="termCopy" style="padding:2px 12px;font-size:12px">Copy</button>
+              </span>
+            </div>
+            <div class="terminal-body" id="termBody"><span class="cmd">$ unseat offboard alice@company.com</span><span class="cursor" id="termCursor"></span></div>
+          </div>
+          <p class="small" style="margin-top:12px;color:var(--ink-3)">Nobody types that command forever. The trigger can move upstream: a Workspace suspension, an HRIS termination date, a ticket, a webhook, a CSV. An unknown HRIS status is never read as a departure.</p>
+        </div>
+        <div class="mode-panel" id="panel-approve">
+          <div class="decision-card doc-card crop"><span class="crop-b"></span>
+            <div class="label" style="margin-bottom:12px">Decision d_4471</div>
+            <div class="mono-sm" style="line-height:24px">
+              <div class="dotline"><span>action</span><span class="dots"></span><span>suspend github seat — alice@company.com</span></div>
+              <div class="dotline"><span>reason</span><span class="dots"></span><span>directory user suspended, grace period elapsed</span></div>
+              <div class="dotline"><span>reversible</span><span class="dots"></span><span>yes — suspend, not delete</span></div>
+              <div class="dotline"><span>approver</span><span class="dots"></span><span>it-ops@company.com</span></div>
+              <div class="dotline"><span>policy</span><span class="dots"></span><span>v14</span></div>
+            </div>
+            <div class="lifecycle">
+              <span class="lc-step done">proposed</span><span class="lc-arrow">→</span>
+              <span class="lc-step done">approved</span><span class="lc-arrow">→</span>
+              <span class="lc-step">executed</span><span class="lc-arrow">→</span>
+              <span class="lc-step">verified</span>
+            </div>
+          </div>
+          <div class="approvals">
+            <div class="micro-stamps" id="microStamps"></div>
+            <span class="mono-sm" style="color:var(--ink-3)">this action class approved 14× without modification</span>
+          </div>
+          <p style="margin-top:16px">Approve fourteen of the same action without editing it, and you have the argument for automating it.</p>
+        </div>
+        <div class="mode-panel" id="panel-enforce">
+          <div class="yaml">
+<span class="yk">enforce</span>:
+  <span class="yk">github</span>:
+    <span class="yk">suspend_user</span>:
+      <span class="yk">when</span>: <span class="yv">directory_user_suspended</span>
+      <span class="yk">after</span>: <span class="yv">72h</span>
+      <span class="yk">require_provider_verified</span>: <span class="yv">true</span>
+    <span class="yk">revoke_credential</span>: <span class="ynever">never</span></div>
+          <div class="audit-note">Executed in Enforce because this exact action class was approved 14 times without modification, on verified provider github, under rule R.</div>
+          <p style="margin-top:16px">Suspension before deletion, reversibility chosen up front, and credential revocation that stays off the automatic path.</p>
+        </div>
+      </div>
+      <div class="perm-matrix reveal">
+        <table>
+          <thead><tr><th>action</th><th>Obs</th><th>App</th><th>Enf</th></tr></thead>
+          <tbody id="permBody">
+            <tr><td>read</td><td><span class="perm-yes">✓</span></td><td><span class="perm-yes">✓</span></td><td><span class="perm-yes">✓</span></td></tr>
+            <tr><td>propose</td><td class="perm-lock"><span class="perm-no">locked</span></td><td><span class="perm-yes">✓</span></td><td><span class="perm-yes">✓</span></td></tr>
+            <tr><td>suspend</td><td class="perm-lock"><span class="perm-no">locked</span></td><td><span class="perm-yes">approval</span></td><td><span class="perm-yes">earned</span></td></tr>
+            <tr><td>remove</td><td class="perm-lock"><span class="perm-no">locked</span></td><td><span class="perm-yes">approval</span></td><td><span class="perm-yes">earned</span></td></tr>
+            <tr><td>revoke credential</td><td><span class="perm-never">never</span></td><td><span class="perm-never">never</span></td><td><span class="perm-never">never</span></td></tr>
+          </tbody>
+        </table>
+        <div class="perm-msg" id="permMsg"></div>
+      </div>
+    </div>
+    <div class="invariant reveal">
+      <p><strong>Removal is driven by the directory, not by your mappings.</strong> An active employee who is in no mapped group is a review item, not a deletion. An incomplete config produces an incomplete report, never a mass deprovisioning.</p>
+    </div>
+  </div>
+</section>
+<!-- ============ §08 COVERAGE ============ -->
+<section class="section" id="s08" data-folio="§08">
+  <div class="section-rule"><span class="folio-tag">§08 — Coverage</span></div>
+  <div class="content">
+    <div class="coverage-head">
+      <div>
+        <h2 class="reveal" style="margin-top:48px">Ask what we can prove, not how many logos we have.</h2>
+        <p class="lead reveal" style="margin-top:16px">A connector that only lists users tells you a person exists somewhere. It cannot tell you what they left behind. Coverage is published per object and per verb, including the parts that read <span class="mono-sm">unknown</span>.</p>
+      </div>
+      <div class="honesty reveal">
+        <div class="stat" id="honestyCount">–</div>
+        <div class="small">unknown — displayed, not hidden</div>
+      </div>
+    </div>
+    <div class="prov-chips reveal" role="tablist" aria-label="Provider" id="provChips"></div>
+    <div class="coverage coverage-scroll reveal doc-card crop"><span class="crop-b"></span>
+      <table id="covTable">
+        <thead><tr><th>object</th><th>read</th><th>remove</th><th>transfer</th><th>release</th></tr></thead>
+        <tbody id="covBody"></tbody>
+      </table>
+    </div>
+    <p class="coverage-foot reveal">generated from source at build time · commit ca35517</p>
+    <div class="margin-note" id="covNote" aria-live="polite"></div>
+  </div>
+</section>
+
+<!-- ============ §09 BILLING ============ -->
+<section class="section" id="s09" data-folio="§09">
+  <div class="section-rule"><span class="folio-tag">§09 — Billing</span></div>
+  <div class="content">
+    <h2 class="reveal" style="margin-top:48px">Spend is how we sort the work, not how we sell it.</h2>
+    <p class="lead reveal" style="margin-top:16px">unseat never asks you to keep prices in YAML. If the provider exposes billing, unseat reads the API. If it does not, unseat says so and moves on.</p>
+    <div class="seatbars reveal">
+      <div class="seatbar-row">
+        <span>billed</span>
+        <div class="seatbar-track">
+          <div class="seatbar-fill billed" style="width:100%"></div>
+          <div class="seatbar-delta" style="left:85.4%;right:0"></div>
+        </div>
+        <span>48</span>
+      </div>
+      <div class="seatbar-row">
+        <span>filled</span>
+        <div class="seatbar-track"><div class="seatbar-fill filled" style="width:85.4%"></div></div>
+        <span>41</span>
+      </div>
+      <div class="seat-ticks"><span></span>
+        <div class="ticks">
+          <span class="tick" style="left:0">0</span><span class="tick" style="left:20.8%">10</span><span class="tick" style="left:41.6%">20</span><span class="tick" style="left:62.5%">30</span><span class="tick" style="left:83.3%">40</span>
+        </div><span></span>
+      </div>
+      <p class="delta-note">Δ 7 seats — prepaid block or plan minimum — a finding on its own. No currency required.</p>
+    </div>
+    <table class="registry reveal">
+      <thead><tr><th></th><th>Claim</th><th>Condition</th><th></th></tr></thead>
+      <tbody>
+        <tr><td class="idx">01</td><td class="mono-sm">saving_verified</td><td>the provider exposes the amount and the seat was released</td><td><span class="st st--complete">✓ verified</span></td></tr>
+        <tr><td class="idx">02</td><td class="mono-sm">seat_reclaim_verified</td><td>the provider confirms the seat is no longer assigned</td><td><span class="st" style="color:var(--st-complete);border:1px solid var(--st-complete-br)">verified</span></td></tr>
+        <tr><td class="idx">03</td><td class="mono-sm">renewal_opportunity</td><td>prepaid or unused seats are visible, the saving lands at renewal</td><td><span class="st st--blocked">→ later</span></td></tr>
+        <tr><td class="idx">04</td><td class="mono-sm">money_unknown</td><td>the count is known, the price is not</td><td><span class="st hatched" style="border:1px dashed var(--rule-strong)">unknown</span></td></tr>
+        <tr><td class="idx">05</td><td class="mono-sm">procurement_required</td><td>releasing the seat needs a contract change</td><td><span class="st" style="color:var(--ink);background:var(--paper-sunk);border:1px solid var(--rule-strong);outline:1px solid var(--rule-strong);outline-offset:2px">human</span></td></tr>
+      </tbody>
+    </table>
+    <div class="trap-field reveal">
+      <label for="trapInput">cost_per_seat</label>
+      <input class="trap-input" id="trapInput" type="text" placeholder="enter your price…" aria-describedby="trapMsg">
+      <p class="trap-msg" id="trapMsg"></p>
+    </div>
+    <div class="no-estimates reveal">
+      <p>There is no line for “estimated savings”.</p>
+      <p class="small" style="font-family:var(--f-text);font-style:normal;margin-top:12px;color:var(--ink-3)">An Enterprise contract is unknowable from the outside, and a plausible number taken into a budget meeting is worse than a blank.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §10 EVIDENCE ============ -->
+<section class="section" id="s10" data-folio="§10">
+  <div class="section-rule"><span class="folio-tag">§10 — Evidence</span></div>
+  <div class="content">
+    <h2 class="reveal" style="margin-top:48px">The answer to “how do you know she’s gone?”</h2>
+    <p class="lead reveal" style="margin-top:16px">Every decision and every action files its own record: provider and endpoint, timestamps, actor, scopes, policy version, hashed before/after snapshots, approval, redaction summary, and the API limits that applied.</p>
+    <div class="ev-toggle reveal">
+      <span>JSON + hashes</span>
+      <button class="ev-switch" id="evSwitch" role="switch" aria-checked="false" aria-label="Toggle evidence rendering"></button>
+      <span>Readable certificate</span>
+    </div>
+    <div class="ev-panes reveal">
+      <div class="ev-pane on" id="evJson">
+        <div class="json-view" id="jsonView"></div>
+      </div>
+      <div class="ev-pane" id="evCert">
+        <div class="doc-card crop" style="max-width:560px;position:relative"><span class="crop-b"></span>
+          <div class="cert-head"><span class="label">Evidence Record ev_9f2c</span></div>
+          <div class="cert-col" style="padding:20px 24px">
+            <div class="cert-line"><span class="k">Action</span><span class="dots"></span><span class="v">suspend github seat</span></div>
+            <div class="cert-line"><span class="k">Subject</span><span class="dots"></span><span class="v">alice@company.com</span></div>
+            <div class="cert-line"><span class="k">Endpoint</span><span class="dots"></span><span class="v mono-sm">PUT /orgs/{org}/memberships</span></div>
+            <div class="cert-line"><span class="k">Actor</span><span class="dots"></span><span class="v">scheduler, rule R</span></div>
+            <div class="cert-line"><span class="k">Approved by</span><span class="dots"></span><span class="v">it-ops@company.com</span></div>
+            <div class="cert-line"><span class="k">Before</span><span class="dots"></span><span class="v mono-sm">sha256:41ab…</span></div>
+            <div class="cert-line"><span class="k">After</span><span class="dots"></span><span class="v mono-sm">sha256:9f2c…</span></div>
+            <div class="cert-line"><span class="k">Redacted</span><span class="dots"></span><span class="v">1 bearer token</span></div>
+            <div class="cert-line"><span class="k">Known limits</span><span class="dots"></span><span class="v">installer attribution partial</span></div>
+          </div>
+          <span class="stamp" style="position:absolute;right:16px;bottom:16px">Evidence<br>on file</span>
+        </div>
+      </div>
+    </div>
+    <p class="ev-closing small reveal">Connectors get copied. Rules get copied. A retained record of who had access to what, and who decided otherwise, does not.</p>
+  </div>
+</section>
+
+<!-- ============ §11 WHO ============ -->
+<section class="section" id="s11" data-folio="§11">
+  <div class="section-rule"><span class="folio-tag">§11 — Who it’s for</span></div>
+  <div class="content">
+    <h2 class="reveal" style="margin-top:48px">Between 150 and 1000 people, and past the point where a checklist works.</h2>
+    <p class="lead reveal" style="margin-top:16px">Enough SaaS that every offboarding misses something. Enough departures that it keeps happening. Enough audit pressure that proof has value.</p>
+    <div class="who-grid">
+      <div class="who-card primary reveal">
+        <div class="role">buyer</div>
+        <h3>Head of IT / IT Ops</h3>
+        <p class="small" style="margin-top:8px">Runs the offboarding and signs that it is finished.</p>
+      </div>
+      <div class="who-card reveal">
+        <div class="role">influencer</div>
+        <h3>Security</h3>
+        <p class="small" style="margin-top:8px">Cares about what stays reachable after someone leaves.</p>
+      </div>
+      <div class="who-card reveal">
+        <div class="role">influencer</div>
+        <h3>Compliance</h3>
+        <p class="small" style="margin-top:8px">Cares about the evidence.</p>
+      </div>
+      <div class="who-card finance reveal">
+        <div class="role">shows up second</div>
+        <h3>Finance</h3>
+        <p class="small" style="margin-top:8px">Cares about the seats.</p>
+      </div>
+    </div>
+    <div class="competitors reveal">
+      <p class="small">If you already run <span class="names">bettercloud</span>, <span class="names">torii</span>, <span class="names">zluri</span>, or <span class="names">okta workflows</span>, unseat is not trying to replace the workflow. It answers the part those tools leave open: what did the automation fail to reach, and can you prove it.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §12 PRICING ============ -->
+<section class="section" id="s12" data-folio="§12">
+  <div class="section-rule"><span class="folio-tag">§12 — Pricing</span></div>
+  <div class="content pricing">
+    <h2 class="reveal" style="margin-top:48px">Priced on humans, mode, and how long the evidence lives.</h2>
+    <table class="registry reveal" style="margin-top:32px">
+      <thead><tr><th></th><th>Plan</th><th>Mode</th><th style="text-align:right">Size</th><th>Evidence retention</th><th></th></tr></thead>
+      <tbody>
+        <tr><td class="idx">01</td><td>Discovery</td><td><span class="mono-sm">Observe</span></td><td style="text-align:right">up to 250 people</td><td class="retention">30 days, local</td><td class="talk"><a href="#s14">Talk to us</a></td></tr>
+        <tr><td class="idx">02</td><td>Starter</td><td><span class="mono-sm">Observe + Approve</span></td><td style="text-align:right">~250 people</td><td class="retention">1 year</td><td class="talk"><a href="#s14">Talk to us</a></td></tr>
+        <tr><td class="idx">03</td><td>Growth</td><td><span class="mono-sm">Approve + scoped Enforce</span></td><td style="text-align:right">~1000 people</td><td class="retention">3 years</td><td class="talk"><a href="#s14">Talk to us</a></td></tr>
+        <tr><td class="idx">04</td><td>Scale</td><td><span class="mono-sm">Scoped Enforce + integrations</span></td><td style="text-align:right">custom</td><td class="retention">custom</td><td class="talk"><a href="#s14">Talk to us</a></td></tr>
+      </tbody>
+    </table>
+    <div class="nevers reveal">
+      <span class="small">never per connector</span>
+      <span class="small">never a cut of the savings</span>
+      <span class="small">never per non-human identity found — that one charges you more for looking harder</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §13 WHY ============ -->
+<section class="section" id="s13" data-folio="§13">
+  <div class="section-rule"><span class="folio-tag">§13 — Why unseat</span></div>
+  <div class="content">
+    <div class="why-wrap">
+      <h2 class="reveal">Built to finish the work, not to display it.</h2>
+      <p class="lead reveal" style="margin-top:24px">Most tools in this space hand you a risk score and a chart. unseat starts from an event you already care about — a person left — and ends with a decision, an action, and proof. It treats humans and non-human identities as the same lifecycle problem. It separates what is safe to automate from what needs a name attached. And when a provider answers nothing, the certificate says so instead of showing a reassuring zero.</p>
+      <div class="vendor-toggle reveal">
+        <button class="ev-switch" id="vendorSwitch" role="switch" aria-checked="false" aria-label="Show what a vendor dashboard would claim"></button>
+        <span>Show what a vendor dashboard would claim</span>
+      </div>
+      <div class="vendor-overlay" id="vendorOverlay" aria-hidden="true">
+        <span class="sim-badge">simulated</span>
+        <div class="vendor-fake" id="vendorFake">
+          <div class="fake-item"><div class="big">$248,900</div>estimated annual savings</div>
+          <div class="fake-item"><div class="big">A+</div>security risk score</div>
+          <div class="fake-item"><div class="fake-chart"><svg viewBox="0 0 200 64" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,60 30,52 60,44 90,30 120,26 150,14 200,4" fill="none" stroke="#14654A" stroke-width="2"/></svg></div>savings trend</div>
+          <div class="fake-item"><div class="fake-logos"><span class="fake-logo"></span><span class="fake-logo"></span><span class="fake-logo"></span><span class="fake-logo"></span><span class="fake-logo"></span><span class="fake-logo"></span></div>142 integrations</div>
+        </div>
+        <div class="strike" id="vendorStrike"></div>
+        <div class="vendor-verdict" id="vendorVerdict">None of those numbers came from an API.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ §14 CTA ============ -->
+<section class="section" id="s14" data-folio="§14">
+  <div class="section-rule"><span class="folio-tag">§14 — Start</span></div>
+  <div class="content content--full">
+    <div class="final crop reveal"><span class="crop-b"></span>
+      <h2>Run the next departure with proof.</h2>
+      <ol>
+        <li><span class="idx">01</span><span>connect your directory</span></li>
+        <li><span class="idx">02</span><span>connect one provider</span></li>
+        <li><span class="idx">03</span><span>read the certificate, unknowns and all</span></li>
+      </ol>
+      <a class="btn" href="#">Generate a certificate</a>
+      <p style="margin-top:16px"><a class="small" href="#s10">See sample output</a></p>
+    </div>
+    <div class="page-stamp" id="pageStamp">
+      <span class="stamp" id="finalStamp">Page read&nbsp;·&nbsp;<span id="stampDate">2026-08-02</span></span>
+      <p class="meta" id="stampMeta"></p>
+    </div>
+  </div>
+</section>
+
+</div><!-- /page -->
+
+<footer>
+  <div class="page"><div class="content content--full">
+    <span>unseat — identity lifecycle, finished</span>
+    <span id="footHash">certificate of this page: pending</span>
+  </div></div>
+</footer>
+<script>
+"use strict";
+const $=(s,c=document)=>c.querySelector(s), $$=(s,c=document)=>[...c.querySelectorAll(s)];
+const reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ===== rail: clock, folio, ticks, seals ===== */
+const sections=$$(".section");
+const ticksWrap=$("#railTicks");
+sections.forEach(()=>{const t=document.createElement("span");t.className="rail-tick";ticksWrap.appendChild(t)});
+const ticks=$$(".rail-tick");
+setInterval(()=>{
+  const d=new Date();
+  $("#railClock").textContent=String(d.getUTCHours()).padStart(2,"0")+":"+String(d.getUTCMinutes()).padStart(2,"0")+":"+String(d.getUTCSeconds()).padStart(2,"0")+" UTC";
+},1000);
+const seenSections=new Set();
+const railObs=new IntersectionObserver(es=>{
+  es.forEach(e=>{
+    const i=sections.indexOf(e.target);
+    if(e.isIntersecting){
+      $("#railFolio").textContent=e.target.dataset.folio;
+      ticks.forEach((t,j)=>t.classList.toggle("active",j===i));
+      ticks[i].classList.add("read");
+      seenSections.add(e.target.id);
+      if(seenSections.size===sections.length)$("#railSeal").classList.add("filled");
+    }
+  });
+},{threshold:0.25});
+sections.forEach(s=>railObs.observe(s));
+
+/* ===== scroll reveals ===== */
+const revObs=new IntersectionObserver(es=>{
+  es.forEach(e=>{
+    if(!e.isIntersecting)return;
+    e.target.classList.add("in");
+    revObs.unobserve(e.target);
+  });
+},{threshold:0.15});
+$$(".reveal").forEach((el,i)=>{el.style.transitionDelay=(i%6)*40+"ms";revObs.observe(el)});
+
+/* ===== §01 hero certificate ===== */
+const CERT_DATA={
+  alice:{
+    identity:[
+      ["Subject","Alice Martin","identity resolution: 3 directory associations, 1 ambiguous username match — held for review"],
+      ["Identities","3 + 1 ambiguous","alice@company.com (primary), 2 aliases · alice-dev: username lookalike only, no action taken"],
+      ["Trigger","Workspace suspended","source: google-directory users.get · suspended=true · 34 days ago"],
+      ["Mode","Approve","every write below was approved by a named human"]],
+    counts:[
+      ["Access closed","12","12 provider seats removed or suspended, each with before/after snapshots"],
+      ["Ownership transferred","3","3 resources reassigned with approver recorded"],
+      ["Awaiting an owner","2","2 credentials have no claimed owner — attestation requested"],
+      ["Provider cannot act","4","4 actions have no API endpoint — manual tasks created"],
+      ["Provider will not say","2","GitHub names no installer without Enterprise audit log · member PATs invisible without SAML SSO"],
+      ["Paid seats released","4","source: provider billing APIs — billed seat counts, not typed prices"]],
+    status:"limits",statusNote:"complete as far as the APIs go — 4 limits named above",
+    verified:"Last verified 2026-08-02 22:14 UTC",recheck:"Next recheck 2026-08-09"},
+  marco:{
+    identity:[
+      ["Subject","Marco Reis","identity resolution: 2 directory associations, all strong"],
+      ["Identities","2 resolved","marco@company.com (primary), 1 alias"],
+      ["Trigger","HRIS termination","source: HRIS employment status — explicit termination, never inferred"],
+      ["Mode","Approve","waiting on humans, not on unseat"]],
+    counts:[
+      ["Access closed","9","9 provider seats removed or suspended"],
+      ["Ownership transferred","1","1 workspace reassigned"],
+      ["Awaiting an owner","3","3 items wait on Finance attestation — reminder sent"],
+      ["Blocked on approval","2","2 decisions sit with it-ops@company.com since J+2"],
+      ["Provider cannot act","1","figma: no SCIM on this plan — manual task created"],
+      ["Paid seats released","2","confirmed by billed seat count moving"]],
+    status:"blocked",statusNote:"two actions wait on a person — nothing is silently skipped",
+    verified:"Last verified 2026-08-01 09:02 UTC",recheck:"Blocked since 2026-07-30"},
+  bot:{
+    identity:[
+      ["Subject","svc-deploy-bot","a non-human identity — same lifecycle, same certificate"],
+      ["Created by","j.doe@company.com","creator left 2025-11 — creator is not owner"],
+      ["Owner","platform-team","attested 2026-06-14, purpose on file"],
+      ["Mode","Observe","report only — nothing was written"]],
+    counts:[
+      ["Tokens active","2","scope: deploy, read:packages"],
+      ["Webhooks","1","wh_3391 — re-enabled after last verification"],
+      ["Consumers known","1","CI pipeline main — last run 3h ago"],
+      ["Consumers unknown","1","one delivery target answers to no known service"],
+      ["Provider will not say","1","token last-use not exposed on this plan"],
+      ["Expiry set","2026-09-01","expiry required by policy for non-human credentials"]],
+    status:"stale",statusNote:"the world changed since the last verification",
+    verified:"Last verified 2026-07-20 04:10 UTC",recheck:"Recheck overdue — state moved"}
+};
+const ST_LABEL={limits:"complete_with_provider_limits",blocked:"blocked",stale:"stale",complete:"complete",incomplete:"incomplete"};
+function certLine([k,v,note],i){
+  const d=document.createElement("div");
+  d.className="cert-line"+(reduced?"":" line-in");
+  d.style.animationDelay=(i*30)+"ms";
+  d.dataset.note=note;
+  d.innerHTML=`<span class="k">${k}</span><span class="dots"></span><span class="v">${v}</span>`;
+  return d;
+}
+let currentSubject="alice";
+function renderCert(subject){
+  currentSubject=subject;
+  const data=CERT_DATA[subject];
+  const idCol=$("#certIdentity"),ctCol=$("#certCounts");
+  idCol.innerHTML="";ctCol.innerHTML="";
+  data.identity.forEach((l,i)=>idCol.appendChild(certLine(l,i)));
+  data.counts.forEach((l,i)=>ctCol.appendChild(certLine(l,i+data.identity.length)));
+  const n=data.identity.length+data.counts.length;
+  const sl=$("#certStatusLine");
+  sl.innerHTML="";
+  const d=document.createElement("div");
+  d.className="cert-line"+(reduced?"":" line-in");
+  d.style.animationDelay=(n*30)+"ms";
+  d.dataset.note=data.statusNote;
+  d.innerHTML=`<span class="k">Status</span><span class="dots"></span><span class="st st--${data.status}">${ST_LABEL[data.status]}</span>`;
+  sl.appendChild(d);
+  $("#certVerified").textContent=data.verified;
+  $("#certRecheck").textContent=data.recheck;
+}
+renderCert("alice");
+$$(".cert-tab").forEach(t=>t.addEventListener("click",()=>{
+  $$(".cert-tab").forEach(x=>x.setAttribute("aria-selected",x===t));
+  renderCert(t.dataset.subject);
+}));
+$("#heroCert").addEventListener("mouseover",e=>{
+  const line=e.target.closest(".cert-line");
+  const note=$("#heroNote");
+  if(line&&line.dataset.note){note.textContent=line.dataset.note;note.classList.add("visible");
+    note.style.top=(line.getBoundingClientRect().top-note.parentElement.getBoundingClientRect().top)+"px";}
+});
+$("#heroCert").addEventListener("mouseleave",()=>$("#heroNote").classList.remove("visible"));
+/* status chip in hero scrolls to §04 */
+$("#heroCert").addEventListener("click",e=>{
+  const chip=e.target.closest(".st");
+  if(!chip)return;
+  location.hash="#s04";
+  const idx={complete:0,limits:1,blocked:2,incomplete:3,stale:4}[CERT_DATA[currentSubject].status];
+  if(idx!==undefined)setScale(idx);
+});
+
+/* ===== §03 facts provenance ===== */
+$$(".fact-line").forEach(l=>{
+  l.addEventListener("mouseenter",()=>{
+    const note=$("#promiseNote");
+    note.textContent=l.dataset.note;note.classList.add("visible");
+    note.style.top=(l.getBoundingClientRect().top-note.parentElement.getBoundingClientRect().top)+"px";
+  });
+  l.addEventListener("mouseleave",()=>$("#promiseNote").classList.remove("visible"));
+});
+
+/* ===== §02 doors ===== */
+const doors=$$(".door");
+$$(".problem-row").forEach(r=>{
+  r.addEventListener("mouseenter",()=>doors[+r.dataset.door].classList.add("lit"));
+  r.addEventListener("mouseleave",()=>doors[+r.dataset.door].classList.remove("lit"));
+});
+
+/* ===== §04 status scale ===== */
+const SCALE=[
+  {key:"complete",def:"every object found is closed, transferred, or explicitly approved to stay"},
+  {key:"limits",def:"complete as far as the APIs go, with the limits named"},
+  {key:"blocked",def:"something is waiting on a person, an API scope, or a provider"},
+  {key:"incomplete",def:"a known access is still open with no decision on it"},
+  {key:"stale",def:"the state moved since the last verification"}];
+let scaleI=1;
+function setScale(i){
+  scaleI=Math.max(0,Math.min(4,i));
+  const s=SCALE[scaleI];
+  $("#scaleHandle").style.left=(scaleI*25)+"%";
+  $("#scaleDef").textContent=s.def;
+  $$(".scale-label").forEach((l,j)=>l.classList.toggle("on",j===scaleI));
+  const rail=$("#scaleRail");
+  rail.setAttribute("aria-valuenow",scaleI);
+  rail.setAttribute("aria-valuetext",ST_LABEL[s.key]);
+  const chip=$("#miniStatus");
+  chip.className="st st--"+s.key;
+  chip.textContent=ST_LABEL[s.key];
+  $("#miniUnknowns").textContent=s.key==="complete"?"0":"2";
+}
+$("#scaleRail").addEventListener("keydown",e=>{
+  if(e.key==="ArrowRight"){setScale(scaleI+1);e.preventDefault()}
+  if(e.key==="ArrowLeft"){setScale(scaleI-1);e.preventDefault()}
+});
+$$(".scale-label").forEach(l=>l.addEventListener("click",()=>setScale(+l.dataset.i)));
+function scaleDrag(e){
+  const r=$("#scaleRail").getBoundingClientRect();
+  const x=(e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  setScale(Math.round(x/r.width*4));
+}
+$("#scaleHandle").addEventListener("pointerdown",e=>{
+  e.preventDefault();
+  const move=ev=>scaleDrag(ev);
+  const up=()=>{removeEventListener("pointermove",move);removeEventListener("pointerup",up)};
+  addEventListener("pointermove",move);addEventListener("pointerup",up);
+});
+$("#scaleRail").addEventListener("click",scaleDrag);
+
+/* ===== §04 recheck ===== */
+const RECHECK=[
+  ["GitHub account      still absent      ","ok","ok"],
+  ["Linear seat         still suspended   ","ok","ok"],
+  ["Webhook wh_3391     re-enabled        ","certificate → stale","warn"]];
+$("#recheckBtn").addEventListener("click",()=>{
+  const box=$("#recheckLines");box.innerHTML="";
+  $("#recheckBtn").disabled=true;
+  RECHECK.forEach((l,i)=>{
+    setTimeout(()=>{
+      const d=document.createElement("div");
+      d.className="recheck-line";
+      d.innerHTML=`<span>Rechecked 2026-08-09  ${l[0]}</span><span class="${l[2]}">${l[1]}</span>`;
+      box.appendChild(d);
+      if(i===2){
+        setScale(4);
+        $("#railSeal").classList.add("stale");$("#railSeal").innerHTML="↻";
+        $("#recheckReset").style.display="";
+      }
+    },reduced?0:i*220);
+  });
+});
+$("#recheckReset").addEventListener("click",()=>{
+  $("#recheckLines").innerHTML='<span class="mono-sm" style="color:var(--ink-4)">rechecks run on schedule — press the button to replay the J+7 pass</span>';
+  setScale(1);
+  $("#railSeal").classList.remove("stale");$("#railSeal").textContent="SEAL";
+  $("#recheckBtn").disabled=false;$("#recheckReset").style.display="none";
+});
+
+/* ===== §05 threshold: hard stop ===== */
+const thRail=$("#thresholdRail");
+function thRefuse(){
+  $("#policyStamp").classList.add("show");
+  $("#policyMsg").textContent="nothing is removed on a weak match alone";
+  $("#thresholdHandle").style.left="88%";
+  setTimeout(()=>{$("#thresholdHandle").style.left="100%"},reduced?0:150);
+  clearTimeout(thRefuse.t);
+  thRefuse.t=setTimeout(()=>{$("#policyStamp").classList.remove("show");$("#policyMsg").textContent=""},2600);
+}
+thRail.addEventListener("keydown",e=>{if(e.key==="ArrowLeft"){thRefuse();e.preventDefault()}});
+$("#thresholdHandle").addEventListener("pointerdown",e=>{
+  e.preventDefault();
+  const r=thRail.getBoundingClientRect();
+  const move=ev=>{if(ev.clientX<r.right-8)thRefuse()};
+  const up=()=>{removeEventListener("pointermove",move);removeEventListener("pointerup",up)};
+  addEventListener("pointermove",move);addEventListener("pointerup",up);
+});
+thRail.addEventListener("click",e=>{const r=thRail.getBoundingClientRect();if(e.clientX<r.right-20)thRefuse()});
+
+/* ===== §06 token panel ===== */
+$("#tokenNode").addEventListener("click",()=>{
+  $("#tokenPanel").classList.toggle("open");
+});
+$("#revokeBtn").addEventListener("mouseenter",()=>{
+  $("#revokeDeps").textContent="known dependency: Finance nightly job — last run 3h ago";
+});
+$("#revokeBtn").addEventListener("mouseleave",()=>{$("#revokeDeps").textContent=""});
+$("#revokeBtn").addEventListener("click",e=>e.preventDefault());
+
+/* ===== §07 modes ===== */
+$$(".mode-btn").forEach(b=>b.addEventListener("click",()=>{
+  $$(".mode-btn").forEach(x=>x.setAttribute("aria-selected",x===b));
+  $$(".mode-panel").forEach(p=>p.classList.toggle("on",p.id==="panel-"+b.dataset.mode));
+}));
+$$(".perm-lock").forEach(td=>td.addEventListener("click",()=>{
+  $("#permMsg").textContent="Observe cannot be made writable.";
+  clearTimeout($("#permMsg").t);
+  $("#permMsg").t=setTimeout(()=>$("#permMsg").textContent="",2600);
+}));
+const stampsWrap=$("#microStamps");
+for(let i=0;i<14;i++){const s=document.createElement("span");s.className="micro-stamp";stampsWrap.appendChild(s)}
+/* terminal */
+const TERM_LINES=[
+  ["subject      alice@company.com — matched (3 identities, 1 ambiguous held for review)",""],
+  ["directory    suspended 34 days ago (google-directory)",""],
+  ["",""],
+  ["github       org member — active            → remove proposed","t-warn"],
+  ["github       outside collaborator ×2        → remove proposed","t-warn"],
+  ["github       app gh_app_112 installed 2024  → owner attestation requested",""],
+  ["github       copilot seat — billed          → release proposed","t-warn"],
+  ["github       member PATs                    unknown — no SAML SSO, provider reports nothing","t-unknown"],
+  ["linear       seat active                    → suspend proposed","t-warn"],
+  ["figma        no SCIM on this plan           cannot act — manual task created","t-unknown"],
+  ["slack        seat suspended, still billed   → release at renewal",""],
+  ["",""],
+  ["credentials  1 token, creator departed      → ask who owns it (never auto-revoked)",""],
+  ["billing      4 paid seats releasable        amounts from provider APIs only",""],
+  ["",""],
+  ["certificate  complete_with_provider_limits — 2 unknowns, named","t-ok"],
+  ["evidence     16 records filed, secrets redacted","t-ok"]];
+let termRan=false;
+$("#termRun").addEventListener("click",()=>{
+  if(termRan)return;termRan=true;
+  const body=$("#termBody");
+  $("#termCursor").remove();
+  TERM_LINES.forEach((l,i)=>{
+    setTimeout(()=>{
+      const d=document.createElement("div");
+      d.className=l[1];d.textContent=l[0]||" ";
+      body.appendChild(d);
+      if(i===TERM_LINES.length-1){
+        const end=document.createElement("div");
+        end.innerHTML='<a href="#s01">→ see the certificate</a> <span class="cursor"></span>';
+        body.appendChild(end);
+      }
+      body.scrollTop=body.scrollHeight;
+    },reduced?0:120+i*90);
+  });
+});
+$("#termCopy").addEventListener("click",()=>{
+  navigator.clipboard.writeText("unseat offboard alice@company.com");
+  $("#termCopy").textContent="Copied";
+  setTimeout(()=>$("#termCopy").textContent="Copy",1400);
+});
+
+/* ===== §08 coverage ===== */
+const COV={
+  github:[
+    ["users","yes","yes","na","na","GET /orgs/{org}/members · DELETE /orgs/{org}/members/{user}"],
+    ["outside_collaborators","yes","yes","na","na","GET /orgs/{org}/outside_collaborators"],
+    ["org_billing","yes","na","na","na","GET /orgs/{org}/settings/billing — read only"],
+    ["copilot_seats","yes","na","na","yes","GET /orgs/{org}/copilot/billing/seats · seat release supported"],
+    ["apps","yes","na","partial","na","GET /orgs/{org}/installations — installer named for 3 of 31 apps (Enterprise audit log only)"],
+    ["deploy_keys","yes","unknown","na","na","listed per repo — removal behaviour unverified"],
+    ["actions_secrets","unknown","unknown","na","na","the API does not attribute secrets to a person"],
+    ["runners","unknown","unknown","na","na","not yet mapped to identities"],
+    ["ownership_transfer","na","na","partial","na","possible for repos, not for all resources"],
+    ["member_pats","unknown","unknown","na","na","GitHub reports nothing without SAML SSO + fine-grained PAT policy"]],
+  linear:[
+    ["users","yes","yes","na","na","GraphQL users · userSuspend mutation"],
+    ["billed_seats","yes","na","na","na","subscription seat count — the count it actually charges for"],
+    ["api_keys","yes","unknown","na","na","listed — revocation not yet wired"],
+    ["webhooks","yes","unknown","na","na","listed per team"],
+    ["oauth_apps","unknown","unknown","na","na","not exposed by the API"]],
+  figma:[
+    ["users","yes","yes","na","na","SCIM v2 — Enterprise only"],
+    ["billed_seats","unknown","na","na","na","no billing endpoint exposed"],
+    ["webhooks","yes","unknown","na","na","listed per team"],
+    ["oauth_apps","unknown","unknown","na","na","not exposed"]],
+  slack:[
+    ["users","yes","yes","na","na","SCIM v2 — Business+/Enterprise Grid"],
+    ["billed_seats","unknown","na","na","na","no billing endpoint exposed"],
+    ["apps","yes","unknown","na","na","admin.apps list"],
+    ["bots_tokens","unknown","unknown","na","na","bot token ownership not exposed"]]};
+function covCell(state,verb){
+  if(state==="yes")return `<span class="cell cell-yes">${verb}</span>`;
+  if(state==="partial")return `<span class="cell cell-partial">partial</span>`;
+  if(state==="unknown")return `<span class="cell cell-unknown">unknown</span>`;
+  return `<span class="cell cell-na">n/a</span>`;
+}
+function renderCov(prov){
+  const rows=COV[prov];
+  $("#covBody").innerHTML=rows.map(r=>
+    `<tr data-note="${r[5]}"><td class="obj">${r[0]}</td><td>${covCell(r[1],"read")}</td><td>${covCell(r[2],"remove")}</td><td>${covCell(r[3],"transfer")}</td><td>${covCell(r[4],"release")}</td></tr>`).join("");
+  let unknown=0,total=0;
+  Object.values(COV).forEach(rs=>rs.forEach(r=>r.slice(1,5).forEach(c=>{if(c!=="na"){total++;if(c==="unknown")unknown++}})));
+  $("#honestyCount").textContent=unknown+" / "+total;
+}
+const chipWrap=$("#provChips");
+Object.keys(COV).forEach((p,i)=>{
+  const b=document.createElement("button");
+  b.className="prov-chip";b.textContent=p;b.setAttribute("role","tab");
+  b.setAttribute("aria-selected",i===0);
+  b.addEventListener("click",()=>{
+    $$(".prov-chip").forEach(x=>x.setAttribute("aria-selected",x===b));
+    renderCov(p);
+  });
+  chipWrap.appendChild(b);
+});
+renderCov("github");
+$("#covBody").addEventListener("mouseover",e=>{
+  const tr=e.target.closest("tr");
+  if(!tr)return;
+  const note=$("#covNote");
+  note.textContent=tr.dataset.note;note.classList.add("visible");
+  note.style.top=(tr.getBoundingClientRect().top-note.parentElement.getBoundingClientRect().top)+"px";
+});
+$("#covBody").addEventListener("mouseleave",()=>$("#covNote").classList.remove("visible"));
+
+/* ===== §09 trap field ===== */
+$("#trapInput").addEventListener("focus",function(){
+  this.classList.add("locked");this.readOnly=true;this.placeholder="";
+  $("#trapMsg").textContent="unseat never asks you to keep prices in YAML.";
+});
+
+/* ===== §10 evidence ===== */
+const JSON_LINES=[
+  '{',
+  '  "id": "ev_9f2c",',
+  '  "source_provider": "github",',
+  '  "source_endpoint": "PUT /orgs/{org}/memberships",',
+  '  "collected_at": "2026-08-02T22:14:03Z",',
+  '  "actor": "scheduler:rule-R",',
+  '  "scopes_used": ["admin:org"],',
+  '  "policy_version": "v14",',
+  '  "authorization": "REDACT",',
+  '  "before_snapshot_hash": "HASH41",',
+  '  "after_snapshot_hash": "HASH9F",',
+  '  "approved_by": "it-ops@company.com",',
+  '  "redaction_summary": "1 bearer token removed",',
+  '  "known_limits": ["installer attribution partial: Enterprise audit log only"]',
+  '}'];
+$("#jsonView").innerHTML=JSON_LINES.map((l,i)=>{
+  let txt=l
+    .replace('"REDACT"','<span class="redact" data-redaction="redacted: bearer token, 41 chars, sha256:9f2c…">"████████████████"</span>')
+    .replace('"HASH41"','<span class="hash" title="click to copy">"sha256:41ab08c2…"</span>')
+    .replace('"HASH9F"','<span class="hash" title="click to copy">"sha256:9f2c41d7…"</span>');
+  return `<div class="json-line"><span class="ln">${i+1}</span><span>${txt}</span></div>`;
+}).join("");
+$$(".hash").forEach(h=>h.addEventListener("click",()=>{
+  navigator.clipboard.writeText(h.textContent.replaceAll('"',''));
+  const t=h.textContent;h.textContent='"copied"';setTimeout(()=>h.textContent=t,900);
+}));
+$("#evSwitch").addEventListener("click",()=>{
+  const on=$("#evSwitch").getAttribute("aria-checked")==="true";
+  $("#evSwitch").setAttribute("aria-checked",!on);
+  $("#evJson").classList.toggle("on",on);
+  $("#evCert").classList.toggle("on",!on);
+});
+
+/* ===== §13 vendor mode ===== */
+$("#vendorSwitch").addEventListener("click",()=>{
+  const on=$("#vendorSwitch").getAttribute("aria-checked")==="true";
+  $("#vendorSwitch").setAttribute("aria-checked",!on);
+  const ov=$("#vendorOverlay");
+  if(!on){
+    ov.classList.add("on");ov.setAttribute("aria-hidden","false");
+    $("#vendorFake").classList.remove("folded");
+    $("#vendorStrike").classList.remove("drawn");
+    $("#vendorVerdict").classList.remove("show");
+    setTimeout(()=>{
+      $("#vendorStrike").classList.add("drawn");
+      setTimeout(()=>{
+        $("#vendorFake").classList.add("folded");
+        $("#vendorVerdict").classList.add("show");
+      },reduced?0:400);
+    },reduced?0:1200);
+  }else{
+    ov.classList.remove("on");ov.setAttribute("aria-hidden","true");
+  }
+});
+
+/* ===== §14 page stamp ===== */
+async function sha256hex(str){
+  const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+const stampObs=new IntersectionObserver(async es=>{
+  if(!es.some(e=>e.isIntersecting))return;
+  stampObs.disconnect();
+  const seen=[...seenSections].sort().join(",");
+  const hash=await sha256hex(seen).catch(()=>null);
+  const d=new Date();
+  const stamp=`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")} ${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")} UTC`;
+  $("#stampDate").textContent=stamp;
+  $("#finalStamp").classList.add("on");
+  const unknowns=$("#honestyCount").textContent.split(" ")[0];
+  $("#stampMeta").textContent=`sections read ${seenSections.size}/14 · unknowns shown ${unknowns} · ${hash?"sha256:"+hash.slice(0,12)+"…":"hash unavailable"}`;
+  if(hash)$("#footHash").textContent="certificate of this page: sha256:"+hash.slice(0,12)+"…";
+},{threshold:0.4});
+stampObs.observe($("#pageStamp"));
+</script>
+</body>
+</html>
